@@ -1,36 +1,36 @@
 {
-  "name": "shiro-screen-share",
-  "version": "2.0.1",
-  "description": "Shiro Screen Share — Desktop app with isolated process audio capture for Discord Activities & LiveKit",
-  "main": "dist/main/main.js",
-  "author": "Hito",
-  "license": "MIT",
-  "scripts": {
-    "clean": "node -e \"const fs = require('fs'); ['dist/main', 'dist/preload', 'dist/renderer'].forEach(d => { try { if (fs.existsSync(d)) fs.rmSync(d, { recursive: true, force: true, maxRetries: 3 }); } catch(e){} });\"",
-    "build:main": "esbuild src/main/main.ts --bundle --platform=node --target=node18 --outfile=dist/main/main.js --external:electron --external:koffi --external:loopback-capture --external:dotenv --external:electron-updater --format=cjs",
-    "build:preload": "esbuild src/preload/index.ts --bundle --platform=node --target=node18 --outfile=dist/preload/index.js --external:electron --format=cjs",
-    "build:renderer": "esbuild src/renderer/src/app.ts --bundle --platform=browser --target=chrome120 --outfile=dist/renderer/app.bundle.js --external:electron --format=iife --tree-shaking=true && node -e \"const fs = require('fs'); fs.copyFileSync('src/renderer/index.html', 'dist/renderer/index.html'); fs.copyFileSync('src/renderer/index.css', 'dist/renderer/index.css'); fs.copyFileSync('icon.ico', 'dist/renderer/icon.ico');\"",
-    "build:all": "npm run clean && tsc --noEmit && npm run build:main && npm run build:preload && npm run build:renderer",
-    "dev": "npm run build:all && electron .",
-    "pack": "npm run build:all && electron-builder --dir",
-    "build": "npm run build:all && electron-builder --win --publish never"
-  },
-  "dependencies": {
-    "dotenv": "^16.4.7",
-    "electron-updater": "^6.8.9",
-    "koffi": "^3.2.1",
-    "livekit-client": "^2.22.2",
-    "loopback-capture": "^3.0.2",
-    "lucide": "^0.469.0"
-  },
-  "devDependencies": {
-    "@types/node": "^20.11.0",
-    "electron": "^33.4.0",
-    "electron-builder": "^25.1.8",
-    "esbuild": "^0.24.2",
-    "typescript": "^5.3.3"
-  },
-  "build": {
-    "extends": "electron-builder.yml"
-  }
+	"name": "shiro-screen-share",
+	"version": "2.0.2",
+	"description": "Shiro Screen Share — Desktop app with isolated process audio capture for Discord Activities & LiveKit",
+	"main": "dist/main/main.js",
+	"author": "Hito",
+	"license": "MIT",
+	"scripts": {
+		"clean": "node -e \"const fs = require('fs'); ['dist/main', 'dist/preload', 'dist/renderer'].forEach(d => { try { if (fs.existsSync(d)) fs.rmSync(d, { recursive: true, force: true, maxRetries: 3 }); } catch(e){} });\"",
+		"build:main": "esbuild src/main/main.ts --bundle --platform=node --target=node18 --outfile=dist/main/main.js --external:electron --external:koffi --external:loopback-capture --external:dotenv --external:electron-updater --format=cjs",
+		"build:preload": "esbuild src/preload/index.ts --bundle --platform=node --target=node18 --outfile=dist/preload/index.js --external:electron --format=cjs",
+		"build:renderer": "esbuild src/renderer/src/app.ts --bundle --platform=browser --target=chrome120 --outfile=dist/renderer/app.bundle.js --external:electron --format=iife --tree-shaking=true && node -e \"const fs = require('fs'); fs.copyFileSync('src/renderer/index.html', 'dist/renderer/index.html'); fs.copyFileSync('src/renderer/index.css', 'dist/renderer/index.css'); fs.copyFileSync('icon.ico', 'dist/renderer/icon.ico');\"",
+		"build:all": "npm run clean && tsc --noEmit && npm run build:main && npm run build:preload && npm run build:renderer",
+		"dev": "npm run build:all && electron .",
+		"pack": "npm run build:all && electron-builder --dir",
+		"build": "npm run build:all && electron-builder --win --publish never"
+	},
+	"dependencies": {
+		"dotenv": "^16.4.7",
+		"electron-updater": "^6.8.9",
+		"koffi": "^3.2.1",
+		"livekit-client": "^2.22.2",
+		"loopback-capture": "^3.0.2",
+		"lucide": "^0.469.0"
+	},
+	"devDependencies": {
+		"@types/node": "^20.11.0",
+		"electron": "^33.4.0",
+		"electron-builder": "^25.1.8",
+		"esbuild": "^0.24.2",
+		"typescript": "^5.3.3"
+	},
+	"build": {
+		"extends": "electron-builder.yml"
+	}
 }
