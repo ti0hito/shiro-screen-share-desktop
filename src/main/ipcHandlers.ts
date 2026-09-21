@@ -1,10 +1,31 @@
 import http from "node:http";
 import https from "node:https";
-import { app, type BrowserWindow, ipcMain } from "electron";
+import { app, type BrowserWindow, ipcMain, nativeImage } from "electron";
 import type { AudioCaptureConfig } from "../types/capture";
 import type { AudioCaptureEngine } from "./audioEngine";
 import { isAutoUpdateEnabled, setAutoUpdateEnabled } from "./main";
 import { scanSources } from "./windowScanner";
+
+type SourceEntry = {
+	id: string;
+	name: string;
+	processName: string;
+	sourceType: "window" | "screen";
+	thumbnailUrl: string;
+};
+
+function resizeThumbnails(sources: SourceEntry[]): SourceEntry[] {
+	return sources.map((s) => {
+		if (!s.thumbnailUrl) return s;
+		try {
+			const img = nativeImage.createFromDataURL(s.thumbnailUrl);
+			const resized = img.resize({ width: 72, height: 72, quality: "best" });
+			return { ...s, thumbnailUrl: resized.toDataURL() };
+		} catch {
+			return s;
+		}
+	});
+}
 
 export function setupIpcHandlers(
 	window: BrowserWindow,
@@ -167,4 +188,72 @@ export function setupIpcHandlers(
 	ipcMain.on("window-close", () => {
 		if (window && !window.isDestroyed()) window.close();
 	});
+
+	// Stream Deck bridge: renderer reports its screen-share state
+	ipcMain.on("streamdeck-state-report", (_event, isSharing: boolean) => {
+		const { broadcastState } = require("./websocketServer");
+		broadcastState({ isSharing });
+	});
+
+	// Stream Deck bridge: renderer responds to state query
+	ipcMain.on("streamdeck-state-response", (_event, isSharing: boolean) => {
+		const { respondToStateRequest } = require("./websocketServer");
+		respondToStateRequest({ isSharing });
+	});
+
+	// Stream Deck bridge: renderer responds to source query
+	ipcMain.on(
+		"streamdeck-sources-response",
+		(
+			_event,
+			sources: Array<{
+				id: string;
+				name: string;
+				processName: string;
+				sourceType: "window" | "screen";
+				thumbnailUrl: string;
+			}>,
+			selectedIndex: number,
+		) => {
+			const { respondToSourceRequest } = require("./websocketServer");
+			respondToSourceRequest(resizeThumbnails(sources), selectedIndex);
+		},
+	);
+
+	// Stream Deck bridge: renderer reports source list update
+	ipcMain.on(
+		"streamdeck-sources-report",
+		(
+			_event,
+			sources: Array<{
+				id: string;
+				name: string;
+				processName: string;
+				sourceType: "window" | "screen";
+				thumbnailUrl: string;
+			}>,
+			selectedIndex: number,
+		) => {
+			const { broadcastSources } = require("./websocketServer");
+			broadcastSources(resizeThumbnails(sources), selectedIndex);
+		},
+	);
+
+	// Stream Deck bridge: renderer responds to audio mode query
+	ipcMain.on(
+		"streamdeck-audio-mode-response",
+		(_event, mode: "process" | "system" | "disabled") => {
+			const { respondToAudioRequest } = require("./websocketServer");
+			respondToAudioRequest(mode);
+		},
+	);
+
+	// Stream Deck bridge: renderer reports audio mode change
+	ipcMain.on(
+		"streamdeck-audio-mode-report",
+		(_event, mode: "process" | "system" | "disabled") => {
+			const { broadcastAudioMode } = require("./websocketServer");
+			broadcastAudioMode(mode);
+		},
+	);
 }

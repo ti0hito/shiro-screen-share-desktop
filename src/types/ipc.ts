@@ -42,6 +42,42 @@ export interface ElectronAPI {
 		callback: (params: DeepLinkParams) => void,
 	) => () => void;
 	onAudioCaptureError: (callback: (errorMsg: string) => void) => () => void;
+
+	// Stream Deck bridge
+	reportStreamShareState: (isSharing: boolean) => void;
+	onStreamDeckToggle: (callback: () => void) => () => void;
+	onStreamDeckGetState: (callback: () => void) => () => void;
+	reportSources: (
+		sources: Array<{
+			id: string;
+			name: string;
+			processName: string;
+			sourceType: "window" | "screen";
+			thumbnailUrl: string;
+		}>,
+		selectedIndex: number,
+	) => void;
+	respondSources: (
+		sources: Array<{
+			id: string;
+			name: string;
+			processName: string;
+			sourceType: "window" | "screen";
+			thumbnailUrl: string;
+		}>,
+		selectedIndex: number,
+	) => void;
+	onStreamDeckGetSources: (callback: () => void) => () => void;
+	onStreamDeckSelectSource: (callback: (index: number) => void) => () => void;
+	onStreamDeckCycleSource: (callback: () => void) => () => void;
+	reportAudioMode: (mode: "process" | "system" | "disabled") => void;
+	respondAudioMode: (mode: "process" | "system" | "disabled") => void;
+	onStreamDeckGetAudioMode: (callback: () => void) => () => void;
+	onStreamDeckSetAudioMode: (
+		callback: (mode: "process" | "system" | "disabled") => void,
+	) => () => void;
+	onStreamDeckCycleAudioMode: (callback: () => void) => () => void;
+	onStreamDeckLaunchActivity: (callback: () => void) => () => void;
 }
 
 declare global {
