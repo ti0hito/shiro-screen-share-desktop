@@ -47,6 +47,8 @@ class ShiroApp {
 	private currentVideoTrack: MediaStreamTrack | null = null;
 	private previewStream: MediaStream | null = null;
 	private hasDeepLinkParams: boolean = false;
+	private allSources: WindowSource[] = [];
+	private selectedSourceIndex: number = -1;
 
 	public async initialize(): Promise<void> {
 		console.log("[App] Initializing Shiro Screen Share App UI...");
@@ -61,6 +63,7 @@ class ShiroApp {
 		this.setupDeepLinkListener();
 		this.setupAppSettings();
 		this.setupCustomSelects();
+		this.setupStreamDeckBridge();
 
 		// Mount the canvas visualizer (does not start animation yet)
 		this.audioVisualizer.mount("vu-canvas");
@@ -376,8 +379,32 @@ class ShiroApp {
 	private async refreshSources(): Promise<void> {
 		if (window.api?.getAvailableSources) {
 			const sources = await window.api.getAvailableSources();
+			this.allSources = sources;
 			this.sourcePicker?.setSources(sources);
+
+			// Track selected source index
+			const selected = this.sourcePicker?.getSelectedSource();
+			if (selected) {
+				this.selectedSourceIndex = sources.findIndex(
+					(s) => s.id === selected.id,
+				);
+			}
+
 			this.refreshIcons();
+
+			// Report sources to Stream Deck
+			if (window.api.reportSources) {
+				window.api.reportSources(
+					sources.map((s) => ({
+						id: s.id,
+						name: s.name,
+						processName: s.processName,
+						sourceType: s.sourceType,
+						thumbnailUrl: s.thumbnailUrl,
+					})),
+					this.selectedSourceIndex,
+				);
+			}
 		}
 	}
 
@@ -421,6 +448,11 @@ class ShiroApp {
 
 	private async onSourceSelected(source: WindowSource): Promise<void> {
 		console.log(`[App] Selected source: ${source.name} (ID: ${source.id})`);
+
+		// Track selected source index
+		this.selectedSourceIndex = this.allSources.findIndex(
+			(s) => s.id === source.id,
+		);
 
 		this.checkCanStartStream();
 
@@ -523,6 +555,11 @@ class ShiroApp {
 				) as HTMLInputElement;
 				if (input) input.checked = true;
 
+				// Report audio mode to Stream Deck
+				if (window.api?.reportAudioMode) {
+					window.api.reportAudioMode(this.getSelectedAudioMode());
+				}
+
 				// If streaming, update audio capture mode live
 				if (this.livekitPublisher.getIsConnected()) {
 					const selectedSource = this.sourcePicker?.getSelectedSource();
@@ -535,6 +572,36 @@ class ShiroApp {
 				}
 			});
 		});
+	}
+
+	private setAudioMode(mode: AudioCaptureMode): void {
+		const radioCards = document.querySelectorAll(".radio-card");
+		radioCards.forEach((card) => {
+			const input = card.querySelector(
+				'input[type="radio"]',
+			) as HTMLInputElement;
+			if (input && input.value === mode) {
+				card.classList.add("active");
+				input.checked = true;
+			} else {
+				card.classList.remove("active");
+			}
+		});
+
+		// If streaming, apply the change immediately
+		if (this.livekitPublisher.getIsConnected()) {
+			const selectedSource = this.sourcePicker?.getSelectedSource();
+			window.api.startAudioCapture({
+				mode,
+				targetPid: selectedSource?.pid,
+				targetProcessName: selectedSource?.processName,
+			});
+		}
+
+		// Report to Stream Deck
+		if (window.api?.reportAudioMode) {
+			window.api.reportAudioMode(mode);
+		}
 	}
 
 	private getSelectedAudioMode(): AudioCaptureMode {
@@ -652,6 +719,7 @@ class ShiroApp {
 			});
 
 			setStreamStatus(true, "🔴 AO VIVO");
+			if (window.api) window.api.reportStreamShareState(true);
 
 			const btnStart = document.getElementById("btn-start-stream");
 			const btnStop = document.getElementById("btn-stop-stream");
@@ -663,6 +731,7 @@ class ShiroApp {
 			console.error("[App] ❌ Error launching stream:", err);
 			alert(`Erro ao iniciar transmissão: ${err.message}`);
 			setStreamStatus(false, "Erro ao Conectar");
+			if (window.api) window.api.reportStreamShareState(false);
 			this.audioPipeline.stop();
 		}
 	}
@@ -679,6 +748,7 @@ class ShiroApp {
 		}
 		if (window.api) window.api.stopAudioCapture();
 		setStreamStatus(false, "Desconectado");
+		if (window.api) window.api.reportStreamShareState(false);
 
 		const btnStart = document.getElementById("btn-start-stream");
 		const btnStop = document.getElementById("btn-stop-stream");
@@ -686,6 +756,98 @@ class ShiroApp {
 			btnStart.classList.remove("hidden");
 			btnStop.classList.add("hidden");
 		}
+	}
+
+	private setupStreamDeckBridge(): void {
+		if (!window.api) return;
+
+		// Toggle screen sharing
+		window.api.onStreamDeckToggle(() => {
+			console.log("[App] Stream Deck: toggle requested");
+			if (this.livekitPublisher.getIsConnected()) {
+				this.stopStreaming();
+			} else {
+				this.startStreaming();
+			}
+		});
+
+		// Respond to state query
+		window.api.onStreamDeckGetState(() => {
+			window.api.reportStreamShareState(
+				this.livekitPublisher.getIsConnected(),
+			);
+		});
+
+		// Respond to source list query
+		window.api.onStreamDeckGetSources(() => {
+			window.api.respondSources(
+				this.allSources.map((s) => ({
+					id: s.id,
+					name: s.name,
+					processName: s.processName,
+					sourceType: s.sourceType,
+					thumbnailUrl: s.thumbnailUrl,
+				})),
+				this.selectedSourceIndex,
+			);
+		});
+
+		// Select source by index
+		window.api.onStreamDeckSelectSource((index: number) => {
+			console.log(`[App] Stream Deck: select source index ${index}`);
+			if (index >= 0 && index < this.allSources.length) {
+				const source = this.allSources[index];
+				this.sourcePicker?.setSelectedSource(source);
+				this.onSourceSelected(source);
+			}
+		});
+
+		// Cycle to next source
+		window.api.onStreamDeckCycleSource(() => {
+			console.log("[App] Stream Deck: cycle source");
+			if (this.allSources.length === 0) return;
+			const nextIndex =
+				(this.selectedSourceIndex + 1) % this.allSources.length;
+			const source = this.allSources[nextIndex];
+			this.sourcePicker?.setSelectedSource(source);
+			this.onSourceSelected(source);
+		});
+
+		// Respond to audio mode query
+		window.api.onStreamDeckGetAudioMode(() => {
+			window.api.respondAudioMode(this.getSelectedAudioMode());
+		});
+
+		// Set audio mode directly
+		window.api.onStreamDeckSetAudioMode(
+			(mode: "process" | "system" | "disabled") => {
+				console.log(`[App] Stream Deck: set audio mode to ${mode}`);
+				this.setAudioMode(mode);
+			},
+		);
+
+		// Cycle audio mode: process -> system -> disabled -> process
+		window.api.onStreamDeckCycleAudioMode(() => {
+			console.log("[App] Stream Deck: cycle audio mode");
+			const modes: AudioCaptureMode[] = ["process", "system", "disabled"];
+			const current = this.getSelectedAudioMode();
+			const currentIdx = modes.indexOf(current);
+			const nextMode = modes[(currentIdx + 1) % modes.length];
+			this.setAudioMode(nextMode);
+		});
+
+		// Launch activity (click the start button or simulate deep link)
+		window.api.onStreamDeckLaunchActivity(() => {
+			console.log("[App] Stream Deck: launch activity");
+			const btnStart = document.getElementById(
+				"btn-start-stream",
+			) as HTMLButtonElement;
+			if (btnStart && !btnStart.disabled) {
+				btnStart.click();
+			}
+		});
+
+		console.log("[App] Stream Deck bridge initialized");
 	}
 
 	private setupDeepLinkListener(): void {

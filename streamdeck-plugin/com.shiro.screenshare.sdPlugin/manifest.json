@@ -1,0 +1,157 @@
+{
+	"$schema": "https://schemas.elgato.com/streamdeck/plugins/manifest.json",
+	"Actions": [
+		{
+			"Icon": "imgs/actions/toggle-share",
+			"Name": "Toggle Screen Share",
+			"States": [
+				{
+					"Image": "imgs/states/sharing",
+					"Name": "Sharing",
+					"Title": "SHARING",
+					"TitleColor": "#FFFFFF",
+					"ShowTitle": true,
+					"TitleAlignment": "bottom"
+				},
+				{
+					"Image": "imgs/states/idle",
+					"Name": "Idle",
+					"Title": "START",
+					"TitleColor": "#AAAAAA",
+					"ShowTitle": true,
+					"TitleAlignment": "bottom"
+				}
+			],
+			"UUID": "com.shiro.screenshare.toggle",
+			"Tooltip": "Toggle screen sharing on/off",
+			"UserTitleEnabled": false,
+			"DisableAutomaticStates": true
+		},
+		{
+			"Icon": "imgs/actions/audio-mode",
+			"Name": "Audio Mode",
+			"States": [
+				{
+					"Image": "imgs/states/audio-app",
+					"Name": "App Audio",
+					"Title": "APP",
+					"TitleColor": "#FFFFFF",
+					"ShowTitle": true,
+					"TitleAlignment": "bottom"
+				},
+				{
+					"Image": "imgs/states/audio-sys",
+					"Name": "System Audio",
+					"Title": "SYS",
+					"TitleColor": "#FFFFFF",
+					"ShowTitle": true,
+					"TitleAlignment": "bottom"
+				},
+				{
+					"Image": "imgs/states/audio-mute",
+					"Name": "No Audio",
+					"Title": "MUTE",
+					"TitleColor": "#AAAAAA",
+					"ShowTitle": true,
+					"TitleAlignment": "bottom"
+				}
+			],
+			"UUID": "com.shiro.screenshare.audio-mode",
+			"Tooltip": "Cycle audio mode: App Audio / System Audio / Muted",
+			"UserTitleEnabled": false,
+			"DisableAutomaticStates": true
+		},
+		{
+			"Icon": "imgs/actions/launch",
+			"Name": "Launch Activity",
+			"States": [
+				{
+					"Image": "imgs/actions/launch",
+					"Title": "GO LIVE",
+					"TitleColor": "#FFFFFF",
+					"ShowTitle": true,
+					"TitleAlignment": "bottom"
+				}
+			],
+			"UUID": "com.shiro.screenshare.launch-activity",
+			"Tooltip": "Open Discord Activity to start sharing",
+			"UserTitleEnabled": false
+		},
+		{
+			"Icon": "imgs/actions/preview",
+			"Name": "Source Preview",
+			"States": [
+				{
+					"Image": "imgs/actions/preview",
+					"Title": "Select",
+					"TitleColor": "#FFFFFF",
+					"ShowTitle": true,
+					"TitleAlignment": "bottom"
+				}
+			],
+			"UUID": "com.shiro.screenshare.source-preview",
+			"Tooltip": "Preview a source. Short press to select it. Long press (hold) to cycle to next source.",
+			"UserTitleEnabled": false
+		},
+		{
+			"Icon": "imgs/actions/preview-up",
+			"Name": "Preview Previous",
+			"States": [
+				{
+					"Image": "imgs/actions/preview-up",
+					"Title": "PREV",
+					"TitleColor": "#FFFFFF",
+					"ShowTitle": true,
+					"TitleAlignment": "bottom"
+				}
+			],
+			"UUID": "com.shiro.screenshare.preview-previous",
+			"Tooltip": "Switch preview to the previous source.",
+			"UserTitleEnabled": false
+		},
+		{
+			"Icon": "imgs/actions/preview-down",
+			"Name": "Preview Next",
+			"States": [
+				{
+					"Image": "imgs/actions/preview-down",
+					"Title": "NEXT",
+					"TitleColor": "#FFFFFF",
+					"ShowTitle": true,
+					"TitleAlignment": "bottom"
+				}
+			],
+			"UUID": "com.shiro.screenshare.preview-next",
+			"Tooltip": "Switch preview to the next source.",
+			"UserTitleEnabled": false
+		}
+	],
+	"Author": "Hito",
+	"CodePath": "bin/plugin.js",
+	"Description": "Control Shiro Screen Share from your Stream Deck. Toggle sharing, switch windows, change audio modes, and see live previews.",
+	"Icon": "imgs/plugin-icon",
+	"Name": "Shiro Screen Share",
+	"Nodejs": {
+		"Version": "24"
+	},
+	"OS": [
+		{
+			"Platform": "mac",
+			"MinimumVersion": "13"
+		},
+		{
+			"Platform": "windows",
+			"MinimumVersion": "10"
+		}
+	],
+	"UUID": "com.shiro.screenshare",
+	"Version": "1.1.0.0",
+	"SDKVersion": 2,
+	"Software": {
+		"MinimumVersion": "6.6"
+	},
+	"ApplicationsToMonitor": {
+		"windows": ["Shiro Screen Share.exe"],
+		"mac": ["com.shiro.screenshare"]
+	}
+}

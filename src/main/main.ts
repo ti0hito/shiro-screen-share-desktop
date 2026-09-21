@@ -5,6 +5,10 @@ import { autoUpdater } from "electron-updater";
 import { AudioCaptureEngine } from "./audioEngine";
 import { setupIpcHandlers } from "./ipcHandlers";
 import { parseDeepLinkUrl, registerDeepLinkProtocol } from "./protocol";
+import {
+	startWebSocketServer,
+	stopWebSocketServer,
+} from "./websocketServer";
 
 // Set Windows Application ID for Taskbar Icon & Grouping
 if (process.platform === "win32") {
@@ -118,6 +122,9 @@ function createWindow(): void {
 			pendingDeepLink = null;
 		}
 	});
+
+	// Start WebSocket server for Stream Deck bridge
+	startWebSocketServer(mainWindow);
 
 	mainWindow.on("close", (event) => {
 		if (!appShouldQuit) {
@@ -248,4 +255,5 @@ app.on("window-all-closed", () => {
 
 app.on("will-quit", () => {
 	audioEngine.stopCapture();
+	stopWebSocketServer();
 });

@@ -1,0 +1,28 @@
+{
+	"name": "com.shiro.screenshare",
+	"version": "1.0.0",
+	"description": "Shiro Screen Share — Stream Deck Plugin",
+	"main": "bin/plugin.js",
+	"author": "Hito",
+	"license": "MIT",
+	"scripts": {
+		"build": "rollup -c",
+		"watch": "rollup -c -w --watch.onEnd=\"streamdeck restart com.shiro.screenshare\"",
+		"start": "streamdeck restart com.shiro.screenshare"
+	},
+	"dependencies": {
+		"@elgato/streamdeck": "^2.1.2",
+		"sharp": "^0.35.4",
+		"ws": "^8.18.0"
+	},
+	"devDependencies": {
+		"@rollup/plugin-commonjs": "^25.0.7",
+		"@rollup/plugin-node-resolve": "^15.2.3",
+		"@rollup/plugin-typescript": "^11.1.5",
+		"@types/node": "^20.11.0",
+		"@types/ws": "^8.5.10",
+		"rollup": "^4.9.0",
+		"tslib": "^2.6.2",
+		"typescript": "^5.3.3"
+	}
+}

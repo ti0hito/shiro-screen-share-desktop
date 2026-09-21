@@ -78,6 +78,94 @@ const api: ElectronAPI = {
 		ipcRenderer.on("audio-capture-error", listener);
 		return () => ipcRenderer.removeListener("audio-capture-error", listener);
 	},
+
+	// Stream Deck bridge
+	reportStreamShareState: (isSharing: boolean): void => {
+		ipcRenderer.send("streamdeck-state-report", isSharing);
+	},
+	onStreamDeckToggle: (callback: () => void) => {
+		const listener = (_event: any) => callback();
+		ipcRenderer.on("streamdeck-toggle", listener);
+		return () => ipcRenderer.removeListener("streamdeck-toggle", listener);
+	},
+	onStreamDeckGetState: (callback: () => void) => {
+		const listener = (_event: any) => callback();
+		ipcRenderer.on("streamdeck-get-state", listener);
+		return () => ipcRenderer.removeListener("streamdeck-get-state", listener);
+	},
+	reportSources: (
+		sources: Array<{
+			id: string;
+			name: string;
+			processName: string;
+			sourceType: "window" | "screen";
+			thumbnailUrl: string;
+		}>,
+		selectedIndex: number,
+	): void => {
+		ipcRenderer.send("streamdeck-sources-report", sources, selectedIndex);
+	},
+	respondSources: (
+		sources: Array<{
+			id: string;
+			name: string;
+			processName: string;
+			sourceType: "window" | "screen";
+			thumbnailUrl: string;
+		}>,
+		selectedIndex: number,
+	): void => {
+		ipcRenderer.send("streamdeck-sources-response", sources, selectedIndex);
+	},
+	onStreamDeckGetSources: (callback: () => void) => {
+		const listener = (_event: any) => callback();
+		ipcRenderer.on("streamdeck-get-sources", listener);
+		return () => ipcRenderer.removeListener("streamdeck-get-sources", listener);
+	},
+	onStreamDeckSelectSource: (callback: (index: number) => void) => {
+		const listener = (_event: any, index: number) => callback(index);
+		ipcRenderer.on("streamdeck-select-source", listener);
+		return () =>
+			ipcRenderer.removeListener("streamdeck-select-source", listener);
+	},
+	onStreamDeckCycleSource: (callback: () => void) => {
+		const listener = (_event: any) => callback();
+		ipcRenderer.on("streamdeck-cycle-source", listener);
+		return () => ipcRenderer.removeListener("streamdeck-cycle-source", listener);
+	},
+	reportAudioMode: (mode: "process" | "system" | "disabled"): void => {
+		ipcRenderer.send("streamdeck-audio-mode-report", mode);
+	},
+	respondAudioMode: (mode: "process" | "system" | "disabled"): void => {
+		ipcRenderer.send("streamdeck-audio-mode-response", mode);
+	},
+	onStreamDeckGetAudioMode: (callback: () => void) => {
+		const listener = (_event: any) => callback();
+		ipcRenderer.on("streamdeck-get-audio-mode", listener);
+		return () =>
+			ipcRenderer.removeListener("streamdeck-get-audio-mode", listener);
+	},
+	onStreamDeckSetAudioMode: (
+		callback: (mode: "process" | "system" | "disabled") => void,
+	) => {
+		const listener = (_event: any, mode: string) =>
+			callback(mode as "process" | "system" | "disabled");
+		ipcRenderer.on("streamdeck-set-audio-mode", listener);
+		return () =>
+			ipcRenderer.removeListener("streamdeck-set-audio-mode", listener);
+	},
+	onStreamDeckCycleAudioMode: (callback: () => void) => {
+		const listener = (_event: any) => callback();
+		ipcRenderer.on("streamdeck-cycle-audio-mode", listener);
+		return () =>
+			ipcRenderer.removeListener("streamdeck-cycle-audio-mode", listener);
+	},
+	onStreamDeckLaunchActivity: (callback: () => void) => {
+		const listener = (_event: any) => callback();
+		ipcRenderer.on("streamdeck-launch-activity", listener);
+		return () =>
+			ipcRenderer.removeListener("streamdeck-launch-activity", listener);
+	},
 };
 
 try {
