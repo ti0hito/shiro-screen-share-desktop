@@ -8,10 +8,12 @@ directories:
   output: release
   buildResources: build
 files:
-  - dist/**/*
-  - node_modules/**/*
-  - package.json
-  - icon.ico
+  - "dist/main/**/*"
+  - "dist/preload/**/*"
+  - "dist/renderer/**/*"
+  - "node_modules/**/*"
+  - "package.json"
+  - "icon.ico"
 extraResources:
   - icon.ico
 win:

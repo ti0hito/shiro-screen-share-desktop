@@ -1,7 +1,7 @@
 {
 	"name": "shiro-screen-share",
-	"version": "2.0.3",
-	"description": "Shiro Screen Share — Desktop app with isolated process audio capture for Discord Activities & LiveKit",
+	"version": "2.1.0",
+	"description": "Shiro Screen Share — Desktop app with isolated process audio capture and WebRTC P2P multi-stream",
 	"main": "dist/main/main.js",
 	"author": "Hito",
 	"license": "MIT",
@@ -19,7 +19,6 @@
 		"dotenv": "^16.4.7",
 		"electron-updater": "^6.8.9",
 		"koffi": "^3.2.1",
-		"livekit-client": "^2.22.2",
 		"loopback-capture": "^3.0.2",
 		"lucide": "^0.469.0",
 		"ws": "^8.21.3"

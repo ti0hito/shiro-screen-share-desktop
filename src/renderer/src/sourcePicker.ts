@@ -34,6 +34,14 @@ export class SourcePicker {
 		this.render();
 	}
 
+	public setSelectedSourceById(id: string): void {
+		const found = this.sources.find((s) => s.id === id);
+		if (found) {
+			this.selectedSource = found;
+			this.render();
+		}
+	}
+
 	public render(): void {
 		this.containerElement.innerHTML = "";
 
