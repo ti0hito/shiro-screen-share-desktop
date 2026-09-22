@@ -5,6 +5,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Shiro Screen Share</title>
+  <meta name="description" content="Compartilhamento de tela P2P seguro e de alta performance.">
   <link rel="icon" type="image/x-icon" href="icon.ico">
   <link rel="stylesheet" href="index.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -14,107 +15,360 @@
 
 <body>
   <div id="app" class="app-container">
-    <!-- Custom Window Drag Bar -->
-    <header class="window-header">
-      <div class="header-title">
-        <img src="icon.ico" class="app-header-icon" alt="Shiro Logo" width="18" height="18">
-        <span class="app-name">Shiro Screen Share</span>
-        <span class="badge badge-ts">v2.0.3</span>
-      </div>
-      <div class="header-controls">
-        <button id="btn-theme-toggle" class="win-btn theme-toggle-btn" title="Alternar Tema Claro / Escuro">
-          <i data-lucide="sun"></i>
-        </button>
-        <button id="btn-minimize" class="win-btn" title="Minimizar">—</button>
-        <button id="btn-maximize" class="win-btn" title="Maximizar">☐</button>
-        <button id="btn-close" class="win-btn win-close" title="Fechar">✕</button>
-      </div>
-    </header>
 
-    <!-- Main Content Layout -->
-    <main class="main-content">
-      <!-- Left Column: Source Selection Grid (2x2) -->
-      <section class="sources-panel">
-        <div class="panel-header">
-          <h2>Selecione a Fonte</h2>
-          <button id="btn-refresh-sources" class="btn btn-secondary btn-sm" title="Atualizar Lista">
-            <i data-lucide="refresh-cw"></i>
-            <span>Atualizar</span>
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- VIEW: LOGIN — exibida antes da autenticação            -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <div id="view-login" class="view view-login">
+      <!-- Drag bar transparente no topo -->
+      <div class="login-drag-bar">
+        <div class="login-drag-bar-controls">
+          <button id="login-btn-minimize" class="win-btn" title="Minimizar">—</button>
+          <button id="login-btn-close" class="win-btn win-close" title="Fechar">✕</button>
+        </div>
+      </div>
+
+      <!-- Fundo animado com partículas -->
+      <div class="login-bg">
+        <div class="login-bg-orb orb-1"></div>
+        <div class="login-bg-orb orb-2"></div>
+        <div class="login-bg-orb orb-3"></div>
+      </div>
+
+      <!-- Card de Login/Registro -->
+      <div class="login-card">
+        <!-- Logotipo -->
+        <div class="login-logo">
+          <img src="icon.ico" alt="Shiro Logo" width="40" height="40" class="login-logo-img">
+          <div class="login-logo-text">
+            <h1 class="login-app-name">Shiro</h1>
+            <span class="login-app-sub">Screen Share</span>
+          </div>
+        </div>
+
+        <!-- Abas Login / Registro -->
+        <div class="auth-tabs">
+          <button id="tab-login" class="auth-tab active" aria-selected="true">Entrar</button>
+          <button id="tab-register" class="auth-tab" aria-selected="false">Criar Conta</button>
+          <div class="auth-tab-indicator"></div>
+        </div>
+
+        <!-- Formulário de Login -->
+        <form id="form-login" class="auth-form" autocomplete="off">
+          <div class="input-group">
+            <label for="login-username" class="input-label">Usuário</label>
+            <div class="input-wrapper">
+              <i data-lucide="user" class="input-icon"></i>
+              <input
+                type="text"
+                id="login-username"
+                name="username"
+                class="auth-input"
+                placeholder="Seu nome de usuário"
+                autocomplete="username"
+                maxlength="32"
+                required
+              >
+            </div>
+          </div>
+
+          <div class="input-group">
+            <label for="login-password" class="input-label">Senha</label>
+            <div class="input-wrapper">
+              <i data-lucide="lock" class="input-icon"></i>
+              <input
+                type="password"
+                id="login-password"
+                name="password"
+                class="auth-input"
+                placeholder="Sua senha"
+                autocomplete="current-password"
+                maxlength="128"
+                required
+              >
+              <button type="button" id="toggle-login-password" class="input-eye" tabindex="-1" title="Mostrar/Ocultar senha">
+                <i data-lucide="eye" class="eye-icon-show"></i>
+                <i data-lucide="eye-off" class="eye-icon-hide" style="display:none"></i>
+              </button>
+            </div>
+          </div>
+
+          <div class="remember-me-row">
+            <label class="remember-me-label" for="login-remember-me">
+              <input type="checkbox" id="login-remember-me" checked>
+              <span class="remember-me-text">Lembrar login (renova a cada 2 semanas)</span>
+            </label>
+          </div>
+
+          <div id="login-error" class="auth-error" role="alert" aria-live="polite"></div>
+
+          <button id="btn-login" type="submit" class="btn btn-primary btn-auth">
+            <span class="btn-text">Entrar</span>
+            <i data-lucide="loader-2" class="btn-spinner spin" style="display:none"></i>
           </button>
-        </div>
+        </form>
 
-        <div class="tabs-container">
-          <div class="tabs-track">
-            <div class="tabs-indicator"></div>
-            <button id="tab-windows" class="tab-btn active">
-              <i data-lucide="app-window"></i> Janelas
+        <!-- Formulário de Registro -->
+        <form id="form-register" class="auth-form hidden" autocomplete="off">
+          <div class="input-group">
+            <label for="reg-username" class="input-label">Usuário</label>
+            <div class="input-wrapper">
+              <i data-lucide="user" class="input-icon"></i>
+              <input
+                type="text"
+                id="reg-username"
+                name="username"
+                class="auth-input"
+                placeholder="Escolha um nome de usuário"
+                autocomplete="username"
+                maxlength="32"
+                required
+              >
+            </div>
+          </div>
+
+          <div class="input-group">
+            <label for="reg-password" class="input-label">Senha</label>
+            <div class="input-wrapper">
+              <i data-lucide="lock" class="input-icon"></i>
+              <input
+                type="password"
+                id="reg-password"
+                name="password"
+                class="auth-input"
+                placeholder="Crie uma senha forte"
+                autocomplete="new-password"
+                maxlength="128"
+                required
+              >
+              <button type="button" id="toggle-reg-password" class="input-eye" tabindex="-1" title="Mostrar/Ocultar senha">
+                <i data-lucide="eye" class="eye-icon-show"></i>
+                <i data-lucide="eye-off" class="eye-icon-hide" style="display:none"></i>
+              </button>
+            </div>
+          </div>
+
+          <div class="input-group">
+            <label for="reg-password-confirm" class="input-label">Confirmar Senha</label>
+            <div class="input-wrapper">
+              <i data-lucide="shield-check" class="input-icon"></i>
+              <input
+                type="password"
+                id="reg-password-confirm"
+                name="password_confirm"
+                class="auth-input"
+                placeholder="Repita a senha"
+                autocomplete="new-password"
+                maxlength="128"
+                required
+              >
+            </div>
+          </div>
+
+          <div id="register-error" class="auth-error" role="alert" aria-live="polite"></div>
+
+          <button id="btn-register" type="submit" class="btn btn-primary btn-auth">
+            <span class="btn-text">Criar Conta</span>
+            <i data-lucide="loader-2" class="btn-spinner spin" style="display:none"></i>
+          </button>
+        </form>
+
+        <p class="login-footer-text">Shiro Screen Share v2.1.0 — P2P</p>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- VIEW: MAIN — exibida após autenticação                  -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <div id="view-main" class="view view-main hidden">
+
+      <!-- Header Principal -->
+      <header class="window-header">
+        <div class="header-title">
+          <img src="icon.ico" class="app-header-icon" alt="Shiro Logo" width="18" height="18">
+          <span class="app-name">Shiro Screen Share</span>
+          <span class="badge badge-ts">P2P</span>
+        </div>
+        <div class="header-right">
+          <!-- Info do usuário logado -->
+          <div class="header-user-info">
+            <div class="user-avatar" id="header-user-avatar">S</div>
+            <span class="header-username" id="header-username">—</span>
+          </div>
+          <!-- Ações do header -->
+          <button id="btn-theme-toggle" class="win-btn theme-toggle-btn" title="Alternar Tema">
+            <i data-lucide="sun"></i>
+          </button>
+          <button id="btn-logout" class="win-btn" title="Sair da conta">
+            <i data-lucide="log-out"></i>
+          </button>
+          <button id="btn-minimize" class="win-btn" title="Minimizar">—</button>
+          <button id="btn-maximize" class="win-btn" title="Maximizar">☐</button>
+          <button id="btn-close" class="win-btn win-close" title="Fechar">✕</button>
+        </div>
+      </header>
+
+      <!-- Layout principal: esquerda (painel) + direita (grid fontes) -->
+      <main class="main-content">
+
+        <!-- ── Painel Esquerdo ── -->
+        <aside class="left-panel">
+
+          <!-- Abas: Salas / Fontes / Usuários -->
+          <div class="panel-tabs">
+            <button id="panel-tab-rooms" class="panel-tab active" title="Salas de transmissão">
+              <i data-lucide="radio"></i>
+              <span>Salas</span>
             </button>
-            <button id="tab-screens" class="tab-btn">
-              <i data-lucide="screen-share"></i> Telas Inteiras
+            <div class="panel-tab-wrapper">
+              <button id="panel-tab-sources" class="panel-tab disabled" disabled title="Fontes de captura">
+                <i data-lucide="monitor"></i>
+                <span>Fontes</span>
+              </button>
+              <div class="tab-tooltip">Entre em uma sala para liberar as fontes</div>
+            </div>
+            <button id="panel-tab-users" class="panel-tab" title="Usuários online">
+              <i data-lucide="users"></i>
+              <span>Usuários</span>
+            </button>
+            <button id="btn-toggle-sidebar" class="sidebar-collapse-btn" title="Recolher / Expandir Painel">
+              <i data-lucide="chevron-left"></i>
             </button>
           </div>
-        </div>
 
-        <div id="sources-grid" class="sources-grid grid-2x2">
-          <div class="loading-spinner">
-            <i data-lucide="loader-2" class="spin"></i> Carregando janelas...
+          <!-- Sub-painel: Salas de Transmissão -->
+          <div id="panel-rooms" class="panel-section">
+            <div class="rooms-panel-header">
+              <span class="users-panel-title">Salas públicas</span>
+              <div class="rooms-header-actions">
+                <button id="btn-open-join-by-id" class="btn btn-secondary btn-sm" title="Entrar em sala pública ou privada por ID">
+                  <i data-lucide="target"></i>
+                  <span>Entrar p/ ID</span>
+                </button>
+                <button id="btn-open-create-room" class="btn btn-primary btn-sm" title="Criar nova sala">
+                  <i data-lucide="zap"></i>
+                  <span>+ Criar</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Campo de Busca / Lupa de Salas -->
+            <div class="rooms-search-box">
+              <div class="input-wrapper">
+                <i data-lucide="search" class="input-icon"></i>
+                <input type="text" id="input-search-rooms" class="search-input" placeholder="Pesquisar sala por nome ou ID...">
+              </div>
+            </div>
+
+            <div id="rooms-list" class="rooms-list">
+              <div class="loading-spinner">
+                <i data-lucide="loader-2" class="spin"></i>
+                <span>Carregando salas...</span>
+              </div>
+            </div>
+
+            <button id="btn-refresh-rooms" class="btn btn-ghost btn-sm panel-refresh-btn" title="Atualizar">
+              <i data-lucide="refresh-cw"></i>
+              <span>Atualizar Salas</span>
+            </button>
           </div>
-        </div>
-      </section>
 
-      <!-- Right Column: Giant Borderless Preview & Floating Overlays -->
-      <section class="preview-section">
-        <div class="preview-video-container">
-          <!-- Hidden inputs for deep link room parameters -->
-          <input type="hidden" id="input-room" value="">
-          <input type="hidden" id="input-identity" value="">
+          <!-- Sub-painel: Fontes (Janela / Tela) -->
+          <div id="panel-sources" class="panel-section hidden">
+            <div class="sub-tabs-container">
+              <div class="sub-tabs-track">
+                <div class="sub-tabs-indicator"></div>
+                <button id="tab-windows" class="sub-tab-btn active">
+                  <i data-lucide="app-window"></i> <span>Janela</span>
+                </button>
+                <button id="tab-screens" class="sub-tab-btn">
+                  <i data-lucide="screen-share"></i> <span>Tela</span>
+                </button>
+              </div>
+            </div>
 
-          <video id="preview-video" autoplay muted playsinline></video>
+            <!-- Grid compacto 2x2 de fontes no painel esquerdo -->
+            <div id="sources-panel-grid" class="sources-panel-grid">
+              <div class="loading-spinner">
+                <i data-lucide="loader-2" class="spin"></i>
+                <span>Carregando...</span>
+              </div>
+            </div>
 
-          <div id="preview-placeholder" class="preview-placeholder">
-            <i data-lucide="play-circle" class="placeholder-lucide-icon"></i>
-            <p>Selecione uma janela ao lado para visualizar e transmitir</p>
+            <button id="btn-refresh-sources" class="btn btn-ghost btn-sm panel-refresh-btn" title="Atualizar">
+              <i data-lucide="refresh-cw"></i>
+              <span>Atualizar</span>
+            </button>
           </div>
 
-          <!-- Top Overlay (Floating directly over top-left of video) -->
-          <div class="overlay-top-bar">
-            <div class="overlay-status-group">
-              <span id="stream-badge" class="badge badge-offline">Desconectado</span>
-              <div id="connection-tag" class="connection-tag hidden">
-                <i data-lucide="check-circle-2" class="icon-check-green"></i>
-                <span class="text-white-connected">Conectado</span>
+          <!-- Sub-painel: Usuários online -->
+          <div id="panel-users" class="panel-section hidden">
+            <div class="users-panel-header">
+              <span class="users-panel-title">Online agora</span>
+              <button id="btn-refresh-users" class="btn btn-ghost btn-icon" title="Atualizar lista">
+                <i data-lucide="refresh-cw"></i>
+              </button>
+            </div>
+
+            <div id="users-list" class="users-list">
+              <div class="users-empty">
+                <i data-lucide="wifi-off"></i>
+                <span>Nenhum usuário online</span>
               </div>
             </div>
           </div>
 
-          <!-- Bottom Control Bar (Floating directly over bottom of video) -->
-          <div class="overlay-bottom-bar">
-            <div class="overlay-controls-left">
-              <button id="btn-start-stream" class="btn btn-primary btn-lg float-btn" disabled>
+        </aside>
+
+        <!-- ── Área Direita: Grid de Transmissões ao Vivo ── -->
+        <section class="right-section">
+
+          <!-- Botão Flutuante Transparente para reabrir Sidebar em modo colapsado -->
+          <button id="btn-expand-sidebar-floating" class="sidebar-expand-floating-btn" title="Expandir Painel Lateral">
+            <i data-lucide="chevron-right"></i>
+          </button>
+
+          <!-- Grid principal de transmissões (Multi-Stream Grid) -->
+          <div class="main-grid-area">
+            <div id="live-streams-grid" class="live-streams-grid">
+              <!-- Placeholder padrão quando nenhuma transmissão está em andamento -->
+              <div id="main-grid-placeholder" class="main-grid-placeholder">
+                <i data-lucide="radio" class="placeholder-lucide-icon"></i>
+                <h3>Grid de Transmissões ao Vivo</h3>
+                <p>Nenhuma transmissão ativa nesta sala. Selecione uma fonte ao lado e clique em <b>Iniciar Transmissão</b>!</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Barra inferior de controles -->
+          <div class="bottom-controls-bar">
+            <div class="bottom-controls-left">
+              <button id="btn-start-stream" class="btn btn-primary btn-start" disabled>
                 <i data-lucide="play"></i>
-                <span>Iniciar Transmissão</span>
+                <span>Iniciar transmissão</span>
               </button>
-              <button id="btn-stop-stream" class="btn btn-danger btn-lg float-btn hidden">
+              <button id="btn-stop-stream" class="btn btn-danger btn-start hidden">
                 <i data-lucide="square"></i>
-                <span>Encerrar Transmissão</span>
+                <span>Encerrar transmissão</span>
               </button>
             </div>
 
-            <div class="overlay-controls-right">
-              <!-- Audio Settings Overlay Trigger -->
-              <button id="btn-toggle-audio" class="overlay-icon-btn float-icon-btn"
-                title="Modo de Áudio da Transmissão">
+            <div class="bottom-controls-right">
+              <!-- Badge de status -->
+              <span id="stream-badge" class="badge badge-offline">Desconectado</span>
+
+              <!-- Audio Settings Trigger -->
+              <button id="btn-toggle-audio" class="overlay-icon-btn" title="Modo de Áudio">
                 <i data-lucide="volume-2"></i>
               </button>
-              <!-- Video Quality Settings Overlay Trigger -->
-              <button id="btn-toggle-settings" class="overlay-icon-btn float-icon-btn"
-                title="Configurações da Transmissão (Engrenagem)">
+              <!-- Video/Quality Settings Trigger -->
+              <button id="btn-toggle-settings" class="overlay-icon-btn" title="Configurações">
                 <i data-lucide="settings"></i>
               </button>
             </div>
           </div>
 
-          <!-- Video Quality Popover Panel -->
+          <!-- Popover: Configurações de Qualidade -->
           <div id="settings-popover" class="popover-panel hidden">
             <div class="popover-header">
               <h4><i data-lucide="settings"></i> Configurações de Transmissão</h4>
@@ -159,42 +413,6 @@
                 </div>
               </div>
 
-              <div class="setting-row">
-                <label for="select-bitrate"><i data-lucide="wifi"></i> Bitrate</label>
-                <div class="custom-select" data-select="select-bitrate">
-                  <select id="select-bitrate" class="select-input hidden-select">
-                    <option value="4500" selected>4.5 Mbps (Recomendado)</option>
-                    <option value="8000">8.0 Mbps (Alta Qualidade)</option>
-                    <option value="12000">12.0 Mbps (Ultra 2K/4K)</option>
-                    <option value="2500">2.5 Mbps (Econômico)</option>
-                  </select>
-                  <button type="button" class="select-trigger">4.5 Mbps (Recomendado)</button>
-                  <ul class="select-dropdown">
-                    <li data-value="4500" class="selected">4.5 Mbps (Recomendado)</li>
-                    <li data-value="8000">8.0 Mbps (Alta Qualidade)</li>
-                    <li data-value="12000">12.0 Mbps (Ultra 2K/4K)</li>
-                    <li data-value="2500">2.5 Mbps (Econômico)</li>
-                  </ul>
-                </div>
-              </div>
-
-              <div class="setting-row">
-                <label for="select-priority"><i data-lucide="target"></i> Prioridade</label>
-                <div class="custom-select" data-select="select-priority">
-                  <select id="select-priority" class="select-input hidden-select">
-                    <option value="maintain-framerate" selected>Fluidez / Zero Latência (Recomendado)</option>
-                    <option value="maintain-resolution">Resolução Máxima</option>
-                    <option value="balanced">Balanceado</option>
-                  </select>
-                  <button type="button" class="select-trigger">Fluidez / Zero Latência (Recomendado)</button>
-                  <ul class="select-dropdown">
-                    <li data-value="maintain-framerate" class="selected">Fluidez / Zero Latência (Recomendado)</li>
-                    <li data-value="maintain-resolution">Resolução Máxima</li>
-                    <li data-value="balanced">Balanceado</li>
-                  </ul>
-                </div>
-              </div>
-
               <div class="popover-divider"></div>
 
               <div class="setting-row setting-toggle-row">
@@ -215,7 +433,7 @@
             </div>
           </div>
 
-          <!-- Audio Settings Popover Panel -->
+          <!-- Popover: Áudio -->
           <div id="audio-popover" class="popover-panel hidden">
             <div class="popover-header">
               <h4><i data-lucide="volume-2"></i> Modo de Áudio</h4>
@@ -226,24 +444,22 @@
                 <label class="radio-card active">
                   <input type="radio" name="audioMode" value="process" checked>
                   <div class="radio-content">
-                    <span class="radio-title"><i data-lucide="shield-check"></i> Apenas este Aplicativo</span>
-                    <span class="radio-desc">Captura exclusivamente o som do jogo/programa selecionado.</span>
+                    <span class="radio-title"><i data-lucide="shield-check"></i> Apenas este App</span>
+                    <span class="radio-desc">Captura só o som do programa selecionado.</span>
                   </div>
                 </label>
-
                 <label class="radio-card">
                   <input type="radio" name="audioMode" value="system">
                   <div class="radio-content">
-                    <span class="radio-title"><i data-lucide="volume-x"></i> Som do Sistema Inteiro</span>
-                    <span class="radio-desc">Captura todo o áudio de saída do computador.</span>
+                    <span class="radio-title"><i data-lucide="volume-x"></i> Som do Sistema</span>
+                    <span class="radio-desc">Captura todo o áudio de saída.</span>
                   </div>
                 </label>
-
                 <label class="radio-card">
                   <input type="radio" name="audioMode" value="disabled">
                   <div class="radio-content">
                     <span class="radio-title"><i data-lucide="mic-off"></i> Sem Áudio</span>
-                    <span class="radio-desc">Transmite apenas o vídeo sem áudio.</span>
+                    <span class="radio-desc">Apenas vídeo, sem áudio.</span>
                   </div>
                 </label>
               </div>
@@ -257,9 +473,137 @@
               </div>
             </div>
           </div>
+
+        </section>
+      </main>
+    </div><!-- /view-main -->
+
+  </div><!-- /app -->
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- MODAL: CRIAR SALA                                       -->
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <div id="modal-create-room" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3><i data-lucide="zap"></i> Criar Nova Sala</h3>
+        <button id="btn-close-create-room" class="modal-close-btn"><i data-lucide="x"></i></button>
+      </div>
+
+      <form id="form-create-room" class="modal-body">
+        <div class="input-group">
+          <label for="create-room-name" class="input-label">Nome da Sala *</label>
+          <div class="input-wrapper">
+            <i data-lucide="radio" class="input-icon"></i>
+            <input type="text" id="create-room-name" class="auth-input" placeholder="ex: Sala de Jogos" maxlength="50" required>
+          </div>
         </div>
-      </section>
-    </main>
+
+        <div class="input-group">
+          <label for="create-room-id" class="input-label">ID da Sala (Opcional)</label>
+          <div class="input-wrapper">
+            <i data-lucide="target" class="input-icon"></i>
+            <input type="text" id="create-room-id" class="auth-input" placeholder="Gerado automaticamente se em branco" maxlength="32">
+          </div>
+        </div>
+
+        <div class="input-group">
+          <label for="create-room-password" class="input-label">Senha de 8 Dígitos (Opcional - Sala Privada)</label>
+          <div class="input-wrapper input-with-action">
+            <i data-lucide="lock" class="input-icon"></i>
+            <input type="text" id="create-room-password" class="auth-input" placeholder="ex: 12345678" maxlength="8" pattern="\d{8}">
+            <button type="button" id="btn-generate-password" class="btn btn-ghost btn-sm btn-inline-action" title="Gerar 8 dígitos numéricos aleatórios">
+              <i data-lucide="zap"></i>
+              <span>Gerar Senha</span>
+            </button>
+          </div>
+          <span class="input-hint">Deixe em branco para manter a sala pública.</span>
+        </div>
+
+        <div id="create-room-error" class="auth-error" role="alert"></div>
+
+        <div class="modal-actions">
+          <button type="button" id="btn-cancel-create-room" class="btn btn-ghost">Cancelar</button>
+          <button type="submit" id="btn-submit-create-room" class="btn btn-primary">
+            <span>Criar Sala</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- MODAL: DIGITAR SENHA DE SALA PRIVADA                   -->
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <div id="modal-join-room-password" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3><i data-lucide="lock"></i> Sala Privada Protegida</h3>
+        <button id="btn-close-join-room" class="modal-close-btn"><i data-lucide="x"></i></button>
+      </div>
+
+      <form id="form-join-room-password" class="modal-body">
+        <p class="modal-desc">A sala <strong id="join-room-target-name">—</strong> requer a senha de 8 dígitos para acesso.</p>
+
+        <div class="input-group">
+          <label for="join-room-password" class="input-label">Senha da Sala (8 dígitos)</label>
+          <div class="input-wrapper">
+            <i data-lucide="lock" class="input-icon"></i>
+            <input type="password" id="join-room-password" class="auth-input" placeholder="Digite os 8 dígitos numéricos" maxlength="8" pattern="\d{8}" required autofocus>
+          </div>
+        </div>
+
+        <div id="join-room-error" class="auth-error" role="alert"></div>
+
+        <div class="modal-actions">
+          <button type="button" id="btn-cancel-join-room" class="btn btn-ghost">Cancelar</button>
+          <button type="submit" id="btn-submit-join-room" class="btn btn-primary">
+            <span>Entrar na Sala</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- MODAL: ENTRAR EM SALA POR ID                           -->
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <div id="modal-join-by-id" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3><i data-lucide="target"></i> Buscar / Entrar em Sala por ID</h3>
+        <button id="btn-close-join-by-id" class="modal-close-btn"><i data-lucide="x"></i></button>
+      </div>
+
+      <form id="form-join-by-id" class="modal-body">
+        <p class="modal-desc">Insira o ID de qualquer sala (pública ou privada) para se conectar.</p>
+
+        <div class="input-group">
+          <label for="join-by-id-room-id" class="input-label">ID da Sala *</label>
+          <div class="input-wrapper">
+            <i data-lucide="target" class="input-icon"></i>
+            <input type="text" id="join-by-id-room-id" class="auth-input" placeholder="ex: SHIRO-3RMN" maxlength="32" required autofocus>
+          </div>
+        </div>
+
+        <div class="input-group">
+          <label for="join-by-id-password" class="input-label">Senha de 8 Dígitos (Se for Privada)</label>
+          <div class="input-wrapper">
+            <i data-lucide="lock" class="input-icon"></i>
+            <input type="password" id="join-by-id-password" class="auth-input" placeholder="8 dígitos numéricos (se necessário)" maxlength="8" pattern="\d{8}">
+          </div>
+        </div>
+
+        <div id="join-by-id-error" class="auth-error" role="alert"></div>
+
+        <div class="modal-actions">
+          <button type="button" id="btn-cancel-join-by-id" class="btn btn-ghost">Cancelar</button>
+          <button type="submit" id="btn-submit-join-by-id" class="btn btn-primary">
+            <span>Entrar na Sala</span>
+          </button>
+        </div>
+      </form>
+    </div>
   </div>
 
   <script src="app.bundle.js"></script>

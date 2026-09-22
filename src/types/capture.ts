@@ -39,7 +39,6 @@ export interface StreamStartParams {
 	identity: string;
 	userName?: string;
 	backendUrl?: string;
-	livekitUrl?: string;
 	audioConfig: AudioCaptureConfig;
 	qualityOptions?: StreamQualityOptions;
 }

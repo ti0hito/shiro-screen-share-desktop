@@ -1,8 +1,14 @@
 import {
 	AppWindow,
 	CheckCircle2,
+	ChevronLeft,
+	ChevronRight,
 	createIcons,
+	Eye,
+	EyeOff,
 	Loader2,
+	Lock,
+	LogOut,
 	MicOff,
 	Monitor,
 	Moon,
@@ -12,15 +18,19 @@ import {
 	Radio,
 	RefreshCw,
 	ScreenShare,
+	Search,
 	Settings,
 	ShieldCheck,
 	Square,
 	Sun,
 	Target,
+	User,
+	Users,
 	Video,
 	Volume2,
 	VolumeX,
 	Wifi,
+	WifiOff,
 	X,
 	Zap,
 } from "lucide";
@@ -29,288 +39,895 @@ import type {
 	StreamQualityOptions,
 	WindowSource,
 } from "../../types/capture";
-import type { DeepLinkParams } from "../../types/ipc";
+import {
+	checkSavedSession,
+	createRoom,
+	getOnlineUsers,
+	getRooms,
+	getToken,
+	getUser,
+	isAuthenticated,
+	joinRoom,
+	leaveRoom,
+	login,
+	logout,
+	notifyRoomStream,
+	register,
+	RoomInfo,
+	SavedSessionResult,
+	saveRememberSession,
+	sendHeartbeat,
+	ShiroUser,
+} from "./authManager";
+import { P2PManager } from "./p2pManager";
 import { AudioPipeline } from "./audioPipeline";
-import { LiveKitPublisher } from "./livekitPublisher";
 import { SourcePicker } from "./sourcePicker";
 import {
 	AudioVisualizer,
-	setStreamStatus,
 	setupWindowControls,
 } from "./uiComponents";
 
+function setStreamStatus(live: boolean, text: string): void {
+	const badge = document.getElementById("stream-badge");
+	if (!badge) return;
+	badge.textContent = text;
+	badge.className = `badge ${live ? "badge-live" : "badge-offline"}`;
+}
+
 class ShiroApp {
-	private sourcePicker: SourcePicker | null = null;
+	private leftSourcePicker: SourcePicker | null = null;
+	private mainSourcePicker: SourcePicker | null = null;
+
 	private audioPipeline: AudioPipeline = new AudioPipeline();
-	private livekitPublisher: LiveKitPublisher = new LiveKitPublisher();
 	private audioVisualizer: AudioVisualizer = new AudioVisualizer();
-	private currentVideoTrack: MediaStreamTrack | null = null;
-	private previewStream: MediaStream | null = null;
-	private hasDeepLinkParams: boolean = false;
+
+	private p2pManager: P2PManager | null = null;
+
 	private allSources: WindowSource[] = [];
 	private selectedSourceIndex: number = -1;
+	private currentVideoTrack: MediaStreamTrack | null = null;
+	private previewStream: MediaStream | null = null;
+	private selectedTargetUserId: string | null = null;
+	private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+	private usersRefreshInterval: ReturnType<typeof setInterval> | null = null;
+	private roomsRefreshInterval: ReturnType<typeof setInterval> | null = null;
+	private thumbnailInterval: ReturnType<typeof setInterval> | null = null;
+
+	private rooms: RoomInfo[] = [];
+	private onlineUsers: ShiroUser[] = [];
+	private currentRoom: RoomInfo | null = null;
+	private targetJoinRoomId: string | null = null;
+	private remoteStreams = new Map<string, { stream: MediaStream; username: string }>();
+	private maximizedStreamId: string | null = null;
+	private streamDeckBridgeInitialized = false;
 
 	public async initialize(): Promise<void> {
-		console.log("[App] Initializing Shiro Screen Share App UI...");
+		console.log("[App] Initializing Shiro Screen Share...");
+		this.refreshIcons();
+		this.setupLoginWindowControls();
+		this.setupStreamDeckBridge();
+
+		const saved = checkSavedSession();
+
+		if (saved.autoLogin && isAuthenticated()) {
+			await this.showMainView();
+		} else {
+			this.showLoginView(saved);
+		}
+	}
+
+
+	private showLoginView(saved?: SavedSessionResult): void {
+		const viewLogin = document.getElementById("view-login");
+		const viewMain = document.getElementById("view-main");
+		if (viewLogin) viewLogin.classList.remove("hidden");
+		if (viewMain) viewMain.classList.add("hidden");
+
+		this.setupAuthTabs();
+		this.setupAuthForms();
+
+		const usernameInput = document.getElementById("login-username") as HTMLInputElement | null;
+		const rememberChk = document.getElementById("login-remember-me") as HTMLInputElement | null;
+		const passwordInput = document.getElementById("login-password") as HTMLInputElement | null;
+		const errorEl = document.getElementById("login-error");
+
+		if (saved?.username && usernameInput) {
+			usernameInput.value = saved.username;
+			if (rememberChk) rememberChk.checked = true;
+			if (passwordInput) passwordInput.focus();
+		}
+
+		if (saved?.expired && errorEl) {
+			errorEl.style.color = "var(--warning-color)";
+			errorEl.style.background = "rgba(245, 158, 11, 0.1)";
+			errorEl.style.border = "1px solid rgba(245, 158, 11, 0.3)";
+			errorEl.textContent = "Sua sessão expira a cada 2 semanas por segurança. Digite sua senha novamente.";
+		}
+
+		this.refreshIcons();
+	}
+
+	private setupLoginWindowControls(): void {
+		document.getElementById("login-btn-minimize")?.addEventListener("click", () => {
+			window.api?.minimizeWindow?.();
+		});
+		document.getElementById("login-btn-close")?.addEventListener("click", () => {
+			window.api?.closeWindow?.();
+		});
+	}
+
+	private setupAuthTabs(): void {
+		const tabLogin = document.getElementById("tab-login");
+		const tabRegister = document.getElementById("tab-register");
+		const formLogin = document.getElementById("form-login");
+		const formRegister = document.getElementById("form-register");
+		const indicator = document.querySelector(".auth-tab-indicator") as HTMLElement | null;
+
+		tabLogin?.addEventListener("click", () => {
+			tabLogin.classList.add("active");
+			tabRegister?.classList.remove("active");
+			formLogin?.classList.remove("hidden");
+			formRegister?.classList.add("hidden");
+			if (indicator) indicator.classList.remove("on-register");
+		});
+
+		tabRegister?.addEventListener("click", () => {
+			tabRegister.classList.add("active");
+			tabLogin?.classList.remove("active");
+			formRegister?.classList.remove("hidden");
+			formLogin?.classList.add("hidden");
+			if (indicator) indicator.classList.add("on-register");
+			this.refreshIcons();
+		});
+	}
+
+	private setupAuthForms(): void {
+		const setupEye = (toggleId: string, inputId: string) => {
+			const btn = document.getElementById(toggleId);
+			const input = document.getElementById(inputId) as HTMLInputElement | null;
+			btn?.addEventListener("click", () => {
+				if (!input) return;
+				const isText = input.type === "text";
+				input.type = isText ? "password" : "text";
+				const showIcon = btn.querySelector(".eye-icon-show") as HTMLElement | null;
+				const hideIcon = btn.querySelector(".eye-icon-hide") as HTMLElement | null;
+				if (showIcon) showIcon.style.display = isText ? "inline-block" : "none";
+				if (hideIcon) hideIcon.style.display = isText ? "none" : "inline-block";
+			});
+		};
+
+		setupEye("toggle-login-password", "login-password");
+		setupEye("toggle-reg-password", "reg-password");
+
+		document.getElementById("form-login")?.addEventListener("submit", async (e) => {
+			e.preventDefault();
+			const username = (document.getElementById("login-username") as HTMLInputElement)?.value.trim();
+			const password = (document.getElementById("login-password") as HTMLInputElement)?.value;
+			const rememberMe = (document.getElementById("login-remember-me") as HTMLInputElement)?.checked ?? false;
+			const errorEl = document.getElementById("login-error");
+
+			if (!username || !password) {
+				if (errorEl) {
+					errorEl.style.color = "";
+					errorEl.style.background = "";
+					errorEl.style.border = "";
+					errorEl.textContent = "Preencha todos os campos.";
+				}
+				return;
+			}
+
+			this.setAuthLoading("btn-login", true);
+			if (errorEl) {
+				errorEl.style.color = "";
+				errorEl.style.background = "";
+				errorEl.style.border = "";
+				errorEl.textContent = "";
+			}
+
+			const result = await login(username, password);
+			this.setAuthLoading("btn-login", false);
+
+			if (!result.ok || !result.user) {
+				if (errorEl) {
+					errorEl.style.color = "";
+					errorEl.style.background = "";
+					errorEl.style.border = "";
+					errorEl.textContent = result.error ?? "Erro ao fazer login.";
+				}
+				return;
+			}
+
+			const token = getToken();
+			if (token) {
+				saveRememberSession(token, result.user, rememberMe);
+			}
+
+			await this.showMainView();
+		});
+
+		document.getElementById("form-register")?.addEventListener("submit", async (e) => {
+			e.preventDefault();
+			const username = (document.getElementById("reg-username") as HTMLInputElement)?.value.trim();
+			const password = (document.getElementById("reg-password") as HTMLInputElement)?.value;
+			const confirm = (document.getElementById("reg-password-confirm") as HTMLInputElement)?.value;
+			const errorEl = document.getElementById("register-error");
+
+			if (!username || !password || !confirm) {
+				if (errorEl) errorEl.textContent = "Preencha todos os campos.";
+				return;
+			}
+
+			if (password !== confirm) {
+				if (errorEl) errorEl.textContent = "As senhas não coincidem.";
+				return;
+			}
+
+			if (password.length < 6) {
+				if (errorEl) errorEl.textContent = "A senha precisa ter ao menos 6 caracteres.";
+				return;
+			}
+
+			this.setAuthLoading("btn-register", true);
+			if (errorEl) errorEl.textContent = "";
+
+			const result = await register(username, password);
+
+			if (!result.ok) {
+				this.setAuthLoading("btn-register", false);
+				if (errorEl) errorEl.textContent = result.error ?? "Erro ao registrar.";
+				return;
+			}
+
+			const loginResult = await login(username, password);
+			this.setAuthLoading("btn-register", false);
+
+			if (!loginResult.ok) {
+				if (errorEl) errorEl.textContent = "Conta criada! Faça login manualmente.";
+				return;
+			}
+
+			await this.showMainView();
+		});
+	}
+
+	private setAuthLoading(btnId: string, loading: boolean): void {
+		const btn = document.getElementById(btnId) as HTMLButtonElement | null;
+		if (!btn) return;
+		const text = btn.querySelector(".btn-text") as HTMLElement | null;
+		const spinner = btn.querySelector(".btn-spinner") as HTMLElement | null;
+		btn.disabled = loading;
+		if (text) text.style.opacity = loading ? "0" : "1";
+		if (spinner) spinner.style.display = loading ? "inline-block" : "none";
+	}
+
+	private async showMainView(): Promise<void> {
+		const viewLogin = document.getElementById("view-login");
+		const viewMain = document.getElementById("view-main");
+
+		if (viewLogin) viewLogin.classList.add("hidden");
+		if (viewMain) viewMain.classList.remove("hidden");
+
+		const user = getUser();
+		if (user) {
+			const headerUsername = document.getElementById("header-username");
+			const headerAvatar = document.getElementById("header-user-avatar");
+			if (headerUsername) headerUsername.textContent = user.username;
+			if (headerAvatar) headerAvatar.textContent = user.username[0].toUpperCase();
+		}
+
+		if (user) {
+			this.p2pManager = new P2PManager(user.id, {
+				onConnected: (peerId) => {
+					console.log(`[App] P2P conectado com sucesso a ${peerId}`);
+					if (this.p2pManager?.getIsStreaming()) {
+						setStreamStatus(true, "🔴 AO VIVO");
+						if (window.api) window.api.reportStreamShareState(true);
+						document.getElementById("btn-start-stream")?.classList.add("hidden");
+						document.getElementById("btn-stop-stream")?.classList.remove("hidden");
+					} else {
+						setStreamStatus(true, "Assistindo");
+					}
+				},
+				onDisconnected: (peerId) => {
+					console.log(`[App] P2P desconectado de ${peerId}`);
+					this.remoteStreams.delete(peerId);
+					this.renderLiveStreamsGrid();
+					if (this.remoteStreams.size === 0 && !this.p2pManager?.getIsStreaming()) {
+						setStreamStatus(false, "Desconectado");
+					}
+				},
+				onError: (err) => {
+					console.error(`[App] P2P erro: ${err}`);
+				},
+				onRemoteStream: (stream, peerId) => {
+					console.log(`[App] Stream remota recebida de ${peerId}`);
+					const activeStreamer = this.currentRoom?.activeStreams?.find((s) => s.userId === peerId);
+					const onlineUser = this.onlineUsers.find((u) => u.id === peerId);
+					const username = activeStreamer?.username ?? onlineUser?.username ?? peerId;
+					this.remoteStreams.set(peerId, { stream, username });
+					this.renderLiveStreamsGrid();
+				},
+			});
+			this.p2pManager.startSignaling();
+		}
 
 		setupWindowControls();
 		this.setupThemeToggle();
+		this.setupPanelTabs();
+		this.setupRoomListeners();
 		this.setupSourcePicker();
+		this.setupSubTabs();
+		this.setupStreamButtons();
+		this.setupPopoverToggles();
 		this.setupAudioRadioListeners();
 		this.setupQualityChangeListeners();
-		this.setupPopoverToggles();
-		this.setupStreamButtons();
-		this.setupDeepLinkListener();
-		this.setupAppSettings();
 		this.setupCustomSelects();
+		this.setupAppSettings();
+		this.setupLogout();
 		this.setupStreamDeckBridge();
 
-		// Mount the canvas visualizer (does not start animation yet)
 		this.audioVisualizer.mount("vu-canvas");
-
-		// Render Lucide icons
 		this.refreshIcons();
 
-		// Initial load of windows
+		await this.refreshRooms();
 		await this.refreshSources();
-	}
+		await this.refreshUsersList();
 
-	private async setupAppSettings(): Promise<void> {
-		const chkOpenAtLogin = document.getElementById(
-			"chk-open-at-login",
-		) as HTMLInputElement;
-		const chkAutoUpdate = document.getElementById(
-			"chk-auto-update",
-		) as HTMLInputElement;
+		this.heartbeatInterval = setInterval(() => sendHeartbeat(), 60_000);
+		sendHeartbeat();
 
-		if (window.api?.getAppSettings) {
-			try {
-				const settings = await window.api.getAppSettings();
-				if (chkOpenAtLogin) chkOpenAtLogin.checked = settings.openAtLogin;
-				if (chkAutoUpdate) chkAutoUpdate.checked = settings.autoUpdate;
-			} catch (err) {
-				console.warn("[App] Could not load app settings:", err);
-			}
-		}
+		this.usersRefreshInterval = setInterval(() => this.refreshUsersList(), 20_000);
+		this.roomsRefreshInterval = setInterval(() => this.refreshRooms(), 2_500);
+		this.thumbnailInterval = setInterval(() => this.updateAllThumbnails(), 2_000);
 
-		chkOpenAtLogin?.addEventListener("change", async () => {
-			if (window.api?.setOpenAtLogin) {
-				const newState = await window.api.setOpenAtLogin(
-					chkOpenAtLogin.checked,
-				);
-				chkOpenAtLogin.checked = newState;
-				console.log("[App] Start with Windows set to:", newState);
-			}
-		});
-
-		chkAutoUpdate?.addEventListener("change", async () => {
-			if (window.api?.setAutoUpdate) {
-				const newState = await window.api.setAutoUpdate(chkAutoUpdate.checked);
-				chkAutoUpdate.checked = newState;
-				console.log("[App] Auto updates set to:", newState);
-			}
-		});
-
-		document.querySelectorAll(".setting-toggle-row").forEach((row) => {
-			row.addEventListener("click", (e) => {
-				const checkbox = row.querySelector(
-					'input[type="checkbox"]',
-				) as HTMLInputElement | null;
-				if (checkbox && e.target !== checkbox) {
-					checkbox.click();
-				}
-			});
+		window.addEventListener("keydown", (e) => {
+			if (e.key === "Escape") this.restoreGridMode();
 		});
 	}
 
-	private setupCustomSelects(): void {
-		document
-			.querySelectorAll<HTMLElement>(".custom-select")
-			.forEach((container) => {
-				const nativeSelect = container.querySelector(
-					"select",
-				) as HTMLSelectElement;
-				const trigger = container.querySelector(
-					".select-trigger",
-				) as HTMLButtonElement;
-				const options = container.querySelectorAll(".select-dropdown li");
+	private setupPanelTabs(): void {
+		const tabRooms = document.getElementById("panel-tab-rooms");
+		const tabSources = document.getElementById("panel-tab-sources");
+		const tabUsers = document.getElementById("panel-tab-users");
+		const btnToggleSidebar = document.getElementById("btn-toggle-sidebar");
 
-				if (!nativeSelect || !trigger || !options.length) return;
+		const panelRooms = document.getElementById("panel-rooms");
+		const panelSources = document.getElementById("panel-sources");
+		const panelUsers = document.getElementById("panel-users");
 
-				trigger.addEventListener("click", (e) => {
-					e.stopPropagation();
-					const wasOpen = container.classList.contains("open");
-					document
-						.querySelectorAll(".custom-select.open")
-						.forEach((el) => el.classList.remove("open"));
-					if (!wasOpen) container.classList.add("open");
-				});
+		const activate = (activeTab: HTMLElement | null, activePanel: HTMLElement | null) => {
+			[tabRooms, tabSources, tabUsers].forEach((t) => t?.classList.remove("active"));
+			[panelRooms, panelSources, panelUsers].forEach((p) => p?.classList.add("hidden"));
 
-				options.forEach((option) => {
-					option.addEventListener("click", () => {
-						const value = option.getAttribute("data-value")!;
-						nativeSelect.value = value;
-						trigger.textContent = option.textContent;
-
-						container
-							.querySelectorAll(".select-dropdown li")
-							.forEach((li) => li.classList.remove("selected"));
-						option.classList.add("selected");
-
-						container.classList.remove("open");
-						nativeSelect.dispatchEvent(new Event("change", { bubbles: true }));
-					});
-				});
-			});
-
-		document.addEventListener("click", () => {
-			document
-				.querySelectorAll(".custom-select.open")
-				.forEach((el) => el.classList.remove("open"));
-		});
-	}
-
-	private refreshIcons(): void {
-		try {
-			createIcons({
-				icons: {
-					Sun,
-					Moon,
-					Monitor,
-					Zap,
-					Wifi,
-					Target,
-					RefreshCw,
-					AppWindow,
-					ScreenShare,
-					Video,
-					PlayCircle,
-					Volume2,
-					ShieldCheck,
-					VolumeX,
-					MicOff,
-					Radio,
-					CheckCircle2,
-					Play,
-					Square,
-					Loader2,
-					Settings,
-					X,
-					Power,
-				},
-			});
-		} catch (err) {
-			console.warn("[App] Icon creation warning:", err);
-		}
-	}
-
-	private setupThemeToggle(): void {
-		const btnToggle = document.getElementById("btn-theme-toggle");
-		const savedTheme = localStorage.getItem("shiro-theme") || "dark";
-		this.applyTheme(savedTheme);
-
-		if (btnToggle) {
-			btnToggle.addEventListener("click", () => {
-				const currentTheme =
-					document.documentElement.getAttribute("data-theme") || "dark";
-				const newTheme = currentTheme === "dark" ? "light" : "dark";
-				this.applyTheme(newTheme);
-				localStorage.setItem("shiro-theme", newTheme);
-			});
-		}
-	}
-
-	private applyTheme(theme: string): void {
-		document.documentElement.setAttribute("data-theme", theme);
-		const btnToggle = document.getElementById("btn-theme-toggle");
-		if (btnToggle) {
-			btnToggle.innerHTML =
-				theme === "dark"
-					? '<i data-lucide="sun"></i>'
-					: '<i data-lucide="moon"></i>';
-			btnToggle.title =
-				theme === "dark"
-					? "Alternar para Tema Claro"
-					: "Alternar para Tema Escuro";
+			activeTab?.classList.add("active");
+			activePanel?.classList.remove("hidden");
 			this.refreshIcons();
+		};
+
+		tabRooms?.addEventListener("click", () => activate(tabRooms, panelRooms));
+		tabSources?.addEventListener("click", () => {
+			if (!this.currentRoom) return; // O botão fica disabled via atributos HTML/CSS com tooltip no hover
+			activate(tabSources, panelSources);
+		});
+		tabUsers?.addEventListener("click", () => activate(tabUsers, panelUsers));
+
+		const toggleSidebar = () => {
+			const mainContent = document.querySelector(".main-content");
+			mainContent?.classList.toggle("sidebar-collapsed");
+			this.refreshIcons();
+		};
+
+		btnToggleSidebar?.addEventListener("click", toggleSidebar);
+		document.getElementById("btn-expand-sidebar-floating")?.addEventListener("click", toggleSidebar);
+	}
+
+	// ══════════════════════════════════════════
+	//  ROOMS, MODALS & SEARCH
+	// ══════════════════════════════════════════
+	private setupRoomListeners(): void {
+		// Abrir modal de criação de sala
+		document.getElementById("btn-open-create-room")?.addEventListener("click", () => {
+			const modal = document.getElementById("modal-create-room");
+			if (modal) modal.classList.remove("hidden");
+			(document.getElementById("create-room-name") as HTMLInputElement)?.focus();
+			this.refreshIcons();
+		});
+
+		const closeCreateModal = () => {
+			document.getElementById("modal-create-room")?.classList.add("hidden");
+			const err = document.getElementById("create-room-error");
+			if (err) err.textContent = "";
+		};
+		document.getElementById("btn-close-create-room")?.addEventListener("click", closeCreateModal);
+		document.getElementById("btn-cancel-create-room")?.addEventListener("click", closeCreateModal);
+
+		// Botão Gerar Senha (8 dígitos numéricos aleatórios)
+		document.getElementById("btn-generate-password")?.addEventListener("click", () => {
+			const randomPass = Math.floor(10000000 + Math.random() * 90000000).toString();
+			const passInput = document.getElementById("create-room-password") as HTMLInputElement | null;
+			if (passInput) passInput.value = randomPass;
+		});
+
+		// Submeter formulário de criar sala
+		document.getElementById("form-create-room")?.addEventListener("submit", async (e) => {
+			e.preventDefault();
+			const name = (document.getElementById("create-room-name") as HTMLInputElement)?.value.trim();
+			const customId = (document.getElementById("create-room-id") as HTMLInputElement)?.value.trim();
+			const password = (document.getElementById("create-room-password") as HTMLInputElement)?.value.trim();
+			const errorEl = document.getElementById("create-room-error");
+
+			if (!name) {
+				if (errorEl) errorEl.textContent = "Digite o nome da sala.";
+				return;
+			}
+
+			if (password && !/^\d{8}$/.test(password)) {
+				if (errorEl) errorEl.textContent = "A senha deve conter exatamente 8 dígitos numéricos.";
+				return;
+			}
+
+			if (errorEl) errorEl.textContent = "";
+			const res = await createRoom({ name, roomId: customId || undefined, password: password || undefined });
+
+			if (!res.ok || !res.room) {
+				if (errorEl) errorEl.textContent = res.error ?? "Erro ao criar sala.";
+				return;
+			}
+
+			closeCreateModal();
+			await this.refreshRooms();
+			await this.onRoomSelected(res.room);
+		});
+
+		// Abrir modal de Buscar / Entrar em Sala por ID
+		document.getElementById("btn-open-join-by-id")?.addEventListener("click", () => {
+			const modal = document.getElementById("modal-join-by-id");
+			if (modal) modal.classList.remove("hidden");
+			(document.getElementById("join-by-id-room-id") as HTMLInputElement)?.focus();
+			this.refreshIcons();
+		});
+
+		const closeJoinByIdModal = () => {
+			document.getElementById("modal-join-by-id")?.classList.add("hidden");
+			const err = document.getElementById("join-by-id-error");
+			if (err) err.textContent = "";
+		};
+		document.getElementById("btn-close-join-by-id")?.addEventListener("click", closeJoinByIdModal);
+		document.getElementById("btn-cancel-join-by-id")?.addEventListener("click", closeJoinByIdModal);
+
+		// Submeter formulário de Entrar por ID (pública ou privada)
+		document.getElementById("form-join-by-id")?.addEventListener("submit", async (e) => {
+			e.preventDefault();
+			const roomId = (document.getElementById("join-by-id-room-id") as HTMLInputElement)?.value.trim();
+			const password = (document.getElementById("join-by-id-password") as HTMLInputElement)?.value.trim();
+			const errorEl = document.getElementById("join-by-id-error");
+
+			if (!roomId) {
+				if (errorEl) errorEl.textContent = "Digite o ID da sala.";
+				return;
+			}
+
+			if (errorEl) errorEl.textContent = "";
+			const res = await joinRoom(roomId, password || undefined);
+
+			if (!res.ok || !res.room) {
+				if (errorEl) errorEl.textContent = res.error ?? "Não foi possível entrar na sala.";
+				return;
+			}
+
+			closeJoinByIdModal();
+			await this.onRoomSelected(res.room);
+		});
+
+		// Fechar/Cancelar modal de senha para entrar
+		const closeJoinModal = () => {
+			document.getElementById("modal-join-room-password")?.classList.add("hidden");
+			const err = document.getElementById("join-room-error");
+			if (err) err.textContent = "";
+			this.targetJoinRoomId = null;
+		};
+		document.getElementById("btn-close-join-room")?.addEventListener("click", closeJoinModal);
+		document.getElementById("btn-cancel-join-room")?.addEventListener("click", closeJoinModal);
+
+		// Submeter formulário de senha para entrar na sala privada
+		document.getElementById("form-join-room-password")?.addEventListener("submit", async (e) => {
+			e.preventDefault();
+			if (!this.targetJoinRoomId) return;
+
+			const password = (document.getElementById("join-room-password") as HTMLInputElement)?.value.trim();
+			const errorEl = document.getElementById("join-room-error");
+
+			if (!password || !/^\d{8}$/.test(password)) {
+				if (errorEl) errorEl.textContent = "Digite a senha de exatamente 8 dígitos.";
+				return;
+			}
+
+			if (errorEl) errorEl.textContent = "";
+			const res = await joinRoom(this.targetJoinRoomId, password);
+
+			if (!res.ok || !res.room) {
+				if (errorEl) errorEl.textContent = res.error ?? "Senha incorreta.";
+				return;
+			}
+
+			closeJoinModal();
+			await this.onRoomSelected(res.room);
+		});
+
+		// Lupa de busca em tempo real na lista de salas
+		document.getElementById("input-search-rooms")?.addEventListener("input", (e) => {
+			const query = (e.target as HTMLInputElement).value.toLowerCase();
+			this.renderRoomsList(query);
+		});
+
+		// Botão de atualizar salas
+		document.getElementById("btn-refresh-rooms")?.addEventListener("click", () => this.refreshRooms());
+
+		// Botão de voltar ao grid quando maximizado
+		document.getElementById("btn-back-to-grid")?.addEventListener("click", () => this.restoreGridMode());
+	}
+
+	private async refreshRooms(): Promise<void> {
+		this.rooms = await getRooms();
+		const searchInput = document.getElementById("input-search-rooms") as HTMLInputElement | null;
+		const query = searchInput?.value.toLowerCase() ?? "";
+		this.renderRoomsList(query);
+
+		// Atualiza o estado da sala ativa e auto-conecta a transmissões ativas
+		if (this.currentRoom) {
+			const updated = this.rooms.find((r) => r.roomId === this.currentRoom!.roomId);
+			if (updated) {
+				this.currentRoom = updated;
+				this.autoConnectRoomStreams();
+			}
 		}
 	}
 
-	private setupPopoverToggles(): void {
-		const btnToggleSettings = document.getElementById("btn-toggle-settings");
-		const btnCloseSettings = document.getElementById("btn-close-settings");
-		const settingsPopover = document.getElementById("settings-popover");
+	private async autoConnectRoomStreams(): Promise<void> {
+		if (!this.currentRoom) return;
+		const currentUser = getUser();
+		const activeStreams = this.currentRoom.activeStreams || [];
 
-		const btnToggleAudio = document.getElementById("btn-toggle-audio");
-		const btnCloseAudio = document.getElementById("btn-close-audio");
-		const audioPopover = document.getElementById("audio-popover");
-
-		if (btnToggleSettings && settingsPopover) {
-			btnToggleSettings.addEventListener("click", (e) => {
-				e.stopPropagation();
-				audioPopover?.classList.add("hidden");
-				btnToggleAudio?.classList.remove("active");
-				const isHidden = settingsPopover.classList.toggle("hidden");
-				if (!isHidden) {
-					btnToggleSettings.classList.add("active");
+		// 1. Remove qualquer remoteStream que não esteja mais transmitindo nesta sala
+		for (const [peerId] of this.remoteStreams) {
+			const isStillStreaming = activeStreams.some((s) => s.userId === peerId);
+			if (!isStillStreaming) {
+				console.log(`[App] Transmissão de ${peerId} encerrada. Removendo do grid.`);
+				this.remoteStreams.delete(peerId);
+				if (this.maximizedStreamId === `stream-card-${peerId}`) {
+					this.restoreGridMode();
 				} else {
-					btnToggleSettings.classList.remove("active");
+					this.renderLiveStreamsGrid();
 				}
-			});
+			}
 		}
 
-		if (btnCloseSettings && settingsPopover) {
-			btnCloseSettings.addEventListener("click", () => {
-				settingsPopover.classList.add("hidden");
-				btnToggleSettings?.classList.remove("active");
-			});
-		}
-
-		if (btnToggleAudio && audioPopover) {
-			btnToggleAudio.addEventListener("click", (e) => {
-				e.stopPropagation();
-				settingsPopover?.classList.add("hidden");
-				btnToggleSettings?.classList.remove("active");
-				const isHidden = audioPopover.classList.toggle("hidden");
-				if (!isHidden) {
-					btnToggleAudio.classList.add("active");
-				} else {
-					btnToggleAudio.classList.remove("active");
+		// 2. Conecta a qualquer transmissão ativa na sala que ainda não esteja visível
+		for (const streamInfo of activeStreams) {
+			if (streamInfo.userId && streamInfo.userId !== currentUser?.id) {
+				const hasStream = this.remoteStreams.has(streamInfo.userId);
+				if (!hasStream) {
+					console.log(`[App] Detectada stream ativa de ${streamInfo.username} (${streamInfo.userId}) fora do grid. Re-negociando P2P...`);
+					const hasConn = this.p2pManager?.hasPeerConnection(streamInfo.userId);
+					await this.p2pManager?.renegotiate(streamInfo.userId, !hasConn);
 				}
-			});
-		}
-
-		if (btnCloseAudio && audioPopover) {
-			btnCloseAudio.addEventListener("click", () => {
-				audioPopover.classList.add("hidden");
-				btnToggleAudio?.classList.remove("active");
-			});
+			}
 		}
 	}
 
-	private setupSourcePicker(): void {
-		const gridContainer = document.getElementById("sources-grid");
+	private renderRoomsList(searchQuery = ""): void {
+		const listEl = document.getElementById("rooms-list");
+		if (!listEl) return;
+
+		const filtered = this.rooms.filter(
+			(r) =>
+				r.name.toLowerCase().includes(searchQuery) ||
+				r.roomId.toLowerCase().includes(searchQuery),
+		);
+
+		if (filtered.length === 0) {
+			listEl.innerHTML = `
+				<div class="users-empty">
+					<i data-lucide="radio"></i>
+					<span>${searchQuery ? "Nenhuma sala encontrada para a busca" : "Nenhuma sala pública disponível"}</span>
+				</div>`;
+			this.refreshIcons();
+			return;
+		}
+
+		listEl.innerHTML = filtered
+			.map((r) => {
+				const isActive = this.currentRoom?.roomId === r.roomId;
+				const streamCount = r.activeStreams.length;
+
+				return `
+				<div class="room-item ${isActive ? "active" : ""}" data-room-id="${r.roomId}">
+					<div class="room-item-left">
+						<i data-lucide="radio" class="room-item-icon"></i>
+						<div class="room-item-details">
+							<span class="room-item-name">${this.escapeHtml(r.name)}</span>
+							<span class="room-item-sub">ID: ${r.roomId} • ${r.membersCount} membro(s)</span>
+						</div>
+					</div>
+					<div class="room-item-right">
+						${r.isPrivate ? '<span class="room-lock-badge" title="Sala Privada (Protegida por senha)"><i data-lucide="lock"></i></span>' : ""}
+						${streamCount > 0 ? `<span class="room-streams-badge">🔴 ${streamCount}</span>` : ""}
+					</div>
+				</div>`;
+			})
+			.join("");
+
+		listEl.querySelectorAll<HTMLElement>(".room-item").forEach((item) => {
+			item.addEventListener("click", async () => {
+				const roomId = item.dataset.roomId!;
+				const targetRoom = this.rooms.find((r) => r.roomId === roomId);
+				if (!targetRoom) return;
+
+				if (targetRoom.isPrivate && this.currentRoom?.roomId !== targetRoom.roomId) {
+					this.targetJoinRoomId = targetRoom.roomId;
+					const titleEl = document.getElementById("join-room-target-name");
+					if (titleEl) titleEl.textContent = `${targetRoom.name} (${targetRoom.roomId})`;
+					const modal = document.getElementById("modal-join-room-password");
+					if (modal) modal.classList.remove("hidden");
+					(document.getElementById("join-room-password") as HTMLInputElement)?.focus();
+					this.refreshIcons();
+				} else {
+					const res = await joinRoom(targetRoom.roomId);
+					if (res.ok && res.room) {
+						await this.onRoomSelected(res.room);
+					}
+				}
+			});
+		});
+
+		this.refreshIcons();
+	}
+
+	private async onRoomSelected(room: RoomInfo): Promise<void> {
+		if (this.currentRoom && this.currentRoom.roomId !== room.roomId) {
+			if (this.p2pManager?.getIsStreaming()) {
+				await this.stopStreaming();
+			}
+			await leaveRoom(this.currentRoom.roomId);
+			this.p2pManager?.hangupAll();
+			this.remoteStreams.clear();
+			this.maximizedStreamId = null;
+			this.renderLiveStreamsGrid();
+		}
+
+		this.currentRoom = room;
+		console.log(`[App] Entrou na sala: ${room.name} (${room.roomId})`);
+
+		// Desbloqueia e ativa a aba de Fontes ao entrar na sala
+		const sourcesTab = document.getElementById("panel-tab-sources");
+		const panelSources = document.getElementById("panel-sources");
+		const tabRooms = document.getElementById("panel-tab-rooms");
+		const tabUsers = document.getElementById("panel-tab-users");
+		const panelRooms = document.getElementById("panel-rooms");
+		const panelUsers = document.getElementById("panel-users");
+
+		if (sourcesTab) {
+			sourcesTab.classList.remove("disabled");
+			sourcesTab.removeAttribute("disabled");
+			sourcesTab.title = "Fontes de captura";
+		}
+
+		// Ativa a aba de fontes para o usuário selecionar o que transmitir
+		[tabRooms, sourcesTab, tabUsers].forEach((t) => t?.classList.remove("active"));
+		[panelRooms, panelSources, panelUsers].forEach((p) => p?.classList.add("hidden"));
+		sourcesTab?.classList.add("active");
+		panelSources?.classList.remove("hidden");
+
+		// Auto-conecta a transmissões ativas já em andamento na sala
+		await this.autoConnectRoomStreams();
+		await this.refreshRooms();
+	}
+
+	// ══════════════════════════════════════════
+	//  LIVE MULTI-STREAM GRID & MAXIMIZE
+	// ══════════════════════════════════════════
+	private renderLiveStreamsGrid(): void {
+		const gridEl = document.getElementById("live-streams-grid");
+		if (!gridEl) return;
+
+		const isLocalStreaming = this.p2pManager?.getIsStreaming() && this.previewStream;
+
+		if (this.remoteStreams.size === 0 && !isLocalStreaming) {
+			gridEl.innerHTML = `
+				<div id="main-grid-placeholder" class="main-grid-placeholder">
+					<i data-lucide="radio" class="placeholder-lucide-icon"></i>
+					<h3>Grid de Transmissões ao Vivo</h3>
+					<p>Nenhuma transmissão ativa nesta sala. Selecione uma fonte ao lado e clique em <b>Iniciar Transmissão</b>!</p>
+				</div>`;
+			this.refreshIcons();
+			return;
+		}
+
+		gridEl.innerHTML = "";
+
+		if (isLocalStreaming && this.previewStream) {
+			const isMax = this.maximizedStreamId === "local-preview";
+			const localCard = document.createElement("div");
+			localCard.className = `stream-card ${isMax ? "maximized" : ""}`;
+			localCard.id = "stream-card-local";
+
+			const user = getUser();
+			localCard.innerHTML = `
+				<div class="stream-card-header">
+					<div class="stream-card-user">
+						<i data-lucide="user"></i>
+						<span>${this.escapeHtml(user?.username ?? "Você")} (Você Transmitindo)</span>
+					</div>
+					<span class="badge badge-live">🔴 AO VIVO</span>
+				</div>
+				<canvas class="stream-card-canvas ${isMax ? "hidden" : ""}"></canvas>
+				<video class="stream-card-video ${isMax ? "" : "hidden"}" autoplay playsinline muted></video>
+				<div class="stream-card-maximize-hint">
+					<i data-lucide="target"></i> Clique para Maximizar
+				</div>`;
+
+			const videoEl = localCard.querySelector("video") as HTMLVideoElement;
+			const canvasEl = localCard.querySelector("canvas") as HTMLCanvasElement;
+			videoEl.srcObject = this.previewStream;
+			videoEl.play().catch(() => { });
+
+			videoEl.onloadeddata = () => this.updateCardThumbnail(videoEl, canvasEl);
+
+			localCard.addEventListener("click", () => this.toggleMaximizeStreamCard("local-preview", localCard));
+			gridEl.appendChild(localCard);
+		}
+
+		for (const [peerId, remoteData] of this.remoteStreams) {
+			const cardId = `stream-card-${peerId}`;
+			const isMax = this.maximizedStreamId === cardId;
+			const remoteCard = document.createElement("div");
+			remoteCard.className = `stream-card ${isMax ? "maximized" : ""}`;
+			remoteCard.id = cardId;
+
+			remoteCard.innerHTML = `
+				<div class="stream-card-header">
+					<div class="stream-card-user">
+						<i data-lucide="video"></i>
+						<span>Transmissão de ${this.escapeHtml(remoteData.username)}</span>
+					</div>
+					<span class="badge badge-live">🔴 AO VIVO</span>
+				</div>
+				<canvas class="stream-card-canvas ${isMax ? "hidden" : ""}"></canvas>
+				<video class="stream-card-video ${isMax ? "" : "hidden"}" autoplay playsinline></video>
+				<div class="stream-card-maximize-hint">
+					<i data-lucide="target"></i> Clique para Maximizar
+				</div>`;
+
+			const videoEl = remoteCard.querySelector("video") as HTMLVideoElement;
+			const canvasEl = remoteCard.querySelector("canvas") as HTMLCanvasElement;
+			videoEl.srcObject = remoteData.stream;
+			videoEl.play().catch(() => { });
+
+			videoEl.onloadeddata = () => this.updateCardThumbnail(videoEl, canvasEl);
+
+			remoteCard.addEventListener("click", () => this.toggleMaximizeStreamCard(cardId, remoteCard));
+			gridEl.appendChild(remoteCard);
+		}
+
+		if (this.maximizedStreamId) {
+			const rightSectionEl = document.querySelector(".right-section");
+			if (rightSectionEl) rightSectionEl.classList.add("maximized-active");
+			if (gridEl) gridEl.classList.add("maximized-active");
+
+			gridEl.querySelectorAll<HTMLElement>(".stream-card").forEach((c) => {
+				const isCurrentMax = (c.id === "stream-card-local" && this.maximizedStreamId === "local-preview") || (c.id === this.maximizedStreamId);
+				if (isCurrentMax) {
+					c.classList.add("maximized");
+					c.style.display = "";
+				} else {
+					c.style.display = "none";
+				}
+			});
+		} else {
+			const rightSectionEl = document.querySelector(".right-section");
+			if (rightSectionEl) rightSectionEl.classList.remove("maximized-active");
+			if (gridEl) gridEl.classList.remove("maximized-active");
+		}
+
+		this.refreshIcons();
+		this.updateAllThumbnails();
+	}
+
+	private updateAllThumbnails(): void {
+		if (this.maximizedStreamId) return;
+		const gridEl = document.getElementById("live-streams-grid");
+		if (!gridEl) return;
+
+		const cards = gridEl.querySelectorAll<HTMLElement>(".stream-card");
+		cards.forEach((card) => {
+			const videoEl = card.querySelector("video") as HTMLVideoElement | null;
+			const canvasEl = card.querySelector("canvas") as HTMLCanvasElement | null;
+			if (videoEl && canvasEl) {
+				this.updateCardThumbnail(videoEl, canvasEl);
+			}
+		});
+	}
+
+	private updateCardThumbnail(videoEl: HTMLVideoElement, canvasEl: HTMLCanvasElement): void {
+		if (videoEl.readyState >= 2 && videoEl.videoWidth > 0 && videoEl.videoHeight > 0) {
+			if (canvasEl.width !== videoEl.videoWidth || canvasEl.height !== videoEl.videoHeight) {
+				canvasEl.width = videoEl.videoWidth;
+				canvasEl.height = videoEl.videoHeight;
+			}
+			const ctx = canvasEl.getContext("2d");
+			if (ctx) {
+				ctx.drawImage(videoEl, 0, 0, canvasEl.width, canvasEl.height);
+			}
+		}
+	}
+
+	private toggleMaximizeStreamCard(cardId: string, cardEl: HTMLElement): void {
+		if (this.maximizedStreamId === cardId) {
+			this.restoreGridMode();
+		} else {
+			this.maximizeStreamCard(cardId, cardEl);
+		}
+	}
+
+	private maximizeStreamCard(cardId: string, cardEl: HTMLElement): void {
+		this.maximizedStreamId = cardId;
+
+		const gridEl = document.getElementById("live-streams-grid");
+		const rightSectionEl = document.querySelector(".right-section");
+
+		if (rightSectionEl) rightSectionEl.classList.add("maximized-active");
+		if (gridEl) gridEl.classList.add("maximized-active");
+
+		document.querySelectorAll<HTMLElement>(".stream-card").forEach((c) => {
+			const canvasEl = c.querySelector("canvas");
+			const videoEl = c.querySelector("video");
+
+			if (c === cardEl) {
+				c.classList.add("maximized");
+				c.style.display = "";
+				if (canvasEl) canvasEl.classList.add("hidden");
+				if (videoEl) {
+					videoEl.classList.remove("hidden");
+					videoEl.play().catch(() => { });
+				}
+			} else {
+				c.style.display = "none";
+			}
+		});
+	}
+
+	private restoreGridMode(): void {
+		this.maximizedStreamId = null;
+
+		const gridEl = document.getElementById("live-streams-grid");
+		const rightSectionEl = document.querySelector(".right-section");
+
+		if (rightSectionEl) rightSectionEl.classList.remove("maximized-active");
+		if (gridEl) gridEl.classList.remove("maximized-active");
+
+		document.querySelectorAll<HTMLElement>(".stream-card").forEach((c) => {
+			c.classList.remove("maximized");
+			c.style.display = "";
+			const canvasEl = c.querySelector("canvas");
+			const videoEl = c.querySelector("video");
+
+			if (canvasEl) canvasEl.classList.remove("hidden");
+			if (videoEl) videoEl.classList.add("hidden");
+		});
+
+		this.updateAllThumbnails();
+	}
+
+	private setupSubTabs(): void {
 		const tabWindows = document.getElementById("tab-windows");
 		const tabScreens = document.getElementById("tab-screens");
-		const btnRefresh = document.getElementById("btn-refresh-sources");
-		const indicator = document.querySelector(
-			".tabs-indicator",
-		) as HTMLElement | null;
+		const indicator = document.querySelector(".sub-tabs-indicator") as HTMLElement | null;
 
 		const moveIndicator = (tab: HTMLElement) => {
 			if (!indicator) return;
 			indicator.style.width = `${tab.offsetWidth}px`;
 			indicator.style.left = `${tab.offsetLeft}px`;
 		};
-
-		if (gridContainer) {
-			this.sourcePicker = new SourcePicker(
-				gridContainer,
-				(selectedSource: WindowSource) => {
-					this.onSourceSelected(selectedSource);
-				},
-			);
-		}
 
 		if (tabWindows && tabScreens) {
 			moveIndicator(tabWindows);
@@ -319,7 +936,8 @@ class ShiroApp {
 				tabWindows.classList.add("active");
 				tabScreens.classList.remove("active");
 				moveIndicator(tabWindows);
-				this.sourcePicker?.setFilter("window");
+				this.leftSourcePicker?.setFilter("window");
+				this.mainSourcePicker?.setFilter("window");
 				this.refreshIcons();
 			});
 
@@ -327,138 +945,112 @@ class ShiroApp {
 				tabScreens.classList.add("active");
 				tabWindows.classList.remove("active");
 				moveIndicator(tabScreens);
-				this.sourcePicker?.setFilter("screen");
+				this.leftSourcePicker?.setFilter("screen");
+				this.mainSourcePicker?.setFilter("screen");
 				this.refreshIcons();
+			});
+
+			window.addEventListener("resize", () => {
+				const activeTab = document.querySelector(".sub-tab-btn.active") as HTMLElement | null;
+				if (activeTab) moveIndicator(activeTab);
+			});
+		}
+	}
+
+	private setupSourcePicker(): void {
+		const leftGrid = document.getElementById("sources-panel-grid");
+		const mainGrid = document.getElementById("sources-grid");
+		const btnRefresh = document.getElementById("btn-refresh-sources");
+
+		if (leftGrid) {
+			this.leftSourcePicker = new SourcePicker(leftGrid, (source) => {
+				this.onSourceSelected(source);
+				this.mainSourcePicker?.setSelectedSourceById?.(source.id);
 			});
 		}
 
-		if (btnRefresh) {
-			btnRefresh.addEventListener("click", () => this.refreshSources());
+		if (mainGrid) {
+			this.mainSourcePicker = new SourcePicker(mainGrid, (source) => {
+				this.onSourceSelected(source);
+				this.leftSourcePicker?.setSelectedSourceById?.(source.id);
+			});
 		}
 
-		const activeTab = document.querySelector(
-			".tab-btn.active",
-		) as HTMLElement | null;
-		if (activeTab) {
-			window.addEventListener("resize", () => moveIndicator(activeTab));
-		}
-
-		setInterval(() => this.refreshSources(), 15000);
+		btnRefresh?.addEventListener("click", () => this.refreshSources());
+		setInterval(() => this.refreshSources(), 15_000);
 	}
 
-	private setupQualityChangeListeners(): void {
-		const selectRes = document.getElementById("select-resolution");
-		const selectFps = document.getElementById("select-fps");
-		const selectBitrate = document.getElementById("select-bitrate");
-		const selectPriority = document.getElementById("select-priority");
+	// ══════════════════════════════════════════
+	//  USERS PANEL (Exibe todos, inclusive Você)
+	// ══════════════════════════════════════════
+	private async refreshUsersList(): Promise<void> {
+		const listEl = document.getElementById("users-list");
+		if (!listEl) return;
 
-		// Resolution or FPS changes require capturing a new video track
-		const onTrackConfigChanged = async () => {
-			const selectedSource = this.sourcePicker?.getSelectedSource();
-			if (selectedSource) {
-				console.log("[App] ⚡ Real-time resolution/FPS change requested...");
-				await this.onSourceSelected(selectedSource);
-			}
-		};
+		const users = await getOnlineUsers();
+		this.onlineUsers = users;
+		const currentUser = getUser();
 
-		// Bitrate or Priority changes can be updated on the active RTCRtpSender immediately
-		const onEncodingParamChanged = async () => {
-			const qualityOptions = this.getQualityOptions();
-			if (this.livekitPublisher.getIsConnected()) {
-				console.log("[App] ⚡ Real-time bitrate/priority change requested...");
-				await this.livekitPublisher.updateEncodingParameters(qualityOptions);
-			}
-		};
-
-		selectRes?.addEventListener("change", onTrackConfigChanged);
-		selectFps?.addEventListener("change", onTrackConfigChanged);
-		selectBitrate?.addEventListener("change", onEncodingParamChanged);
-		selectPriority?.addEventListener("change", onEncodingParamChanged);
-	}
-
-	private async refreshSources(): Promise<void> {
-		if (window.api?.getAvailableSources) {
-			const sources = await window.api.getAvailableSources();
-			this.allSources = sources;
-			this.sourcePicker?.setSources(sources);
-
-			// Track selected source index
-			const selected = this.sourcePicker?.getSelectedSource();
-			if (selected) {
-				this.selectedSourceIndex = sources.findIndex(
-					(s) => s.id === selected.id,
-				);
-			}
-
+		if (users.length === 0) {
+			listEl.innerHTML = `
+				<div class="users-empty">
+					<i data-lucide="wifi-off"></i>
+					<span>Nenhum usuário online</span>
+				</div>`;
 			this.refreshIcons();
-
-			// Report sources to Stream Deck
-			if (window.api.reportSources) {
-				window.api.reportSources(
-					sources.map((s) => ({
-						id: s.id,
-						name: s.name,
-						processName: s.processName,
-						sourceType: s.sourceType,
-						thumbnailUrl: s.thumbnailUrl,
-					})),
-					this.selectedSourceIndex,
-				);
-			}
+			return;
 		}
+
+		listEl.innerHTML = users
+			.map((u) => {
+				const isSelf = u.id === currentUser?.id;
+				const isSelected = this.selectedTargetUserId === u.id;
+
+				return `
+			<div class="user-card ${isSelected ? "selected" : ""} ${isSelf ? "self-user" : ""}" data-user-id="${u.id}" data-username="${u.username}">
+				<div class="user-card-avatar">
+					${u.username[0].toUpperCase()}
+					<div class="user-card-status-dot"></div>
+				</div>
+				<div class="user-card-info">
+					<span class="user-card-name">${this.escapeHtml(u.username)} ${isSelf ? '<span class="user-self-tag">você</span>' : ""}</span>
+					<span class="user-card-id">ID: ${u.id}</span>
+				</div>
+			</div>`;
+			})
+			.join("");
+
+		listEl.querySelectorAll<HTMLElement>(".user-card").forEach((card) => {
+			card.addEventListener("click", () => {
+				listEl.querySelectorAll(".user-card").forEach((c) => c.classList.remove("selected"));
+				card.classList.add("selected");
+			});
+		});
+
+		document.getElementById("btn-refresh-users")?.addEventListener("click", () => {
+			this.refreshUsersList();
+		});
+
+		this.refreshIcons();
 	}
 
-	private getQualityOptions(): StreamQualityOptions {
-		const selectRes =
-			(document.getElementById("select-resolution") as HTMLSelectElement)
-				?.value || "1080p";
-		const selectFps = parseInt(
-			(document.getElementById("select-fps") as HTMLSelectElement)?.value ||
-				"60",
-			10,
-		);
-		const selectBitrate = parseInt(
-			(document.getElementById("select-bitrate") as HTMLSelectElement)?.value ||
-				"4500",
-			10,
-		);
-		const selectPriority = ((
-			document.getElementById("select-priority") as HTMLSelectElement
-		)?.value || "maintain-framerate") as any;
-
-		const resMap: Record<string, { width: number; height: number }> = {
-			"1080p": { width: 1920, height: 1080 },
-			"720p": { width: 1280, height: 720 },
-			"1440p": { width: 2560, height: 1440 },
-			"4k": { width: 3840, height: 2160 },
-			"480p": { width: 854, height: 480 },
-		};
-
-		const dim = resMap[selectRes] || { width: 1920, height: 1080 };
-
-		return {
-			resolution: selectRes as any,
-			width: dim.width,
-			height: dim.height,
-			fps: selectFps,
-			bitrateKbps: selectBitrate,
-			degradationPreference: selectPriority,
-		};
+	private escapeHtml(str: string): string {
+		return str.replace(/[&<>"']/g, (c) => ({
+			"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+		}[c] ?? c));
 	}
 
 	private async onSourceSelected(source: WindowSource): Promise<void> {
-		console.log(`[App] Selected source: ${source.name} (ID: ${source.id})`);
+		console.log(`[App] Fonte selecionada: ${source.name} (ID: ${source.id})`);
+		this.selectedSourceIndex = this.allSources.findIndex((s) => s.id === source.id);
 
-		// Track selected source index
-		this.selectedSourceIndex = this.allSources.findIndex(
-			(s) => s.id === source.id,
-		);
+		this.leftSourcePicker?.setSelectedSourceById?.(source.id);
+		this.mainSourcePicker?.setSelectedSourceById?.(source.id);
 
 		this.checkCanStartStream();
 
 		const quality = this.getQualityOptions();
 
-		// Create video stream using WebRTC desktop capturer constraints
 		try {
 			if (this.previewStream) {
 				this.previewStream.getTracks().forEach((t) => t.stop());
@@ -483,193 +1075,117 @@ class ShiroApp {
 			this.previewStream = stream;
 			this.currentVideoTrack = stream.getVideoTracks()[0];
 
-			// Set contentHint = 'detail' for maximum sharpness without blurriness on static text/UI
 			if (this.currentVideoTrack && "contentHint" in this.currentVideoTrack) {
 				(this.currentVideoTrack as any).contentHint = "detail";
 			}
 
-			const videoElem = document.getElementById(
-				"preview-video",
-			) as HTMLVideoElement;
-			const placeholder = document.getElementById("preview-placeholder");
+			if (this.p2pManager?.getIsStreaming() && this.currentVideoTrack) {
+				console.log("[App] Trocando fonte de transmissão em tempo real...");
 
-			if (videoElem && placeholder) {
-				videoElem.srcObject = stream;
-				placeholder.style.display = "none";
-				videoElem.style.transform = "translateZ(0)";
-			}
-
-			// If already live, replace video track in real-time on LiveKit!
-			if (this.livekitPublisher.getIsConnected() && this.currentVideoTrack) {
-				console.log(
-					"[App] ⚡ Live stream active! Updating video track & settings in real-time...",
-				);
-				await this.livekitPublisher.replaceVideoTrack(
-					this.currentVideoTrack,
-					quality,
-				);
-
-				// Update process audio target if process audio mode is active
 				const audioMode = this.getSelectedAudioMode();
-				if (audioMode === "process" && source.pid) {
-					window.api.startAudioCapture({
+				if (audioMode === "process" && window.api?.startAudioCapture) {
+					await window.api.startAudioCapture({
 						mode: "process",
 						targetPid: source.pid,
 						targetProcessName: source.processName,
 					});
 				}
+
+				const audioTrack = this.audioPipeline.getAudioTrack() ?? this.audioPipeline.initialize();
+				const liveTracks: MediaStreamTrack[] = [this.currentVideoTrack];
+				if (audioTrack) liveTracks.push(audioTrack);
+				const liveStream = new MediaStream(liveTracks);
+
+				this.p2pManager.setLocalStream(liveStream);
 			}
+
+			this.renderLiveStreamsGrid();
 		} catch (err) {
-			console.error("[App] Error creating video preview:", err);
+			console.error("[App] Erro ao selecionar/trocar fonte:", err);
 		}
 	}
+
 
 	private checkCanStartStream(): void {
-		const btnStart = document.getElementById(
-			"btn-start-stream",
-		) as HTMLButtonElement;
-		const selectedSource = this.sourcePicker?.getSelectedSource();
+		const btnStart = document.getElementById("btn-start-stream") as HTMLButtonElement | null;
+		const selectedSource = this.leftSourcePicker?.getSelectedSource() ?? this.mainSourcePicker?.getSelectedSource();
 
-		if (btnStart) {
-			if (this.hasDeepLinkParams && selectedSource) {
-				btnStart.disabled = false;
-				btnStart.title = "Iniciar transmissão na sala do Discord";
-			} else if (!this.hasDeepLinkParams) {
-				btnStart.disabled = true;
-				btnStart.title = "Aguardando vinculação com a Atividade do Discord";
-			} else if (!selectedSource) {
-				btnStart.disabled = true;
-				btnStart.title = "Selecione uma janela antes de transmitir";
-			}
+		if (!btnStart) return;
+
+		if (selectedSource) {
+			btnStart.disabled = false;
+			btnStart.title = "Iniciar transmissão P2P";
+		} else {
+			btnStart.disabled = true;
+			btnStart.title = "Selecione uma fonte antes de transmitir";
 		}
 	}
 
-	private setupAudioRadioListeners(): void {
-		const radioCards = document.querySelectorAll(".radio-card");
-		radioCards.forEach((card) => {
-			card.addEventListener("click", async () => {
-				radioCards.forEach((c) => c.classList.remove("active"));
-				card.classList.add("active");
-				const input = card.querySelector(
-					'input[type="radio"]',
-				) as HTMLInputElement;
-				if (input) input.checked = true;
+	private async refreshSources(): Promise<void> {
+		if (!window.api?.getAvailableSources) return;
+		const sources = await window.api.getAvailableSources();
+		this.allSources = sources;
+		this.leftSourcePicker?.setSources(sources);
+		this.mainSourcePicker?.setSources(sources);
 
-				// Report audio mode to Stream Deck
-				if (window.api?.reportAudioMode) {
-					window.api.reportAudioMode(this.getSelectedAudioMode());
-				}
-
-				// If streaming, update audio capture mode live
-				if (this.livekitPublisher.getIsConnected()) {
-					const selectedSource = this.sourcePicker?.getSelectedSource();
-					const audioMode = this.getSelectedAudioMode();
-					await window.api.startAudioCapture({
-						mode: audioMode,
-						targetPid: selectedSource?.pid,
-						targetProcessName: selectedSource?.processName,
-					});
-				}
-			});
-		});
-	}
-
-	private setAudioMode(mode: AudioCaptureMode): void {
-		const radioCards = document.querySelectorAll(".radio-card");
-		radioCards.forEach((card) => {
-			const input = card.querySelector(
-				'input[type="radio"]',
-			) as HTMLInputElement;
-			if (input && input.value === mode) {
-				card.classList.add("active");
-				input.checked = true;
-			} else {
-				card.classList.remove("active");
-			}
-		});
-
-		// If streaming, apply the change immediately
-		if (this.livekitPublisher.getIsConnected()) {
-			const selectedSource = this.sourcePicker?.getSelectedSource();
-			window.api.startAudioCapture({
-				mode,
-				targetPid: selectedSource?.pid,
-				targetProcessName: selectedSource?.processName,
-			});
+		const selected = this.leftSourcePicker?.getSelectedSource();
+		if (selected) {
+			this.selectedSourceIndex = sources.findIndex((s) => s.id === selected.id);
 		}
 
-		// Report to Stream Deck
-		if (window.api?.reportAudioMode) {
-			window.api.reportAudioMode(mode);
-		}
-	}
+		this.refreshIcons();
 
-	private getSelectedAudioMode(): AudioCaptureMode {
-		const selectedRadio = document.querySelector(
-			'input[name="audioMode"]:checked',
-		) as HTMLInputElement;
-		return (selectedRadio?.value as AudioCaptureMode) || "process";
+		if (window.api.reportSources) {
+			window.api.reportSources(
+				sources.map((s) => ({
+					id: s.id,
+					name: s.name,
+					processName: s.processName,
+					sourceType: s.sourceType,
+					thumbnailUrl: s.thumbnailUrl,
+				})),
+				this.selectedSourceIndex,
+			);
+		}
 	}
 
 	private setupStreamButtons(): void {
-		const btnStart = document.getElementById("btn-start-stream");
-		const btnStop = document.getElementById("btn-stop-stream");
-
-		if (btnStart) {
-			btnStart.addEventListener("click", () => this.startStreaming());
-		}
-
-		if (btnStop) {
-			btnStop.addEventListener("click", () => this.stopStreaming());
-		}
+		document.getElementById("btn-start-stream")?.addEventListener("click", () => this.startStreaming());
+		document.getElementById("btn-stop-stream")?.addEventListener("click", () => this.stopStreaming());
 	}
 
 	private async startStreaming(): Promise<void> {
-		const selectedSource = this.sourcePicker?.getSelectedSource();
-		if (!selectedSource || !this.currentVideoTrack) {
-			alert("Selecione uma janela antes de iniciar a transmissão.");
+		const selectedSource = this.leftSourcePicker?.getSelectedSource() ?? this.mainSourcePicker?.getSelectedSource();
+		if (!selectedSource) {
+			alert("Selecione uma fonte de vídeo antes de iniciar a transmissão.");
 			return;
 		}
 
-		const roomInput = document.getElementById("input-room") as HTMLInputElement;
-		const identityInput = document.getElementById(
-			"input-identity",
-		) as HTMLInputElement;
+		if (!this.currentVideoTrack) {
+			await this.onSourceSelected(selectedSource);
+		}
 
-		const roomName = roomInput?.value.trim() || "sala-shiro-default";
-		const rawIdentity =
-			identityInput?.value.trim() || `user-${Math.floor(Math.random() * 1000)}`;
+		if (!this.currentVideoTrack) {
+			alert("Não foi possível capturar a fonte selecionada.");
+			return;
+		}
 
-		// Discord Activity expects identity ending with '-capture' to bind stream to participant
-		const livekitIdentity = rawIdentity.endsWith("-capture")
-			? rawIdentity
-			: `${rawIdentity}-capture`;
-
-		const audioMode = this.getSelectedAudioMode();
-		const qualityOptions = this.getQualityOptions();
-
-		console.log(
-			`[App] 🚀 Starting Stream — Room: ${roomName}, Identity: ${livekitIdentity}, AudioMode: ${audioMode}`,
-		);
-		console.log("[App] Stream Quality Settings:", qualityOptions);
-
-		setStreamStatus(false, "Conectando...");
-
-		// 1. Initialize Audio Engine in Main Process if audio is enabled
+		console.log("[App] Iniciando transmissão...");
 		let audioTrack: MediaStreamTrack | null = null;
+		const audioMode = this.getSelectedAudioMode();
+
 		if (audioMode !== "disabled") {
-			const audioStatus = await window.api.startAudioCapture({
-				mode: audioMode,
-				targetPid: selectedSource.pid,
-				targetProcessName: selectedSource.processName,
-			});
+			const activeSource = this.leftSourcePicker?.getSelectedSource() ?? this.mainSourcePicker?.getSelectedSource();
+			if (window.api?.startAudioCapture) {
+				const audioStatus = await window.api.startAudioCapture({
+					mode: audioMode,
+					targetPid: activeSource?.pid,
+					targetProcessName: activeSource?.processName,
+				});
+				console.log("[App] Audio status:", audioStatus);
+			}
 
-			console.log("[App] Audio Capture Status:", audioStatus);
-
-			// Initialize WebAudio pipeline to convert PCM array buffers into MediaStreamTrack
 			audioTrack = this.audioPipeline.initialize();
-
-			// Attach analyser to visualizer and start animating
 			const analyser = this.audioPipeline.getAnalyser();
 			if (analyser) {
 				this.audioVisualizer.start(analyser);
@@ -681,104 +1197,319 @@ class ShiroApp {
 			}
 		}
 
-		// 2. Fetch LiveKit Token from backend using formatted capture identity
+		const tracks: MediaStreamTrack[] = [this.currentVideoTrack];
+		if (audioTrack) tracks.push(audioTrack);
+		const stream = new MediaStream(tracks);
+		this.p2pManager?.setLocalStream(stream);
+		this.p2pManager?.setIsStreaming(true);
+
+		setStreamStatus(true, "🔴 AO VIVO");
+		if (window.api) window.api.reportStreamShareState(true);
+
+		document.getElementById("btn-start-stream")?.classList.add("hidden");
+		document.getElementById("btn-stop-stream")?.classList.remove("hidden");
+
+		this.renderLiveStreamsGrid();
+
 		try {
-			const defaultBackend = "https://shiro-webapp-backend.vercel.app/";
-			const defaultLivekit = "wss://livekit.shirobot.xyz";
+			if (this.currentRoom) {
+				await notifyRoomStream(this.currentRoom.roomId, "start");
+			}
 
-			const backendUrl =
-				typeof process !== "undefined" && process.env?.BACKEND_URL
-					? process.env.BACKEND_URL
-					: defaultBackend;
-
-			const livekitWsUrl =
-				typeof process !== "undefined" && process.env?.LIVEKIT_URL
-					? process.env.LIVEKIT_URL
-					: defaultLivekit;
-
-			console.log(
-				`[App] Fetching LiveKit Token from ${backendUrl} for ${livekitIdentity}...`,
-			);
-			const token = await window.api.fetchLiveKitToken(
-				backendUrl,
-				roomName,
-				livekitIdentity,
-			);
-
-			// 3. Connect & Publish to LiveKit Room
-			await this.livekitPublisher.connectAndPublish({
-				wsUrl: livekitWsUrl,
-				token,
-				videoTrack: this.currentVideoTrack,
-				audioTrack: audioTrack,
-				qualityOptions: qualityOptions,
-				rawIdentity: rawIdentity,
-				onDisconnected: () => {
-					this.stopStreaming();
-				},
-			});
-
-			setStreamStatus(true, "🔴 AO VIVO");
-			if (window.api) window.api.reportStreamShareState(true);
-
-			const btnStart = document.getElementById("btn-start-stream");
-			const btnStop = document.getElementById("btn-stop-stream");
-			if (btnStart && btnStop) {
-				btnStart.classList.add("hidden");
-				btnStop.classList.remove("hidden");
+			if (this.selectedTargetUserId) {
+				await this.p2pManager?.renegotiate(this.selectedTargetUserId);
+			} else {
+				const onlineUsers = await getOnlineUsers();
+				this.onlineUsers = onlineUsers;
+				const currentUser = getUser();
+				for (const u of onlineUsers) {
+					if (u.id !== currentUser?.id) {
+						await this.p2pManager?.renegotiate(u.id);
+					}
+				}
 			}
 		} catch (err: any) {
-			console.error("[App] ❌ Error launching stream:", err);
-			alert(`Erro ao iniciar transmissão: ${err.message}`);
+			console.error("[App] Erro P2P:", err);
+			alert(`Erro ao conectar P2P: ${err.message}`);
 			setStreamStatus(false, "Erro ao Conectar");
-			if (window.api) window.api.reportStreamShareState(false);
-			this.audioPipeline.stop();
+			this.stopStreaming();
 		}
 	}
 
-	private stopStreaming(): void {
-		console.log("[App] Stopping stream...");
-		this.livekitPublisher.disconnect();
+	private async stopStreaming(): Promise<void> {
+		console.log("[App] Parando transmissão...");
+		this.p2pManager?.hangupAll();
+		this.p2pManager?.setIsStreaming(false);
 		this.audioPipeline.stop();
 		this.audioVisualizer.stop();
+
+		if (this.currentRoom) {
+			await notifyRoomStream(this.currentRoom.roomId, "stop");
+		}
+
+		if (this.previewStream) {
+			this.previewStream.getTracks().forEach((t) => t.stop());
+			this.previewStream = null;
+			this.currentVideoTrack = null;
+		}
+
+		if (this.maximizedStreamId) {
+			this.restoreGridMode();
+		}
+
 		const vuStatus = document.getElementById("vu-status-text");
 		if (vuStatus) {
 			vuStatus.innerText = "Aguardando som...";
 			vuStatus.style.color = "";
 		}
+
 		if (window.api) window.api.stopAudioCapture();
 		setStreamStatus(false, "Desconectado");
 		if (window.api) window.api.reportStreamShareState(false);
 
-		const btnStart = document.getElementById("btn-start-stream");
-		const btnStop = document.getElementById("btn-stop-stream");
-		if (btnStart && btnStop) {
-			btnStart.classList.remove("hidden");
-			btnStop.classList.add("hidden");
+		document.getElementById("btn-start-stream")?.classList.remove("hidden");
+		document.getElementById("btn-stop-stream")?.classList.add("hidden");
+
+		this.renderLiveStreamsGrid();
+	}
+
+
+	private setupLogout(): void {
+		document.getElementById("btn-logout")?.addEventListener("click", async () => {
+			if (this.currentRoom) {
+				if (this.p2pManager?.getIsStreaming()) {
+					await notifyRoomStream(this.currentRoom.roomId, "stop");
+				}
+				await leaveRoom(this.currentRoom.roomId);
+			}
+			if (this.p2pManager) {
+				this.p2pManager.destroy();
+				this.p2pManager = null;
+			}
+			this.audioPipeline.stop();
+			if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
+			if (this.usersRefreshInterval) clearInterval(this.usersRefreshInterval);
+			if (this.roomsRefreshInterval) clearInterval(this.roomsRefreshInterval);
+			if (this.thumbnailInterval) clearInterval(this.thumbnailInterval);
+
+			logout();
+			this.showLoginView(checkSavedSession());
+		});
+	}
+
+	private getQualityOptions(): StreamQualityOptions {
+		const selectRes = (document.getElementById("select-resolution") as HTMLSelectElement)?.value || "1080p";
+		const selectFps = parseInt((document.getElementById("select-fps") as HTMLSelectElement)?.value || "60", 10);
+
+		const resMap: Record<string, { width: number; height: number }> = {
+			"1080p": { width: 1920, height: 1080 },
+			"720p": { width: 1280, height: 720 },
+			"1440p": { width: 2560, height: 1440 },
+			"4k": { width: 3840, height: 2160 },
+			"480p": { width: 854, height: 480 },
+		};
+
+		const dim = resMap[selectRes] || { width: 1920, height: 1080 };
+
+		return {
+			resolution: selectRes as any,
+			width: dim.width,
+			height: dim.height,
+			fps: selectFps,
+			bitrateKbps: 4500,
+			degradationPreference: "maintain-framerate",
+		};
+	}
+
+	private getSelectedAudioMode(): AudioCaptureMode {
+		const selected = document.querySelector('input[name="audioMode"]:checked') as HTMLInputElement | null;
+		return (selected?.value as AudioCaptureMode) || "process";
+	}
+
+	private setupAudioRadioListeners(): void {
+		document.querySelectorAll(".radio-card").forEach((card) => {
+			card.addEventListener("click", async () => {
+				document.querySelectorAll(".radio-card").forEach((c) => c.classList.remove("active"));
+				card.classList.add("active");
+				const input = card.querySelector('input[type="radio"]') as HTMLInputElement | null;
+				if (input) input.checked = true;
+
+				if (window.api?.reportAudioMode) {
+					window.api.reportAudioMode(this.getSelectedAudioMode());
+				}
+			});
+		});
+	}
+
+	private setupQualityChangeListeners(): void {
+		const onTrackConfigChanged = async () => {
+			const selected = this.leftSourcePicker?.getSelectedSource() ?? this.mainSourcePicker?.getSelectedSource();
+			if (selected) await this.onSourceSelected(selected);
+		};
+
+		document.getElementById("select-resolution")?.addEventListener("change", onTrackConfigChanged);
+		document.getElementById("select-fps")?.addEventListener("change", onTrackConfigChanged);
+	}
+
+	private setupPopoverToggles(): void {
+		const btnSettings = document.getElementById("btn-toggle-settings");
+		const btnCloseSettings = document.getElementById("btn-close-settings");
+		const settingsPopover = document.getElementById("settings-popover");
+
+		const btnAudio = document.getElementById("btn-toggle-audio");
+		const btnCloseAudio = document.getElementById("btn-close-audio");
+		const audioPopover = document.getElementById("audio-popover");
+
+		btnSettings?.addEventListener("click", (e) => {
+			e.stopPropagation();
+			audioPopover?.classList.add("hidden");
+			btnAudio?.classList.remove("active");
+			const hidden = settingsPopover?.classList.toggle("hidden");
+			btnSettings.classList.toggle("active", !hidden);
+		});
+
+		btnCloseSettings?.addEventListener("click", () => {
+			settingsPopover?.classList.add("hidden");
+			btnSettings?.classList.remove("active");
+		});
+
+		btnAudio?.addEventListener("click", (e) => {
+			e.stopPropagation();
+			settingsPopover?.classList.add("hidden");
+			btnSettings?.classList.remove("active");
+			const hidden = audioPopover?.classList.toggle("hidden");
+			btnAudio.classList.toggle("active", !hidden);
+		});
+
+		btnCloseAudio?.addEventListener("click", () => {
+			audioPopover?.classList.add("hidden");
+			btnAudio?.classList.remove("active");
+		});
+
+		document.addEventListener("click", () => {
+			settingsPopover?.classList.add("hidden");
+			audioPopover?.classList.add("hidden");
+			btnSettings?.classList.remove("active");
+			btnAudio?.classList.remove("active");
+		});
+
+		settingsPopover?.addEventListener("click", (e) => e.stopPropagation());
+		audioPopover?.addEventListener("click", (e) => e.stopPropagation());
+	}
+
+	private setupCustomSelects(): void {
+		document.querySelectorAll<HTMLElement>(".custom-select").forEach((container) => {
+			const nativeSelect = container.querySelector("select") as HTMLSelectElement;
+			const trigger = container.querySelector(".select-trigger") as HTMLButtonElement;
+			const options = container.querySelectorAll(".select-dropdown li");
+
+			if (!nativeSelect || !trigger || !options.length) return;
+
+			trigger.addEventListener("click", (e) => {
+				e.stopPropagation();
+				const wasOpen = container.classList.contains("open");
+				document.querySelectorAll(".custom-select.open").forEach((el) => el.classList.remove("open"));
+				if (!wasOpen) container.classList.add("open");
+			});
+
+			options.forEach((option) => {
+				option.addEventListener("click", () => {
+					const value = option.getAttribute("data-value")!;
+					nativeSelect.value = value;
+					trigger.textContent = option.textContent;
+					container.querySelectorAll(".select-dropdown li").forEach((li) => li.classList.remove("selected"));
+					option.classList.add("selected");
+					container.classList.remove("open");
+					nativeSelect.dispatchEvent(new Event("change", { bubbles: true }));
+				});
+			});
+		});
+
+		document.addEventListener("click", () => {
+			document.querySelectorAll(".custom-select.open").forEach((el) => el.classList.remove("open"));
+		});
+	}
+
+	private async setupAppSettings(): Promise<void> {
+		const chkOpenAtLogin = document.getElementById("chk-open-at-login") as HTMLInputElement;
+		const chkAutoUpdate = document.getElementById("chk-auto-update") as HTMLInputElement;
+
+		if (window.api?.getAppSettings) {
+			try {
+				const settings = await window.api.getAppSettings();
+				if (chkOpenAtLogin) chkOpenAtLogin.checked = settings.openAtLogin;
+				if (chkAutoUpdate) chkAutoUpdate.checked = settings.autoUpdate;
+			} catch (err) {
+				console.warn("[App] Não foi possível carregar as configurações:", err);
+			}
+		}
+
+		chkOpenAtLogin?.addEventListener("change", async () => {
+			if (window.api?.setOpenAtLogin) {
+				const val = await window.api.setOpenAtLogin(chkOpenAtLogin.checked);
+				chkOpenAtLogin.checked = val;
+			}
+		});
+
+		chkAutoUpdate?.addEventListener("change", async () => {
+			if (window.api?.setAutoUpdate) {
+				const val = await window.api.setAutoUpdate(chkAutoUpdate.checked);
+				chkAutoUpdate.checked = val;
+			}
+		});
+
+		document.querySelectorAll(".setting-toggle-row").forEach((row) => {
+			row.addEventListener("click", (e) => {
+				const checkbox = row.querySelector('input[type="checkbox"]') as HTMLInputElement | null;
+				if (checkbox && e.target !== checkbox) checkbox.click();
+			});
+		});
+	}
+
+	private setupThemeToggle(): void {
+		const btnToggle = document.getElementById("btn-theme-toggle");
+		const savedTheme = localStorage.getItem("shiro-theme") || "dark";
+		this.applyTheme(savedTheme);
+
+		btnToggle?.addEventListener("click", () => {
+			const current = document.documentElement.getAttribute("data-theme") || "dark";
+			const next = current === "dark" ? "light" : "dark";
+			this.applyTheme(next);
+			localStorage.setItem("shiro-theme", next);
+		});
+	}
+
+	private applyTheme(theme: string): void {
+		document.documentElement.setAttribute("data-theme", theme);
+		const btnToggle = document.getElementById("btn-theme-toggle");
+		if (btnToggle) {
+			btnToggle.innerHTML = theme === "dark"
+				? '<i data-lucide="sun"></i>'
+				: '<i data-lucide="moon"></i>';
+			btnToggle.title = theme === "dark" ? "Alternar para Claro" : "Alternar para Escuro";
+			this.refreshIcons();
 		}
 	}
 
 	private setupStreamDeckBridge(): void {
-		if (!window.api) return;
+		if (!window.api || this.streamDeckBridgeInitialized) return;
+		this.streamDeckBridgeInitialized = true;
 
-		// Toggle screen sharing
+		// 1. Toggle stream (iniciar / parar transmissão)
 		window.api.onStreamDeckToggle(() => {
-			console.log("[App] Stream Deck: toggle requested");
-			if (this.livekitPublisher.getIsConnected()) {
+			if (this.p2pManager?.getIsStreaming()) {
 				this.stopStreaming();
 			} else {
 				this.startStreaming();
 			}
 		});
 
-		// Respond to state query
+		// 2. Consulta de estado de transmissão
 		window.api.onStreamDeckGetState(() => {
-			window.api.reportStreamShareState(
-				this.livekitPublisher.getIsConnected(),
-			);
+			window.api.reportStreamShareState(this.p2pManager?.getIsStreaming() ?? false);
 		});
 
-		// Respond to source list query
+		// 3. Consulta de lista de fontes de captura
 		window.api.onStreamDeckGetSources(() => {
 			window.api.respondSources(
 				this.allSources.map((s) => ({
@@ -792,101 +1523,103 @@ class ShiroApp {
 			);
 		});
 
-		// Select source by index
+		// 4. Seleção direta de fonte por índice
 		window.api.onStreamDeckSelectSource((index: number) => {
-			console.log(`[App] Stream Deck: select source index ${index}`);
 			if (index >= 0 && index < this.allSources.length) {
 				const source = this.allSources[index];
-				this.sourcePicker?.setSelectedSource(source);
+				this.leftSourcePicker?.setSelectedSource(source);
 				this.onSourceSelected(source);
 			}
 		});
 
-		// Cycle to next source
-		window.api.onStreamDeckCycleSource(() => {
-			console.log("[App] Stream Deck: cycle source");
-			if (this.allSources.length === 0) return;
-			const nextIndex =
-				(this.selectedSourceIndex + 1) % this.allSources.length;
-			const source = this.allSources[nextIndex];
-			this.sourcePicker?.setSelectedSource(source);
-			this.onSourceSelected(source);
-		});
-
-		// Respond to audio mode query
-		window.api.onStreamDeckGetAudioMode(() => {
-			window.api.respondAudioMode(this.getSelectedAudioMode());
-		});
-
-		// Set audio mode directly
-		window.api.onStreamDeckSetAudioMode(
-			(mode: "process" | "system" | "disabled") => {
-				console.log(`[App] Stream Deck: set audio mode to ${mode}`);
-				this.setAudioMode(mode);
-			},
-		);
-
-		// Cycle audio mode: process -> system -> disabled -> process
-		window.api.onStreamDeckCycleAudioMode(() => {
-			console.log("[App] Stream Deck: cycle audio mode");
-			const modes: AudioCaptureMode[] = ["process", "system", "disabled"];
-			const current = this.getSelectedAudioMode();
-			const currentIdx = modes.indexOf(current);
-			const nextMode = modes[(currentIdx + 1) % modes.length];
-			this.setAudioMode(nextMode);
-		});
-
-		// Launch activity (click the start button or simulate deep link)
-		window.api.onStreamDeckLaunchActivity(() => {
-			console.log("[App] Stream Deck: launch activity");
-			const btnStart = document.getElementById(
-				"btn-start-stream",
-			) as HTMLButtonElement;
-			if (btnStart && !btnStart.disabled) {
-				btnStart.click();
+		// 5. Alternância sequencial de fontes (Cycle Source)
+		window.api.onStreamDeckCycleSource?.(() => {
+			if (this.allSources.length > 0) {
+				const nextIndex = (this.selectedSourceIndex + 1) % this.allSources.length;
+				const source = this.allSources[nextIndex];
+				this.leftSourcePicker?.setSelectedSource(source);
+				this.onSourceSelected(source);
+				if (window.api.reportSources) {
+					window.api.reportSources(
+						this.allSources.map((s) => ({
+							id: s.id,
+							name: s.name,
+							processName: s.processName,
+							sourceType: s.sourceType,
+							thumbnailUrl: s.thumbnailUrl,
+						})),
+						nextIndex,
+					);
+				}
 			}
 		});
 
-		console.log("[App] Stream Deck bridge initialized");
+		// 6. Consulta de modo de áudio
+		window.api.onStreamDeckGetAudioMode?.(() => {
+			const mode = this.getSelectedAudioMode();
+			window.api.respondAudioMode(mode);
+		});
+
+		// 7. Configuração direta de modo de áudio
+		window.api.onStreamDeckSetAudioMode?.((mode: AudioCaptureMode) => {
+			const radio = document.querySelector(`input[name="audioMode"][value="${mode}"]`) as HTMLInputElement | null;
+			if (radio) {
+				radio.checked = true;
+				document.querySelectorAll(".radio-card").forEach((c) => {
+					const r = c.querySelector('input[type="radio"]') as HTMLInputElement | null;
+					c.classList.toggle("active", r?.value === mode);
+				});
+				if (this.p2pManager?.getIsStreaming()) {
+					const source = this.leftSourcePicker?.getSelectedSource() ?? this.mainSourcePicker?.getSelectedSource();
+					if (source) this.onSourceSelected(source);
+				}
+				window.api.reportAudioMode(mode);
+			}
+		});
+
+		// 8. Alternância sequencial de modo de áudio (Cycle Audio Mode)
+		window.api.onStreamDeckCycleAudioMode?.(() => {
+			const modes: AudioCaptureMode[] = ["process", "system", "disabled"];
+			const current = this.getSelectedAudioMode();
+			const next = modes[(modes.indexOf(current) + 1) % modes.length];
+			const radio = document.querySelector(`input[name="audioMode"][value="${next}"]`) as HTMLInputElement | null;
+			if (radio) {
+				radio.checked = true;
+				document.querySelectorAll(".radio-card").forEach((c) => {
+					const r = c.querySelector('input[type="radio"]') as HTMLInputElement | null;
+					c.classList.toggle("active", r?.value === next);
+				});
+				if (this.p2pManager?.getIsStreaming()) {
+					const source = this.leftSourcePicker?.getSelectedSource() ?? this.mainSourcePicker?.getSelectedSource();
+					if (source) this.onSourceSelected(source);
+				}
+				window.api.reportAudioMode(next);
+			}
+		});
+
+		// 9. Trazer o app para o primeiro plano (Launch Activity)
+		window.api.onStreamDeckLaunchActivity?.(() => {
+			window.api?.maximizeWindow?.();
+		});
 	}
 
-	private setupDeepLinkListener(): void {
-		if (window.api?.onDeepLinkReceived) {
-			window.api.onDeepLinkReceived((params: DeepLinkParams) => {
-				console.log("[App] 🔗 Deep-link parameters received:", params);
-				if (params.roomName) {
-					const roomInput = document.getElementById(
-						"input-room",
-					) as HTMLInputElement;
-					if (roomInput) roomInput.value = params.roomName;
-				}
-				if (params.identity || params.userName || params.userId) {
-					const identityInput = document.getElementById(
-						"input-identity",
-					) as HTMLInputElement;
-					const idVal =
-						params.userId || params.identity || params.userName || "";
-					if (identityInput) identityInput.value = idVal;
-				}
 
-				// Update Activity Status Banner
-				this.hasDeepLinkParams = true;
-				this.updateActivityBanner(params);
-				this.checkCanStartStream();
+	private refreshIcons(): void {
+		try {
+			createIcons({
+				icons: {
+					Sun, Moon, Monitor, Zap, Wifi, WifiOff, Target, RefreshCw,
+					AppWindow, ScreenShare, Video, PlayCircle, Volume2, ShieldCheck,
+					VolumeX, MicOff, Radio, CheckCircle2, Play, Square, Loader2,
+					Settings, X, Power, User, Users, Lock, Eye, EyeOff, LogOut, Search,
+					ChevronLeft, ChevronRight,
+				},
 			});
-		}
-	}
-
-	private updateActivityBanner(_params: DeepLinkParams): void {
-		const connTag = document.getElementById("connection-tag");
-		if (connTag) {
-			connTag.classList.remove("hidden");
-			this.refreshIcons();
+		} catch (err) {
+			console.warn("[App] Icon creation warning:", err);
 		}
 	}
 }
 
-document.addEventListener("DOMContentLoaded", () => {
-	const app = new ShiroApp();
-	app.initialize();
-});
+const app = new ShiroApp();
+app.initialize().catch((err) => console.error("[App] Init error:", err));

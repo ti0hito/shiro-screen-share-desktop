@@ -2,10 +2,18 @@ export class AudioPipeline {
 	private audioContext: AudioContext | null = null;
 	private destinationNode: MediaStreamAudioDestinationNode | null = null;
 	private analyserNode: AnalyserNode | null = null;
+	private scriptNode: ScriptProcessorNode | null = null;
 	private pcmUnsubscribe: (() => void) | null = null;
 
-	// Audio scheduler — 0ms artificial delay for zero audio-video desync
-	private nextPlayTime: number = 0;
+	// Preallocated RingBuffer for stereo 48kHz audio (2 seconds buffer capacity)
+	private readonly BUFFER_CAPACITY = 96000;
+	private ringBufferL = new Float32Array(96000);
+	private ringBufferR = new Float32Array(96000);
+	private writeHead = 0;
+	private readHead = 0;
+	private availableFrames = 0;
+	private isPrebuffered = false;
+	private readonly PREBUFFER_FRAMES = 1440; // ~30ms cushion against OS jitter
 
 	public initialize(): MediaStreamTrack | null {
 		this.stop();
@@ -15,24 +23,75 @@ export class AudioPipeline {
 				window.AudioContext || (window as any).webkitAudioContext
 			)({
 				sampleRate: 48000,
-				latencyHint: 0, // Request minimum hardware latency (0ms buffer)
+				latencyHint: "interactive",
 			});
 
-			// AnalyserNode for frequency-domain visualizer
+			this.writeHead = 0;
+			this.readHead = 0;
+			this.availableFrames = 0;
+			this.isPrebuffered = false;
+			this.ringBufferL.fill(0);
+			this.ringBufferR.fill(0);
+
+			// ScriptProcessorNode (1024 buffer size = ~21.3ms processing)
+			this.scriptNode = this.audioContext.createScriptProcessor(1024, 0, 2);
+			this.scriptNode.onaudioprocess = (e) => {
+				const outL = e.outputBuffer.getChannelData(0);
+				const outR = e.outputBuffer.getChannelData(1);
+				const framesToRead = outL.length;
+
+				// Wait for initial cushion before playing to avoid immediate underflow
+				if (!this.isPrebuffered) {
+					if (this.availableFrames >= this.PREBUFFER_FRAMES) {
+						this.isPrebuffered = true;
+					} else {
+						outL.fill(0);
+						outR.fill(0);
+						return;
+					}
+				}
+
+				if (this.availableFrames >= framesToRead) {
+					for (let i = 0; i < framesToRead; i++) {
+						outL[i] = this.ringBufferL[this.readHead];
+						outR[i] = this.ringBufferR[this.readHead];
+						this.readHead = (this.readHead + 1) % this.BUFFER_CAPACITY;
+					}
+					this.availableFrames -= framesToRead;
+				} else if (this.availableFrames > 0) {
+					// Read remaining frames and smoothly fade out rest to avoid clicks
+					const avail = this.availableFrames;
+					for (let i = 0; i < avail; i++) {
+						const fade = (avail - i) / avail;
+						outL[i] = this.ringBufferL[this.readHead] * fade;
+						outR[i] = this.ringBufferR[this.readHead] * fade;
+						this.readHead = (this.readHead + 1) % this.BUFFER_CAPACITY;
+					}
+					for (let i = avail; i < framesToRead; i++) {
+						outL[i] = 0;
+						outR[i] = 0;
+					}
+					this.availableFrames = 0;
+					this.isPrebuffered = false; // re-accumulate cushion
+				} else {
+					outL.fill(0);
+					outR.fill(0);
+					this.isPrebuffered = false;
+				}
+			};
+
 			this.analyserNode = this.audioContext.createAnalyser();
-			this.analyserNode.fftSize = 256; // 128 frequency bins, fast & smooth
-			this.analyserNode.smoothingTimeConstant = 0.75; // Smooth decay without lag
+			this.analyserNode.fftSize = 256;
+			this.analyserNode.smoothingTimeConstant = 0.8;
 			this.analyserNode.minDecibels = -90;
 			this.analyserNode.maxDecibels = -10;
 
 			this.destinationNode = this.audioContext.createMediaStreamDestination();
 
-			// Route: bufferSource → analyser → destination
+			// Route: scriptNode -> analyserNode -> destinationNode
+			this.scriptNode.connect(this.analyserNode);
 			this.analyserNode.connect(this.destinationNode);
 
-			this.nextPlayTime = 0;
-
-			// Listen for IPC process audio PCM data
 			if (window.api?.onProcessAudioData) {
 				this.pcmUnsubscribe = window.api.onProcessAudioData(
 					(arrayBuffer: ArrayBuffer) => {
@@ -44,15 +103,12 @@ export class AudioPipeline {
 			const audioTracks = this.destinationNode.stream.getAudioTracks();
 			if (audioTracks.length > 0) {
 				console.log(
-					"[AudioPipeline] ✅ Low-latency AudioTrack initialized (48kHz, AnalyserNode active)",
+					"[AudioPipeline] ✅ Zero-jitter RingBuffer AudioTrack initialized (48kHz stereo)",
 				);
 				return audioTracks[0];
 			}
 		} catch (err) {
-			console.error(
-				"[AudioPipeline] Error initializing WebAudio pipeline:",
-				err,
-			);
+			console.error("[AudioPipeline] Error initializing WebAudio pipeline:", err);
 		}
 
 		return null;
@@ -63,54 +119,34 @@ export class AudioPipeline {
 	}
 
 	private processPcmChunk(buffer: ArrayBuffer): void {
-		if (
-			!this.audioContext ||
-			!this.destinationNode ||
-			this.audioContext.state === "closed"
-		)
-			return;
+		if (!this.audioContext || this.audioContext.state === "closed") return;
 
 		try {
-			// loopback-capture delivers: interleaved signed 16-bit LE PCM, 2ch, 48kHz
 			const int16Array = new Int16Array(buffer);
-			const numFrames = Math.floor(int16Array.length / 2); // 2 channels interleaved
+			const numFrames = Math.floor(int16Array.length / 2);
 			if (numFrames <= 0) return;
-
-			const audioBuffer = this.audioContext.createBuffer(2, numFrames, 48000);
-			const ch0 = audioBuffer.getChannelData(0); // Left
-			const ch1 = audioBuffer.getChannelData(1); // Right
 
 			const scale = 1.0 / 32768.0;
 
+			// If buffer lag exceeds 200ms, gently catch up to keep real-time latency
+			const MAX_LAG_FRAMES = 48000 * 0.20;
+			if (this.availableFrames + numFrames > MAX_LAG_FRAMES) {
+				const dropFrames = Math.min(
+					this.availableFrames,
+					(this.availableFrames + numFrames) - Math.floor(48000 * 0.05),
+				);
+				this.readHead = (this.readHead + dropFrames) % this.BUFFER_CAPACITY;
+				this.availableFrames -= dropFrames;
+			}
+
 			for (let i = 0; i < numFrames; i++) {
-				ch0[i] = int16Array[i * 2] * scale;
-				ch1[i] = int16Array[i * 2 + 1] * scale;
+				this.ringBufferL[this.writeHead] = int16Array[i * 2] * scale;
+				this.ringBufferR[this.writeHead] = int16Array[i * 2 + 1] * scale;
+				this.writeHead = (this.writeHead + 1) % this.BUFFER_CAPACITY;
 			}
-
-			const currentTime = this.audioContext.currentTime;
-			const chunkDuration = numFrames / 48000;
-
-			// 1. Catch up if nextPlayTime falls behind currentTime
-			if (this.nextPlayTime < currentTime) {
-				this.nextPlayTime = currentTime;
-			}
-
-			// 2. Ultra-Low Latency Anti-Drift Guard: Cap maximum buffer to 5ms (0.005s)
-			// Any audio queued more than 5ms ahead is snapped to currentTime immediately!
-			const MAX_DRIFT_BUFFER_SEC = 0.005; // 5ms ultra-low latency cap
-			if (this.nextPlayTime > currentTime + MAX_DRIFT_BUFFER_SEC) {
-				this.nextPlayTime = currentTime;
-			}
-
-			const source = this.audioContext.createBufferSource();
-			source.buffer = audioBuffer;
-			// Route: bufferSource → analyser → destination
-			source.connect(this.analyserNode!);
-			source.start(this.nextPlayTime);
-
-			this.nextPlayTime += chunkDuration;
+			this.availableFrames += numFrames;
 		} catch (err) {
-			console.error("[AudioPipeline] Error processing PCM chunk:", err);
+			console.error("[AudioPipeline] Error pushing PCM chunk to RingBuffer:", err);
 		}
 	}
 
@@ -128,6 +164,13 @@ export class AudioPipeline {
 			this.pcmUnsubscribe = null;
 		}
 
+		if (this.scriptNode) {
+			try {
+				this.scriptNode.disconnect();
+			} catch {}
+			this.scriptNode = null;
+		}
+
 		if (this.audioContext && this.audioContext.state !== "closed") {
 			try {
 				this.audioContext.close();
@@ -139,6 +182,7 @@ export class AudioPipeline {
 		this.audioContext = null;
 		this.destinationNode = null;
 		this.analyserNode = null;
-		this.nextPlayTime = 0;
+		this.availableFrames = 0;
+		this.isPrebuffered = false;
 	}
 }

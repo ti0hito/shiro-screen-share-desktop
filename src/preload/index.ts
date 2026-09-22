@@ -1,16 +1,14 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { AudioCaptureStatus } from "../types/audio";
 import type { AudioCaptureConfig, WindowSource } from "../types/capture";
-import type { DeepLinkParams, ElectronAPI } from "../types/ipc";
+import type { ApiRequestOptions, ApiRequestResult, AppSettings, ElectronAPI } from "../types/ipc";
 
 const api: ElectronAPI = {
 	getAvailableSources: (): Promise<WindowSource[]> => {
 		return ipcRenderer.invoke("get-available-sources");
 	},
 
-	startAudioCapture: (
-		config: AudioCaptureConfig,
-	): Promise<AudioCaptureStatus> => {
+	startAudioCapture: (config: AudioCaptureConfig): Promise<AudioCaptureStatus> => {
 		return ipcRenderer.invoke("start-audio-capture", config);
 	},
 
@@ -18,26 +16,20 @@ const api: ElectronAPI = {
 		return ipcRenderer.invoke("stop-audio-capture");
 	},
 
-	fetchLiveKitToken: (
-		backendUrl: string,
-		roomName: string,
-		identity: string,
-		userName?: string,
-	): Promise<string> => {
-		return ipcRenderer.invoke(
-			"fetch-livekit-token",
-			backendUrl,
-			roomName,
-			identity,
-			userName,
-		);
+	/**
+	 * Rota segura para API Vercel.
+	 * O renderer passa endpoint + body + JWT do usuário.
+	 * A X-API-Key é injetada pelo processo main — nunca exposta aqui.
+	 */
+	apiRequest: (opts: ApiRequestOptions): Promise<ApiRequestResult> => {
+		return ipcRenderer.invoke("api-request", opts);
 	},
 
 	getResourcesPath: (): Promise<string> => {
 		return ipcRenderer.invoke("get-resources-path");
 	},
 
-	getAppSettings: () => {
+	getAppSettings: (): Promise<AppSettings> => {
 		return ipcRenderer.invoke("get-app-settings");
 	},
 
@@ -67,10 +59,20 @@ const api: ElectronAPI = {
 		return () => ipcRenderer.removeListener("process-audio-data", listener);
 	},
 
-	onDeepLinkReceived: (callback: (params: DeepLinkParams) => void) => {
-		const listener = (_event: any, params: DeepLinkParams) => callback(params);
-		ipcRenderer.on("deep-link", listener);
-		return () => ipcRenderer.removeListener("deep-link", listener);
+	// SSE bridge: pede ao main process para abrir/fechar conexão SSE com API Key
+	startSseSignaling: (userToken: string): void => {
+		ipcRenderer.send("sse-start", userToken);
+	},
+
+	stopSseSignaling: (): void => {
+		ipcRenderer.send("sse-stop");
+	},
+
+	// Recebe eventos SSE repassados pelo main process
+	onSseSignal: (callback: (event: string, data: unknown) => void) => {
+		const listener = (_event: any, sseEvent: string, data: unknown) => callback(sseEvent, data);
+		ipcRenderer.on("sse-signal", listener);
+		return () => ipcRenderer.removeListener("sse-signal", listener);
 	},
 
 	onAudioCaptureError: (callback: (errorMsg: string) => void) => {
@@ -125,8 +127,7 @@ const api: ElectronAPI = {
 	onStreamDeckSelectSource: (callback: (index: number) => void) => {
 		const listener = (_event: any, index: number) => callback(index);
 		ipcRenderer.on("streamdeck-select-source", listener);
-		return () =>
-			ipcRenderer.removeListener("streamdeck-select-source", listener);
+		return () => ipcRenderer.removeListener("streamdeck-select-source", listener);
 	},
 	onStreamDeckCycleSource: (callback: () => void) => {
 		const listener = (_event: any) => callback();
@@ -142,8 +143,7 @@ const api: ElectronAPI = {
 	onStreamDeckGetAudioMode: (callback: () => void) => {
 		const listener = (_event: any) => callback();
 		ipcRenderer.on("streamdeck-get-audio-mode", listener);
-		return () =>
-			ipcRenderer.removeListener("streamdeck-get-audio-mode", listener);
+		return () => ipcRenderer.removeListener("streamdeck-get-audio-mode", listener);
 	},
 	onStreamDeckSetAudioMode: (
 		callback: (mode: "process" | "system" | "disabled") => void,
@@ -151,20 +151,17 @@ const api: ElectronAPI = {
 		const listener = (_event: any, mode: string) =>
 			callback(mode as "process" | "system" | "disabled");
 		ipcRenderer.on("streamdeck-set-audio-mode", listener);
-		return () =>
-			ipcRenderer.removeListener("streamdeck-set-audio-mode", listener);
+		return () => ipcRenderer.removeListener("streamdeck-set-audio-mode", listener);
 	},
 	onStreamDeckCycleAudioMode: (callback: () => void) => {
 		const listener = (_event: any) => callback();
 		ipcRenderer.on("streamdeck-cycle-audio-mode", listener);
-		return () =>
-			ipcRenderer.removeListener("streamdeck-cycle-audio-mode", listener);
+		return () => ipcRenderer.removeListener("streamdeck-cycle-audio-mode", listener);
 	},
 	onStreamDeckLaunchActivity: (callback: () => void) => {
 		const listener = (_event: any) => callback();
 		ipcRenderer.on("streamdeck-launch-activity", listener);
-		return () =>
-			ipcRenderer.removeListener("streamdeck-launch-activity", listener);
+		return () => ipcRenderer.removeListener("streamdeck-launch-activity", listener);
 	},
 };
 

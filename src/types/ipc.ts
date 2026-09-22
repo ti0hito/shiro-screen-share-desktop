@@ -1,12 +1,11 @@
 import type { AudioCaptureStatus } from "./audio";
 import type { AudioCaptureConfig, WindowSource } from "./capture";
 
+// Mantido para compatibilidade com protocol.ts (deep link)
 export interface DeepLinkParams {
 	roomName?: string;
 	identity?: string;
 	userName?: string;
-	backendUrl?: string;
-	livekitUrl?: string;
 	[key: string]: string | undefined;
 }
 
@@ -15,19 +14,27 @@ export interface AppSettings {
 	autoUpdate: boolean;
 }
 
+export interface ApiRequestOptions {
+	endpoint: string;
+	method?: "GET" | "POST" | "PUT" | "DELETE" | "PATCH";
+	body?: unknown;
+	/** JWT token passado pelo renderer (não a API Key) */
+	token?: string;
+}
+
+export interface ApiRequestResult {
+	ok: boolean;
+	status: number;
+	data: unknown;
+}
+
 export interface ElectronAPI {
 	// Main Process Invocations (Renderer -> Main -> Renderer)
 	getAvailableSources: () => Promise<WindowSource[]>;
-	startAudioCapture: (
-		config: AudioCaptureConfig,
-	) => Promise<AudioCaptureStatus>;
+	startAudioCapture: (config: AudioCaptureConfig) => Promise<AudioCaptureStatus>;
 	stopAudioCapture: () => Promise<void>;
-	fetchLiveKitToken: (
-		backendUrl: string,
-		roomName: string,
-		identity: string,
-		userName?: string,
-	) => Promise<string>;
+	/** Rota segura: API Key é injetada pelo processo main, nunca exposta ao renderer */
+	apiRequest: (opts: ApiRequestOptions) => Promise<ApiRequestResult>;
 	getResourcesPath: () => Promise<string>;
 	getAppSettings: () => Promise<AppSettings>;
 	setOpenAtLogin: (enabled: boolean) => Promise<boolean>;
@@ -36,11 +43,15 @@ export interface ElectronAPI {
 	maximizeWindow: () => void;
 	closeWindow: () => void;
 
+	/** SSE bridge: pede ao main para abrir conexão SSE (com API Key no main) */
+	startSseSignaling: (userToken: string) => void;
+	/** Fecha a conexão SSE no main process */
+	stopSseSignaling: () => void;
+	/** Recebe eventos SSE repassados pelo main process */
+	onSseSignal: (callback: (event: string, data: unknown) => void) => () => void;
+
 	// Push Event Listeners (Main -> Renderer)
 	onProcessAudioData: (callback: (buffer: ArrayBuffer) => void) => () => void;
-	onDeepLinkReceived: (
-		callback: (params: DeepLinkParams) => void,
-	) => () => void;
 	onAudioCaptureError: (callback: (errorMsg: string) => void) => () => void;
 
 	// Stream Deck bridge
