@@ -4,7 +4,12 @@ import { app, type BrowserWindow, ipcMain, nativeImage } from "electron";
 import type { AudioCaptureConfig } from "../types/capture";
 import type { ApiRequestOptions, ApiRequestResult } from "../types/ipc";
 import type { AudioCaptureEngine } from "./audioEngine";
-import { isAutoUpdateEnabled, setAutoUpdateEnabled } from "./main";
+import {
+	isAutoUpdateEnabled,
+	setAutoUpdateEnabled,
+	installUpdateNow,
+	checkForUpdatesNow,
+} from "./main";
 import { scanSources } from "./windowScanner";
 import {
 	broadcastState,
@@ -140,6 +145,14 @@ export function setupIpcHandlers(
 		setAutoUpdateEnabled(enabled);
 		console.log(`[IPC] Auto update set to: ${enabled}`);
 		return enabled;
+	});
+
+	ipcMain.handle("install-update", () => {
+		installUpdateNow();
+	});
+
+	ipcMain.handle("check-for-updates", async () => {
+		return await checkForUpdatesNow();
 	});
 
 	// Get available window & screen sources with PID resolution

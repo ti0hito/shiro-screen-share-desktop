@@ -638,6 +638,60 @@
     </div>
   </div>
 
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- MODAL: CONFIRMAÇÃO DE ATUALIZAÇÕES AUTOMÁTICAS          -->
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <div id="modal-confirm-auto-update" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3><i data-lucide="refresh-cw"></i> Atualizações Automáticas</h3>
+        <button id="btn-close-auto-update-modal" class="modal-close-btn"><i data-lucide="x"></i></button>
+      </div>
+
+      <div class="modal-body">
+        <p class="modal-desc" id="auto-update-modal-desc">
+          Ao ativar as atualizações automáticas, o Shiro Screen Share verificará novos lançamentos no GitHub em segundo plano.
+          Quando um update estiver pronto, você receberá um aviso com botão para reiniciar na hora, ou o app será atualizado automaticamente ao ser fechado e reaberto.
+        </p>
+
+        <div class="modal-actions">
+          <button type="button" id="btn-cancel-auto-update-modal" class="btn btn-ghost">Cancelar</button>
+          <button type="button" id="btn-confirm-auto-update-modal" class="btn btn-primary">
+            <i data-lucide="check"></i>
+            <span id="btn-confirm-auto-update-text">Confirmar e Ativar</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- TOAST FLUTUANTE: ATUALIZAÇÃO PRONTA                     -->
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <div id="toast-update-notification" class="toast-update-notification hidden">
+    <div class="toast-update-content">
+      <div class="toast-update-icon">
+        <i data-lucide="sparkles"></i>
+      </div>
+      <div class="toast-update-text">
+        <div class="toast-update-title">
+          <span class="badge badge-update">NOVA VERSÃO</span>
+          <strong id="toast-update-version">v2.x.x</strong>
+        </div>
+        <p id="toast-update-msg">Atualização pronta! Reinicie agora para aplicar ou ela será instalada automaticamente ao reabrir o app.</p>
+      </div>
+    </div>
+    <div class="toast-update-actions">
+      <button id="btn-apply-update-now" class="btn btn-primary btn-sm">
+        <i data-lucide="rotate-cw"></i>
+        <span>Reiniciar e Atualizar</span>
+      </button>
+      <button id="btn-dismiss-update-toast" class="btn btn-ghost btn-sm" title="Fechar aviso">
+        <span>Mais tarde</span>
+      </button>
+    </div>
+  </div>
+
   <script src="app.bundle.js"></script>
 </body>
 

@@ -2733,4 +2733,101 @@ svg {
   min-width: 26px;
   text-align: right;
   font-variant-numeric: tabular-nums;
-}
+}
+
+/* ══════════════════════════════════════════════════════════
+   TOAST NOTIFICATION: UPDATE READY
+   ══════════════════════════════════════════════════════════ */
+.toast-update-notification {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 1000;
+  max-width: 420px;
+  background: rgba(18, 18, 24, 0.95);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(124, 58, 237, 0.4);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6), 0 0 30px rgba(124, 58, 237, 0.2);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  animation: toastSlideUp 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+  color: var(--text-main);
+}
+
+[data-theme="light"] .toast-update-notification {
+  background: rgba(255, 255, 255, 0.98);
+  border-color: rgba(99, 102, 241, 0.35);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.12), 0 0 25px rgba(99, 102, 241, 0.15);
+}
+
+@keyframes toastSlideUp {
+  from { opacity: 0; transform: translateY(20px) scale(0.95); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.toast-update-content {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.toast-update-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent-purple), #4c1d95);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  flex-shrink: 0;
+  box-shadow: 0 0 12px var(--accent-glow);
+}
+
+.toast-update-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.toast-update-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.toast-update-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-main);
+}
+
+.badge-update {
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: var(--radius-sm);
+  letter-spacing: 0.5px;
+}
+
+.toast-update-text p {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.toast-update-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 4px;
+}
+

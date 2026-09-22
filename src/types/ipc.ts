@@ -39,6 +39,11 @@ export interface ElectronAPI {
 	getAppSettings: () => Promise<AppSettings>;
 	setOpenAtLogin: (enabled: boolean) => Promise<boolean>;
 	setAutoUpdate: (enabled: boolean) => Promise<boolean>;
+	installUpdate: () => Promise<void>;
+	checkForUpdates: () => Promise<unknown>;
+	onUpdateAvailable: (callback: (info: { version: string }) => void) => () => void;
+	onUpdateProgress: (callback: (progress: { percent: number; bytesPerSecond: number }) => void) => () => void;
+	onUpdateDownloaded: (callback: (info: { version: string }) => void) => () => void;
 	minimizeWindow: () => void;
 	maximizeWindow: () => void;
 	closeWindow: () => void;

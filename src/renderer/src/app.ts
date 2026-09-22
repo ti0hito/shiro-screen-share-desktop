@@ -1706,18 +1706,87 @@ class ShiroApp {
 			}
 		});
 
-		chkAutoUpdate?.addEventListener("change", async () => {
+		this.setupAutoUpdateSystem(chkAutoUpdate);
+	}
+
+	private setupAutoUpdateSystem(chkAutoUpdate: HTMLInputElement | null): void {
+		const modal = document.getElementById("modal-confirm-auto-update");
+		const btnConfirm = document.getElementById("btn-confirm-auto-update-modal");
+		const btnCancel = document.getElementById("btn-cancel-auto-update-modal");
+		const btnClose = document.getElementById("btn-close-auto-update-modal");
+		const modalDesc = document.getElementById("auto-update-modal-desc");
+		const btnConfirmText = document.getElementById("btn-confirm-auto-update-text");
+
+		let targetState = true;
+
+		const closeModal = () => {
+			if (modal) modal.classList.add("hidden");
+		};
+
+		const openModal = (enabling: boolean) => {
+			targetState = enabling;
+			if (modalDesc) {
+				modalDesc.textContent = enabling
+					? "Ao ativar as atualizações automáticas, o Shiro Screen Share baixará novas versões do GitHub em segundo plano. Quando um update estiver pronto, você receberá um aviso para reiniciar agora ou o app atualizará automaticamente ao ser fechado e reaberto."
+					: "Deseja desativar as atualizações automáticas? O app não baixará novos recursos e melhorias automaticamente.";
+			}
+			if (btnConfirmText) {
+				btnConfirmText.textContent = enabling ? "Confirmar e Ativar" : "Desativar Atualizações";
+			}
+			// Fecha o popover de configurações para focar no modal de confirmação
+			document.getElementById("settings-popover")?.classList.add("hidden");
+			modal?.classList.remove("hidden");
+			this.refreshIcons();
+		};
+
+		chkAutoUpdate?.addEventListener("change", () => {
+			const desiredState = chkAutoUpdate.checked;
+			// Mantém o estado anterior visualmente até o usuário confirmar no modal
+			chkAutoUpdate.checked = !desiredState;
+			openModal(desiredState);
+		});
+
+		btnConfirm?.addEventListener("click", async () => {
+			closeModal();
 			if (window.api?.setAutoUpdate) {
-				const val = await window.api.setAutoUpdate(chkAutoUpdate.checked);
-				chkAutoUpdate.checked = val;
+				const val = await window.api.setAutoUpdate(targetState);
+				if (chkAutoUpdate) chkAutoUpdate.checked = val;
 			}
 		});
 
-		document.querySelectorAll(".setting-toggle-row").forEach((row) => {
-			row.addEventListener("click", (e) => {
-				const checkbox = row.querySelector('input[type="checkbox"]') as HTMLInputElement | null;
-				if (checkbox && e.target !== checkbox) checkbox.click();
+		btnCancel?.addEventListener("click", closeModal);
+		btnClose?.addEventListener("click", closeModal);
+
+		// Toast de notificação de atualização baixada
+		const toast = document.getElementById("toast-update-notification");
+		const toastVersion = document.getElementById("toast-update-version");
+		const btnApply = document.getElementById("btn-apply-update-now");
+		const btnDismiss = document.getElementById("btn-dismiss-update-toast");
+
+		if (window.api?.onUpdateDownloaded) {
+			window.api.onUpdateDownloaded((info) => {
+				console.log("[App] Atualização baixada com sucesso:", info);
+				if (toast && toastVersion) {
+					toastVersion.textContent = `v${info.version || ""}`;
+					toast.classList.remove("hidden");
+					this.refreshIcons();
+				}
 			});
+		}
+
+		btnApply?.addEventListener("click", async () => {
+			if (btnApply) {
+				btnApply.setAttribute("disabled", "true");
+				btnApply.innerHTML = `<i data-lucide="loader-2" class="spin"></i> <span>Reiniciando...</span>`;
+				this.refreshIcons();
+			}
+			if (window.api?.installUpdate) {
+				await window.api.installUpdate();
+			}
+		});
+
+		btnDismiss?.addEventListener("click", () => {
+			if (toast) toast.classList.add("hidden");
 		});
 	}
 

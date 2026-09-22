@@ -185,9 +185,22 @@ export function isAutoUpdateEnabled(): boolean {
 export function setAutoUpdateEnabled(enabled: boolean): void {
 	autoUpdateEnabled = enabled;
 	autoUpdater.autoDownload = enabled;
+	autoUpdater.autoInstallOnAppQuit = enabled;
 	if (!enabled) {
 		console.log("[AutoUpdater] Auto updates disabled by user.");
 	}
+}
+
+export function installUpdateNow(): void {
+	console.log("[AutoUpdater] Installing update and restarting app...");
+	autoUpdater.quitAndInstall(false, true);
+}
+
+export async function checkForUpdatesNow(): Promise<unknown> {
+	if (app.isPackaged) {
+		return await autoUpdater.checkForUpdates();
+	}
+	return null;
 }
 
 function setupAutoUpdater(): void {
