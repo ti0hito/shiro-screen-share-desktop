@@ -188,6 +188,10 @@
           <img src="icon.ico" class="app-header-icon" alt="Shiro Logo" width="18" height="18">
           <span class="app-name">Shiro Screen Share</span>
           <span class="badge badge-ts">P2P</span>
+          <div id="header-room-pill" class="header-room-pill hidden" title="Sala conectada atualmente">
+            <i data-lucide="lock" id="header-room-icon"></i>
+            <span id="header-room-name-text">—</span>
+          </div>
         </div>
         <div class="header-right">
           <!-- Info do usuário logado -->
@@ -238,6 +242,34 @@
 
           <!-- Sub-painel: Salas de Transmissão -->
           <div id="panel-rooms" class="panel-section">
+            <!-- Submenu / Card de Sala Ativa Conectada -->
+            <div id="current-room-banner" class="current-room-banner hidden">
+              <div class="current-room-banner-header">
+                <span id="current-room-type-badge" class="badge badge-private">
+                  <i data-lucide="lock" class="badge-icon"></i>
+                  <span id="current-room-type-text">SALA PRIVADA</span>
+                </span>
+                <button id="btn-leave-current-room" class="btn btn-danger-ghost btn-xs" title="Sair desta sala">
+                  <i data-lucide="log-out"></i>
+                  <span>Sair</span>
+                </button>
+              </div>
+              <div class="current-room-banner-body">
+                <div class="current-room-banner-name" id="current-room-name">—</div>
+                <div class="current-room-banner-id-row">
+                  <span class="current-room-banner-id-label">ID:</span>
+                  <code id="current-room-id-code" class="room-id-code">—</code>
+                  <button id="btn-copy-current-room-id" class="btn-copy-id" title="Copiar ID da sala">
+                    <i data-lucide="copy"></i>
+                  </button>
+                </div>
+                <div class="current-room-banner-stats">
+                  <span id="current-room-members-count"><i data-lucide="users"></i> 1 membro(s)</span>
+                  <span id="current-room-streams-count"><i data-lucide="radio"></i> 0 ao vivo</span>
+                </div>
+              </div>
+            </div>
+
             <div class="rooms-panel-header">
               <span class="users-panel-title">Salas públicas</span>
               <div class="rooms-header-actions">

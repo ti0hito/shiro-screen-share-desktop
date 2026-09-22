@@ -254,6 +254,26 @@ export class P2PManager {
 		this.closePeer(targetUserId);
 	}
 
+	stopLocalStream(): void {
+		if (this.localStream) {
+			this.localStream.getTracks().forEach((t) => t.stop());
+			this.localStream = null;
+		}
+		this.isStreaming = false;
+
+		for (const [peerId, pc] of this.peerConnections) {
+			if (pc.connectionState === "closed") continue;
+			const senders = pc.getSenders();
+			for (const sender of senders) {
+				try {
+					pc.removeTrack(sender);
+				} catch (err) {
+					console.warn(`[P2P] Erro ao remover track para ${peerId}:`, err);
+				}
+			}
+		}
+	}
+
 	hangupAll(): void {
 		for (const [peerId] of this.peerConnections) {
 			this.closePeer(peerId);

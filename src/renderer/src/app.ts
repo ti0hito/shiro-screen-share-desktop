@@ -378,7 +378,7 @@ class ShiroApp {
 
 		this.usersRefreshInterval = setInterval(() => this.refreshUsersList(), 20_000);
 		this.roomsRefreshInterval = setInterval(() => this.refreshRooms(), 2_500);
-		this.thumbnailInterval = setInterval(() => this.updateAllThumbnails(), 2_000);
+		this.thumbnailInterval = setInterval(() => this.updateAllThumbnails(), 120_000); // Atualiza preview estática a cada 2 minutos
 
 		window.addEventListener("keydown", (e) => {
 			if (e.key === "Escape") this.restoreGridMode();
@@ -565,6 +565,123 @@ class ShiroApp {
 
 		// Botão de voltar ao grid quando maximizado
 		document.getElementById("btn-back-to-grid")?.addEventListener("click", () => this.restoreGridMode());
+
+		// Botão de sair da sala atual
+		document.getElementById("btn-leave-current-room")?.addEventListener("click", async () => {
+			if (!this.currentRoom) return;
+			const roomId = this.currentRoom.roomId;
+			if (this.p2pManager?.getIsStreaming()) {
+				await this.stopStreaming();
+			}
+			await leaveRoom(roomId);
+			this.p2pManager?.hangupAll();
+			this.remoteStreams.clear();
+			this.currentRoom = null;
+			this.maximizedStreamId = null;
+
+			// Atualiza banner e header
+			this.updateCurrentRoomBanner();
+
+			// Desabilita aba de fontes
+			const sourcesTab = document.getElementById("panel-tab-sources");
+			if (sourcesTab) {
+				sourcesTab.classList.add("disabled");
+				sourcesTab.setAttribute("disabled", "true");
+				sourcesTab.title = "Entre em uma sala para liberar as fontes";
+			}
+
+			// Volta para aba de salas
+			const tabRooms = document.getElementById("panel-tab-rooms");
+			const panelRooms = document.getElementById("panel-rooms");
+			const tabSources = document.getElementById("panel-tab-sources");
+			const panelSources = document.getElementById("panel-sources");
+			const tabUsers = document.getElementById("panel-tab-users");
+			const panelUsers = document.getElementById("panel-users");
+
+			[tabSources, tabUsers].forEach((t) => t?.classList.remove("active"));
+			[panelSources, panelUsers].forEach((p) => p?.classList.add("hidden"));
+			tabRooms?.classList.add("active");
+			panelRooms?.classList.remove("hidden");
+
+			await this.refreshRooms();
+			this.renderLiveStreamsGrid();
+		});
+
+		// Botão de copiar ID da sala ativa
+		document.getElementById("btn-copy-current-room-id")?.addEventListener("click", () => {
+			if (!this.currentRoom) return;
+			navigator.clipboard.writeText(this.currentRoom.roomId);
+			const btn = document.getElementById("btn-copy-current-room-id");
+			if (btn) {
+				btn.classList.add("copied");
+				btn.innerHTML = `<i data-lucide="check"></i>`;
+				this.refreshIcons();
+				setTimeout(() => {
+					btn.classList.remove("copied");
+					btn.innerHTML = `<i data-lucide="copy"></i>`;
+					this.refreshIcons();
+				}, 1500);
+			}
+		});
+	}
+
+	private updateCurrentRoomBanner(): void {
+		const banner = document.getElementById("current-room-banner");
+		const headerPill = document.getElementById("header-room-pill");
+		const headerRoomName = document.getElementById("header-room-name-text");
+		const headerRoomIcon = document.getElementById("header-room-icon");
+
+		if (!this.currentRoom) {
+			banner?.classList.add("hidden");
+			headerPill?.classList.add("hidden");
+			return;
+		}
+
+		if (banner) {
+			banner.classList.remove("hidden");
+			if (this.currentRoom.isPrivate) {
+				banner.classList.add("is-private");
+			} else {
+				banner.classList.remove("is-private");
+			}
+
+			const badgeEl = document.getElementById("current-room-type-badge");
+			if (badgeEl) {
+				if (this.currentRoom.isPrivate) {
+					badgeEl.className = "badge badge-private";
+					badgeEl.innerHTML = `<i data-lucide="lock" class="badge-icon"></i> <span id="current-room-type-text">SALA PRIVADA</span>`;
+				} else {
+					badgeEl.className = "badge badge-public";
+					badgeEl.innerHTML = `<i data-lucide="radio" class="badge-icon"></i> <span id="current-room-type-text">SALA PÚBLICA</span>`;
+				}
+			}
+
+			const nameEl = document.getElementById("current-room-name");
+			if (nameEl) nameEl.textContent = this.currentRoom.name;
+
+			const idCodeEl = document.getElementById("current-room-id-code");
+			if (idCodeEl) idCodeEl.textContent = this.currentRoom.roomId;
+
+			const membersEl = document.getElementById("current-room-members-count");
+			if (membersEl) membersEl.innerHTML = `<i data-lucide="users"></i> ${this.currentRoom.membersCount} membro(s)`;
+
+			const streamsEl = document.getElementById("current-room-streams-count");
+			if (streamsEl) streamsEl.innerHTML = `<i data-lucide="radio"></i> ${this.currentRoom.activeStreams?.length || 0} ao vivo`;
+		}
+
+		if (headerPill && headerRoomName) {
+			headerPill.classList.remove("hidden");
+			headerRoomName.textContent = this.currentRoom.name;
+			if (this.currentRoom.isPrivate) {
+				headerPill.classList.add("is-private");
+				if (headerRoomIcon) headerRoomIcon.setAttribute("data-lucide", "lock");
+			} else {
+				headerPill.classList.remove("is-private");
+				if (headerRoomIcon) headerRoomIcon.setAttribute("data-lucide", "radio");
+			}
+		}
+
+		this.refreshIcons();
 	}
 
 	private async refreshRooms(): Promise<void> {
@@ -581,6 +698,7 @@ class ShiroApp {
 				this.autoConnectRoomStreams();
 			}
 		}
+		this.updateCurrentRoomBanner();
 	}
 
 	private async autoConnectRoomStreams(): Promise<void> {
@@ -616,6 +734,8 @@ class ShiroApp {
 	}
 
 	private renderRoomsList(searchQuery = ""): void {
+		this.updateCurrentRoomBanner();
+
 		const listEl = document.getElementById("rooms-list");
 		if (!listEl) return;
 
@@ -697,6 +817,7 @@ class ShiroApp {
 
 		this.currentRoom = room;
 		console.log(`[App] Entrou na sala: ${room.name} (${room.roomId})`);
+		this.updateCurrentRoomBanner();
 
 		// Desbloqueia e ativa a aba de Fontes ao entrar na sala
 		const sourcesTab = document.getElementById("panel-tab-sources");
@@ -769,9 +890,10 @@ class ShiroApp {
 			const videoEl = localCard.querySelector("video") as HTMLVideoElement;
 			const canvasEl = localCard.querySelector("canvas") as HTMLCanvasElement;
 			videoEl.srcObject = this.previewStream;
+			videoEl.muted = true;
 			videoEl.play().catch(() => { });
 
-			videoEl.onloadeddata = () => this.updateCardThumbnail(videoEl, canvasEl);
+			this.captureInitialThumbnail(videoEl, canvasEl);
 
 			localCard.addEventListener("click", () => this.toggleMaximizeStreamCard("local-preview", localCard));
 			gridEl.appendChild(localCard);
@@ -784,13 +906,25 @@ class ShiroApp {
 			remoteCard.className = `stream-card ${isMax ? "maximized" : ""}`;
 			remoteCard.id = cardId;
 
+			const savedVol = this.getSavedStreamVolume(peerId);
+			const volIcon = savedVol === 0 ? "volume-x" : (savedVol < 50 ? "volume-1" : "volume-2");
+
 			remoteCard.innerHTML = `
 				<div class="stream-card-header">
 					<div class="stream-card-user">
 						<i data-lucide="video"></i>
 						<span>Transmissão de ${this.escapeHtml(remoteData.username)}</span>
 					</div>
-					<span class="badge badge-live">🔴 AO VIVO</span>
+					<div class="stream-card-actions">
+						<div class="stream-volume-control" title="Volume da transmissão">
+							<button class="stream-vol-btn" title="Silenciar / Ativar som" type="button">
+								<i data-lucide="${volIcon}"></i>
+							</button>
+							<input type="range" class="stream-vol-slider" min="0" max="100" value="${savedVol}">
+							<span class="stream-vol-percent">${savedVol}%</span>
+						</div>
+						<span class="badge badge-live">🔴 AO VIVO</span>
+					</div>
 				</div>
 				<canvas class="stream-card-canvas ${isMax ? "hidden" : ""}"></canvas>
 				<video class="stream-card-video ${isMax ? "" : "hidden"}" autoplay playsinline></video>
@@ -800,10 +934,50 @@ class ShiroApp {
 
 			const videoEl = remoteCard.querySelector("video") as HTMLVideoElement;
 			const canvasEl = remoteCard.querySelector("canvas") as HTMLCanvasElement;
+			const volBtn = remoteCard.querySelector(".stream-vol-btn") as HTMLButtonElement;
+			const volSlider = remoteCard.querySelector(".stream-vol-slider") as HTMLInputElement;
+			const volPercent = remoteCard.querySelector(".stream-vol-percent") as HTMLSpanElement;
+
 			videoEl.srcObject = remoteData.stream;
+			videoEl.volume = savedVol / 100;
+			// No modo preview (grid), o áudio fica mutado até o usuário abrir a transmissão
+			videoEl.muted = !isMax || savedVol === 0;
 			videoEl.play().catch(() => { });
 
-			videoEl.onloadeddata = () => this.updateCardThumbnail(videoEl, canvasEl);
+			const updateVolumeUI = (volume: number) => {
+				const isCurrentMax = this.maximizedStreamId === cardId;
+				videoEl.volume = volume / 100;
+				// Se a transmissão estiver aberta (maximizada), toca no volume desejado; senão mantém mudo na preview
+				videoEl.muted = !isCurrentMax || volume === 0;
+				volSlider.value = volume.toString();
+				volPercent.textContent = `${volume}%`;
+				this.setSavedStreamVolume(peerId, volume);
+
+				const currentIcon = volume === 0 ? "volume-x" : (volume < 50 ? "volume-1" : "volume-2");
+				volBtn.innerHTML = `<i data-lucide="${currentIcon}"></i>`;
+				this.refreshIcons();
+			};
+
+			volSlider.addEventListener("click", (e) => e.stopPropagation());
+			volSlider.addEventListener("input", (e) => {
+				e.stopPropagation();
+				const val = parseInt(volSlider.value, 10) || 0;
+				updateVolumeUI(val);
+			});
+
+			volBtn.addEventListener("click", (e) => {
+				e.stopPropagation();
+				const current = parseInt(volSlider.value, 10) || 0;
+				if (current > 0) {
+					remoteCard.dataset.prevVolume = current.toString();
+					updateVolumeUI(0);
+				} else {
+					const prev = parseInt(remoteCard.dataset.prevVolume || "100", 10) || 100;
+					updateVolumeUI(prev);
+				}
+			});
+
+			this.captureInitialThumbnail(videoEl, canvasEl);
 
 			remoteCard.addEventListener("click", () => this.toggleMaximizeStreamCard(cardId, remoteCard));
 			gridEl.appendChild(remoteCard);
@@ -816,21 +990,68 @@ class ShiroApp {
 
 			gridEl.querySelectorAll<HTMLElement>(".stream-card").forEach((c) => {
 				const isCurrentMax = (c.id === "stream-card-local" && this.maximizedStreamId === "local-preview") || (c.id === this.maximizedStreamId);
+				const videoEl = c.querySelector("video");
 				if (isCurrentMax) {
 					c.classList.add("maximized");
 					c.style.display = "";
+					if (videoEl && c.id !== "stream-card-local") {
+						const peerId = c.id.replace("stream-card-", "");
+						const savedVol = this.getSavedStreamVolume(peerId);
+						videoEl.volume = savedVol / 100;
+						videoEl.muted = savedVol === 0;
+					}
 				} else {
 					c.style.display = "none";
+					if (videoEl) videoEl.muted = true;
 				}
 			});
 		} else {
 			const rightSectionEl = document.querySelector(".right-section");
 			if (rightSectionEl) rightSectionEl.classList.remove("maximized-active");
 			if (gridEl) gridEl.classList.remove("maximized-active");
+
+			// Garante que todas as transmissões fiquem com áudio mudo no modo preview/grid
+			gridEl.querySelectorAll<HTMLVideoElement>(".stream-card video").forEach((v) => {
+				v.muted = true;
+			});
 		}
 
 		this.refreshIcons();
 		this.updateAllThumbnails();
+	}
+
+	private captureInitialThumbnail(videoEl: HTMLVideoElement, canvasEl: HTMLCanvasElement): void {
+		const tryCapture = (): boolean => {
+			if (videoEl.readyState >= 2 && videoEl.videoWidth > 0 && videoEl.videoHeight > 0) {
+				this.updateCardThumbnail(videoEl, canvasEl);
+				return true;
+			}
+			return false;
+		};
+
+		if (!tryCapture()) {
+			const onData = () => {
+				if (tryCapture()) {
+					videoEl.removeEventListener("loadeddata", onData);
+					videoEl.removeEventListener("canplay", onData);
+					videoEl.removeEventListener("timeupdate", onData);
+				}
+			};
+			videoEl.addEventListener("loadeddata", onData);
+			videoEl.addEventListener("canplay", onData);
+			videoEl.addEventListener("timeupdate", onData);
+
+			let attempts = 0;
+			const interval = setInterval(() => {
+				attempts++;
+				if (tryCapture() || attempts >= 20) {
+					clearInterval(interval);
+					videoEl.removeEventListener("loadeddata", onData);
+					videoEl.removeEventListener("canplay", onData);
+					videoEl.removeEventListener("timeupdate", onData);
+				}
+			}, 150);
+		}
 	}
 
 	private updateAllThumbnails(): void {
@@ -888,10 +1109,20 @@ class ShiroApp {
 				if (canvasEl) canvasEl.classList.add("hidden");
 				if (videoEl) {
 					videoEl.classList.remove("hidden");
+					const isLocal = cardId === "local-preview" || cardId === "stream-card-local";
+					if (isLocal) {
+						videoEl.muted = true;
+					} else {
+						const peerId = cardId.replace("stream-card-", "");
+						const savedVol = this.getSavedStreamVolume(peerId);
+						videoEl.volume = savedVol / 100;
+						videoEl.muted = savedVol === 0;
+					}
 					videoEl.play().catch(() => { });
 				}
 			} else {
 				c.style.display = "none";
+				if (videoEl) videoEl.muted = true;
 			}
 		});
 	}
@@ -911,8 +1142,11 @@ class ShiroApp {
 			const canvasEl = c.querySelector("canvas");
 			const videoEl = c.querySelector("video");
 
+			if (videoEl) {
+				videoEl.muted = true; // Garante que o áudio seja silenciado ao voltar ao grid
+				videoEl.classList.add("hidden");
+			}
 			if (canvasEl) canvasEl.classList.remove("hidden");
-			if (videoEl) videoEl.classList.add("hidden");
 		});
 
 		this.updateAllThumbnails();
@@ -1236,10 +1470,26 @@ class ShiroApp {
 		}
 	}
 
+	private getSavedStreamVolume(userId: string): number {
+		try {
+			const val = localStorage.getItem(`shiro_stream_volume_${userId}`);
+			if (val !== null) {
+				const parsed = parseInt(val, 10);
+				if (!isNaN(parsed)) return Math.min(100, Math.max(0, parsed));
+			}
+		} catch {}
+		return 100;
+	}
+
+	private setSavedStreamVolume(userId: string, volume: number): void {
+		try {
+			localStorage.setItem(`shiro_stream_volume_${userId}`, volume.toString());
+		} catch {}
+	}
+
 	private async stopStreaming(): Promise<void> {
 		console.log("[App] Parando transmissão...");
-		this.p2pManager?.hangupAll();
-		this.p2pManager?.setIsStreaming(false);
+		this.p2pManager?.stopLocalStream();
 		this.audioPipeline.stop();
 		this.audioVisualizer.stop();
 
@@ -1253,7 +1503,7 @@ class ShiroApp {
 			this.currentVideoTrack = null;
 		}
 
-		if (this.maximizedStreamId) {
+		if (this.maximizedStreamId === "local-preview" || this.maximizedStreamId === "stream-card-local") {
 			this.restoreGridMode();
 		}
 
@@ -1264,8 +1514,10 @@ class ShiroApp {
 		}
 
 		if (window.api) window.api.stopAudioCapture();
-		setStreamStatus(false, "Desconectado");
 		if (window.api) window.api.reportStreamShareState(false);
+
+		const isWatchingRemote = this.remoteStreams.size > 0;
+		setStreamStatus(isWatchingRemote, isWatchingRemote ? "Assistindo" : "Desconectado");
 
 		document.getElementById("btn-start-stream")?.classList.remove("hidden");
 		document.getElementById("btn-stop-stream")?.classList.add("hidden");
@@ -1281,11 +1533,14 @@ class ShiroApp {
 					await notifyRoomStream(this.currentRoom.roomId, "stop");
 				}
 				await leaveRoom(this.currentRoom.roomId);
+				this.currentRoom = null;
 			}
 			if (this.p2pManager) {
 				this.p2pManager.destroy();
 				this.p2pManager = null;
 			}
+			this.remoteStreams.clear();
+			this.updateCurrentRoomBanner();
 			this.audioPipeline.stop();
 			if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
 			if (this.usersRefreshInterval) clearInterval(this.usersRefreshInterval);
