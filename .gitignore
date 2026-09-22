@@ -1,8 +1,34 @@
+# Dependências
 node_modules/
+
+# Compilação e Empacotamento
 dist/
 build/
 release/
+*.blockmap
+
+# Variáveis de Ambiente e Segredos
 .env
 .env.local
+.env.*.local
+*.pem
+*.key
+
+# Logs
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Sistema Operacional
 .DS_Store
+Thumbs.db
+ehthumbs.db
+[Dd]esktop.ini
+
+# IDEs e Editores
+.vscode/
+.idea/
+*.swp
+*.swo
+*.tmp
