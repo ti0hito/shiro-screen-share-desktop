@@ -232,10 +232,12 @@ const DEFAULT_API_KEY = "c7c14f354ac71f78695a5529064e681d8588224515366760ed76815
 	// Stream Deck bridge: renderer reports its screen-share state
 	ipcMain.on("streamdeck-state-report", (_event, isSharing: boolean) => {
 		broadcastState({ isSharing });
+		respondToStateRequest({ isSharing });
 	});
 
 	// Stream Deck bridge: renderer responds to state query
 	ipcMain.on("streamdeck-state-response", (_event, isSharing: boolean) => {
+		broadcastState({ isSharing });
 		respondToStateRequest({ isSharing });
 	});
 
@@ -253,7 +255,9 @@ const DEFAULT_API_KEY = "c7c14f354ac71f78695a5529064e681d8588224515366760ed76815
 			}>,
 			selectedIndex: number,
 		) => {
-			respondToSourceRequest(resizeThumbnails(sources), selectedIndex);
+			const resized = resizeThumbnails(sources);
+			broadcastSources(resized, selectedIndex);
+			respondToSourceRequest(resized, selectedIndex);
 		},
 	);
 
@@ -271,7 +275,9 @@ const DEFAULT_API_KEY = "c7c14f354ac71f78695a5529064e681d8588224515366760ed76815
 			}>,
 			selectedIndex: number,
 		) => {
-			broadcastSources(resizeThumbnails(sources), selectedIndex);
+			const resized = resizeThumbnails(sources);
+			broadcastSources(resized, selectedIndex);
+			respondToSourceRequest(resized, selectedIndex);
 		},
 	);
 
@@ -279,6 +285,7 @@ const DEFAULT_API_KEY = "c7c14f354ac71f78695a5529064e681d8588224515366760ed76815
 	ipcMain.on(
 		"streamdeck-audio-mode-response",
 		(_event, mode: "process" | "system" | "disabled") => {
+			broadcastAudioMode(mode);
 			respondToAudioRequest(mode);
 		},
 	);
@@ -288,6 +295,7 @@ const DEFAULT_API_KEY = "c7c14f354ac71f78695a5529064e681d8588224515366760ed76815
 		"streamdeck-audio-mode-report",
 		(_event, mode: "process" | "system" | "disabled") => {
 			broadcastAudioMode(mode);
+			respondToAudioRequest(mode);
 		},
 	);
 

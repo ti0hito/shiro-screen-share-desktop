@@ -6,61 +6,33 @@ import streamDeck, {
 	type WillDisappearEvent,
 	SingletonAction,
 } from "@elgato/streamdeck";
-import sharp from "sharp";
 import { getWsClient, type WsMessage } from "../ws-client";
 import { previewState } from "../preview-state";
 
 const LONG_PRESS_MS = 500;
-const BORDER_COLOR_SELECTED = "#10b981";
-const IMG_SIZE = 144;
-const BORDER_WIDTH = 6;
 
-async function createBorderedImage(thumbnailUrl: string, isSelected: boolean): Promise<string> {
+export function createBorderedImage(thumbnailUrl: string, isSelected: boolean): string {
+	if (!thumbnailUrl) return "";
 	if (!isSelected) return thumbnailUrl;
 
-	const base64Data = thumbnailUrl.replace(/^data:image\/\w+;base64,/, "");
-	const imgBuffer = Buffer.from(base64Data, "base64");
-	const innerSize = IMG_SIZE - BORDER_WIDTH * 2;
-
-	const resizedThumbnail = await sharp(imgBuffer)
-		.resize(innerSize, innerSize, { fit: "cover" })
-		.png()
-		.toBuffer();
-
-	const bordered = await sharp({
-		create: {
-			width: IMG_SIZE,
-			height: IMG_SIZE,
-			channels: 4,
-			background: { r: 16, g: 185, b: 129, alpha: 1 },
-		},
-	})
-		.composite([
-			{
-				input: resizedThumbnail,
-				top: BORDER_WIDTH,
-				left: BORDER_WIDTH,
-			},
-		])
-		.png()
-		.toBuffer();
-
-	return `data:image/png;base64,${bordered.toString("base64")}`;
+	const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144"><image href="${thumbnailUrl}" x="6" y="6" width="132" height="132" preserveAspectRatio="xMidYMid slice"/><rect x="3" y="3" width="138" height="138" rx="10" ry="10" fill="none" stroke="#10b981" stroke-width="6"/></svg>`;
+	return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 
-function updateAllButtons(): void {
+export function updateAllPreviewButtons(): void {
 	const source = previewState.currentSource;
 	const isSelected = previewState.isSelected;
-	streamDeck.actions.forEach((act: any) => {
+	for (const act of (streamDeck.actions as any)) {
 		if (act.manifestId === "com.shiro.screenshare.source-preview") {
 			if (source?.thumbnailUrl) {
-				createBorderedImage(source.thumbnailUrl, isSelected).then((img) => {
-					act.setImage(img);
-				});
+				const img = createBorderedImage(source.thumbnailUrl, isSelected);
+				act.setImage(img);
+			} else {
+				act.setImage(undefined);
 			}
 			act.setTitle(source?.name?.substring(0, 12) || "");
 		}
-	});
+	}
 }
 
 @action({ UUID: "com.shiro.screenshare.source-preview" })
@@ -74,19 +46,21 @@ export class SourcePreviewAction extends SingletonAction {
 			if (msg.type === "sources_updated") {
 				previewState.sources = msg.payload.sources;
 				previewState.selectedIndex = msg.payload.selectedIndex;
-				updateAllButtons();
+				updateAllPreviewButtons();
 			}
 		});
 	}
 
-	override async onWillAppear(ev: WillAppearEvent): Promise<void> {
+	override onWillAppear(ev: WillAppearEvent): void {
 		const client = getWsClient();
 		client.send({ type: "get_sources" });
 		const source = previewState.currentSource;
 		const isSelected = previewState.isSelected;
 		if (source?.thumbnailUrl) {
-			const img = await createBorderedImage(source.thumbnailUrl, isSelected);
+			const img = createBorderedImage(source.thumbnailUrl, isSelected);
 			ev.action.setImage(img);
+		} else {
+			ev.action.setImage(undefined);
 		}
 		ev.action.setTitle(source?.name?.substring(0, 12) || "");
 	}
@@ -111,7 +85,7 @@ export class SourcePreviewAction extends SingletonAction {
 
 		if (held >= LONG_PRESS_MS) {
 			previewState.next();
-			updateAllButtons();
+			updateAllPreviewButtons();
 		} else {
 			const source = previewState.currentSource;
 			if (!source) {
@@ -122,6 +96,6 @@ export class SourcePreviewAction extends SingletonAction {
 
 		client.send({ type: "select_source", payload: { index: previewState.currentIndex } });
 		previewState.selectedIndex = previewState.currentIndex;
-		updateAllButtons();
+		updateAllPreviewButtons();
 	}
 }

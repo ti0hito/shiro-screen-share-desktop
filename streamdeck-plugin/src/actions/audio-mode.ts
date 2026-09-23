@@ -35,12 +35,14 @@ export class AudioModeAction extends SingletonAction {
 	}
 
 	private updateAllInstances(): void {
-		const title = MODE_LABELS[this.currentMode];
-		const stateIdx = MODE_STATES[this.currentMode];
-		this.actions.forEach((act: any) => {
-			act.setState(stateIdx);
-			act.setTitle(title);
-		});
+		const title = MODE_LABELS[this.currentMode] ?? "AUDIO";
+		const stateIdx = MODE_STATES[this.currentMode] ?? 0;
+		for (const act of (this.actions as any)) {
+			if (act.isKey()) {
+				act.setState(stateIdx);
+				act.setTitle(title);
+			}
+		}
 	}
 
 	override onWillAppear(ev: WillAppearEvent): void {

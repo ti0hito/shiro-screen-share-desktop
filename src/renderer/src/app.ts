@@ -1,8 +1,10 @@
 import {
 	AppWindow,
+	Check,
 	CheckCircle2,
 	ChevronLeft,
 	ChevronRight,
+	Copy,
 	createIcons,
 	Eye,
 	EyeOff,
@@ -17,16 +19,19 @@ import {
 	Power,
 	Radio,
 	RefreshCw,
+	RotateCw,
 	ScreenShare,
 	Search,
 	Settings,
 	ShieldCheck,
+	Sparkles,
 	Square,
 	Sun,
 	Target,
 	User,
 	Users,
 	Video,
+	Volume1,
 	Volume2,
 	VolumeX,
 	Wifi,
@@ -625,6 +630,16 @@ class ShiroApp {
 		});
 	}
 
+	private getRoomMembersCount(room?: any): number {
+		if (!room) return 1;
+		if (typeof room.membersCount === "number" && !isNaN(room.membersCount)) return room.membersCount;
+		if (typeof room.memberCount === "number" && !isNaN(room.memberCount)) return room.memberCount;
+		if (Array.isArray(room.members)) return room.members.length;
+		if (typeof room.members === "number" && !isNaN(room.members)) return room.members;
+		if (Array.isArray(room.users)) return room.users.length;
+		return 1;
+	}
+
 	private updateCurrentRoomBanner(): void {
 		const banner = document.getElementById("current-room-banner");
 		const headerPill = document.getElementById("header-room-pill");
@@ -662,11 +677,19 @@ class ShiroApp {
 			const idCodeEl = document.getElementById("current-room-id-code");
 			if (idCodeEl) idCodeEl.textContent = this.currentRoom.roomId;
 
+			const members = this.getRoomMembersCount(this.currentRoom);
+			const streams = Array.isArray(this.currentRoom.activeStreams) ? this.currentRoom.activeStreams.length : 0;
+
 			const membersEl = document.getElementById("current-room-members-count");
-			if (membersEl) membersEl.innerHTML = `<i data-lucide="users"></i> ${this.currentRoom.membersCount} membro(s)`;
+			if (membersEl) membersEl.innerHTML = `<i data-lucide="users"></i> ${members} membro(s)`;
 
 			const streamsEl = document.getElementById("current-room-streams-count");
-			if (streamsEl) streamsEl.innerHTML = `<i data-lucide="radio"></i> ${this.currentRoom.activeStreams?.length || 0} ao vivo`;
+			if (streamsEl) streamsEl.innerHTML = `<i data-lucide="radio"></i> ${streams} ao vivo`;
+
+			const copyBtn = document.getElementById("btn-copy-current-room-id");
+			if (copyBtn && !copyBtn.querySelector("svg")) {
+				copyBtn.innerHTML = `<i data-lucide="copy"></i>`;
+			}
 		}
 
 		if (headerPill && headerRoomName) {
@@ -758,7 +781,8 @@ class ShiroApp {
 		listEl.innerHTML = filtered
 			.map((r) => {
 				const isActive = this.currentRoom?.roomId === r.roomId;
-				const streamCount = r.activeStreams.length;
+				const streamCount = Array.isArray(r.activeStreams) ? r.activeStreams.length : 0;
+				const membersCount = this.getRoomMembersCount(r);
 
 				return `
 				<div class="room-item ${isActive ? "active" : ""}" data-room-id="${r.roomId}">
@@ -766,7 +790,7 @@ class ShiroApp {
 						<i data-lucide="radio" class="room-item-icon"></i>
 						<div class="room-item-details">
 							<span class="room-item-name">${this.escapeHtml(r.name)}</span>
-							<span class="room-item-sub">ID: ${r.roomId} • ${r.membersCount} membro(s)</span>
+							<span class="room-item-sub">ID: ${r.roomId} • ${membersCount} membro(s)</span>
 						</div>
 					</div>
 					<div class="room-item-right">
@@ -1389,7 +1413,12 @@ class ShiroApp {
 	}
 
 	private async startStreaming(): Promise<void> {
-		const selectedSource = this.leftSourcePicker?.getSelectedSource() ?? this.mainSourcePicker?.getSelectedSource();
+		let selectedSource = this.leftSourcePicker?.getSelectedSource() ?? this.mainSourcePicker?.getSelectedSource();
+		if (!selectedSource && this.allSources.length > 0) {
+			selectedSource = this.allSources[0];
+			this.leftSourcePicker?.setSelectedSource(selectedSource);
+			this.mainSourcePicker?.setSelectedSource(selectedSource);
+		}
 		if (!selectedSource) {
 			alert("Selecione uma fonte de vídeo antes de iniciar a transmissão.");
 			return;
@@ -1933,10 +1962,10 @@ class ShiroApp {
 			createIcons({
 				icons: {
 					Sun, Moon, Monitor, Zap, Wifi, WifiOff, Target, RefreshCw,
-					AppWindow, ScreenShare, Video, PlayCircle, Volume2, ShieldCheck,
+					AppWindow, ScreenShare, Video, PlayCircle, Volume1, Volume2, ShieldCheck,
 					VolumeX, MicOff, Radio, CheckCircle2, Play, Square, Loader2,
 					Settings, X, Power, User, Users, Lock, Eye, EyeOff, LogOut, Search,
-					ChevronLeft, ChevronRight,
+					ChevronLeft, ChevronRight, Check, Copy, RotateCw, Sparkles,
 				},
 			});
 		} catch (err) {
