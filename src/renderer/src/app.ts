@@ -1,15 +1,24 @@
 import {
 	AppWindow,
+	BadgeCheck,
+	Bell,
+	Camera,
 	Check,
 	CheckCircle2,
 	ChevronLeft,
 	ChevronRight,
+	Clock,
 	Copy,
 	createIcons,
 	Eye,
 	EyeOff,
+	Globe,
+	Hash,
+	Image,
+	KeyRound,
 	Loader2,
 	Lock,
+	LogIn,
 	LogOut,
 	MicOff,
 	Monitor,
@@ -28,7 +37,11 @@ import {
 	Square,
 	Sun,
 	Target,
+	Trash2,
 	User,
+	UserCheck,
+	UserCog,
+	UserPlus,
 	Users,
 	Video,
 	Volume1,
@@ -45,24 +58,38 @@ import type {
 	WindowSource,
 } from "../../types/capture";
 import {
+	acceptFriendRequest,
 	checkSavedSession,
 	createRoom,
+	dismissRoomInvite,
+	FriendInfo,
+	FriendRequest,
+	getFriends,
 	getOnlineUsers,
+	getProfile,
 	getRooms,
 	getToken,
 	getUser,
+	inviteFriendToRoom,
 	isAuthenticated,
 	joinRoom,
+	joinRoomByInvite,
+	kickUserFromRoom,
 	leaveRoom,
 	login,
 	logout,
 	notifyRoomStream,
 	register,
+	rejectFriend,
 	RoomInfo,
+	RoomInvite,
 	SavedSessionResult,
 	saveRememberSession,
+	sendFriendRequest,
 	sendHeartbeat,
 	ShiroUser,
+	updateProfile,
+	updateRoomSettings,
 } from "./authManager";
 import { P2PManager } from "./p2pManager";
 import { AudioPipeline } from "./audioPipeline";
@@ -78,8 +105,13 @@ function setStreamStatus(live: boolean, text: string): void {
 	badge.textContent = text;
 	badge.className = `badge ${live ? "badge-live" : "badge-offline"}`;
 }
-
 class ShiroApp {
+	private friendsRefreshInterval: ReturnType<typeof setInterval> | null = null;
+	private friends: FriendInfo[] = [];
+	private friendRequests: FriendRequest[] = [];
+	private roomInvites: RoomInvite[] = [];
+	private activeRoomInvite: RoomInvite | null = null;
+
 	private leftSourcePicker: SourcePicker | null = null;
 	private mainSourcePicker: SourcePicker | null = null;
 
@@ -105,11 +137,13 @@ class ShiroApp {
 	private remoteStreams = new Map<string, { stream: MediaStream; username: string }>();
 	private maximizedStreamId: string | null = null;
 	private streamDeckBridgeInitialized = false;
+	private activeMiniProfileUserId: string | null = null;
 
 	public async initialize(): Promise<void> {
 		console.log("[App] Initializing Shiro Screen Share...");
 		this.refreshIcons();
 		this.setupLoginWindowControls();
+		this.setupCustomTooltips();
 		this.setupStreamDeckBridge();
 
 		const saved = checkSavedSession();
@@ -159,6 +193,131 @@ class ShiroApp {
 		document.getElementById("login-btn-close")?.addEventListener("click", () => {
 			window.api?.closeWindow?.();
 		});
+	}
+
+	private setupCustomTooltips(): void {
+		let tooltipEl = document.getElementById("app-tooltip");
+		if (!tooltipEl) {
+			tooltipEl = document.createElement("div");
+			tooltipEl.id = "app-tooltip";
+			tooltipEl.className = "app-tooltip hidden";
+			tooltipEl.setAttribute("role", "tooltip");
+			tooltipEl.setAttribute("aria-hidden", "true");
+			document.body.appendChild(tooltipEl);
+		}
+
+		let currentTarget: HTMLElement | null = null;
+		let showTimer: number | null = null;
+
+		const hideTooltip = () => {
+			if (showTimer !== null) {
+				window.clearTimeout(showTimer);
+				showTimer = null;
+			}
+			if (tooltipEl) {
+				tooltipEl.classList.remove("visible");
+				tooltipEl.classList.add("hidden");
+			}
+			currentTarget = null;
+		};
+
+		const displayTooltip = (target: HTMLElement) => {
+			const text = target.getAttribute("data-tooltip");
+			if (!text || !text.trim() || !tooltipEl) {
+				hideTooltip();
+				return;
+			}
+
+			tooltipEl.textContent = text;
+			tooltipEl.classList.remove("hidden");
+
+			const targetRect = target.getBoundingClientRect();
+			const tipRect = tooltipEl.getBoundingClientRect();
+
+			// Determina posição (preferência ou detecção inteligente de borda da tela)
+			const posPref = target.getAttribute("data-tooltip-pos");
+			let placement: "top" | "bottom" = "top";
+
+			if (posPref === "bottom") {
+				placement = "bottom";
+			} else if (posPref === "top") {
+				placement = "top";
+			} else if (targetRect.top < 85 || targetRect.top - tipRect.height - 8 < 6) {
+				placement = "bottom";
+			} else {
+				placement = "top";
+			}
+
+			let top = placement === "bottom"
+				? targetRect.bottom + 6
+				: targetRect.top - tipRect.height - 6;
+
+			let left = targetRect.left + (targetRect.width - tipRect.width) / 2;
+
+			// Viewport clamping
+			const margin = 8;
+			if (left < margin) {
+				left = margin;
+			} else if (left + tipRect.width > window.innerWidth - margin) {
+				left = window.innerWidth - margin - tipRect.width;
+			}
+
+			if (top < margin) {
+				top = margin;
+			} else if (top + tipRect.height > window.innerHeight - margin) {
+				top = window.innerHeight - margin - tipRect.height;
+			}
+
+			tooltipEl.style.top = `${Math.round(top)}px`;
+			tooltipEl.style.left = `${Math.round(left)}px`;
+			tooltipEl.setAttribute("data-placement", placement);
+
+			requestAnimationFrame(() => {
+				tooltipEl?.classList.add("visible");
+			});
+		};
+
+		// Event Delegation em document para capturar qualquer elemento (inclusive dinâmicos)
+		document.addEventListener("pointerover", (e) => {
+			const target = (e.target as Element)?.closest?.<HTMLElement>("[data-tooltip], [title]");
+			if (!target) return;
+
+			// Intercepta e converte title nativo para data-tooltip para desativar o tooltip nativo feio do SO
+			const titleAttr = target.getAttribute("title") || target.title;
+			if (titleAttr) {
+				target.setAttribute("data-tooltip", titleAttr);
+				target.removeAttribute("title");
+				target.title = "";
+			}
+
+			if (currentTarget === target) return;
+
+			if (showTimer !== null) {
+				window.clearTimeout(showTimer);
+				showTimer = null;
+			}
+
+			currentTarget = target;
+			const isAlreadyVisible = tooltipEl?.classList.contains("visible");
+			const delay = isAlreadyVisible ? 40 : 120;
+
+			showTimer = window.setTimeout(() => {
+				if (currentTarget === target) {
+					displayTooltip(target);
+				}
+			}, delay);
+		});
+
+		document.addEventListener("pointerout", (e) => {
+			const related = e.relatedTarget as HTMLElement | null;
+			if (currentTarget && (!related || !currentTarget.contains(related))) {
+				hideTooltip();
+			}
+		});
+
+		document.addEventListener("pointerdown", () => hideTooltip());
+		window.addEventListener("scroll", () => hideTooltip(), true);
+		window.addEventListener("blur", () => hideTooltip());
 	}
 
 	private setupAuthTabs(): void {
@@ -314,18 +473,23 @@ class ShiroApp {
 
 		const user = getUser();
 		if (user) {
-			const headerUsername = document.getElementById("header-username");
-			const headerAvatar = document.getElementById("header-user-avatar");
-			if (headerUsername) headerUsername.textContent = user.username;
-			if (headerAvatar) headerAvatar.textContent = user.username[0].toUpperCase();
+			this.updateHeaderUserInfo();
 		}
 
 		if (user) {
 			this.p2pManager = new P2PManager(user.id, {
+				isPeerAllowed: (peerId) => {
+					if (!this.currentRoom) return false;
+					const inActiveStreams = this.currentRoom.activeStreams?.some((s) => s.userId === peerId);
+					if (this.p2pManager?.getIsStreaming()) {
+						return true;
+					}
+					return inActiveStreams ?? false;
+				},
 				onConnected: (peerId) => {
 					console.log(`[App] P2P conectado com sucesso a ${peerId}`);
 					if (this.p2pManager?.getIsStreaming()) {
-						setStreamStatus(true, "🔴 AO VIVO");
+						setStreamStatus(true, "・´ AO VIVO");
 						if (window.api) window.api.reportStreamShareState(true);
 						document.getElementById("btn-start-stream")?.classList.add("hidden");
 						document.getElementById("btn-stop-stream")?.classList.remove("hidden");
@@ -346,7 +510,14 @@ class ShiroApp {
 				},
 				onRemoteStream: (stream, peerId) => {
 					console.log(`[App] Stream remota recebida de ${peerId}`);
-					const activeStreamer = this.currentRoom?.activeStreams?.find((s) => s.userId === peerId);
+					const isStreamerInCurrentRoom = this.currentRoom?.activeStreams?.some((s) => s.userId === peerId);
+					if (!this.currentRoom || !isStreamerInCurrentRoom) {
+						console.warn(`[App] Ignorando stream de ${peerId} pois não está transmitindo na sala ativa (${this.currentRoom?.roomId}).`);
+						this.p2pManager?.closePeer(peerId);
+						return;
+					}
+
+					const activeStreamer = this.currentRoom.activeStreams?.find((s) => s.userId === peerId);
 					const onlineUser = this.onlineUsers.find((u) => u.id === peerId);
 					const username = activeStreamer?.username ?? onlineUser?.username ?? peerId;
 					this.remoteStreams.set(peerId, { stream, username });
@@ -358,7 +529,13 @@ class ShiroApp {
 
 		setupWindowControls();
 		this.setupThemeToggle();
+		this.setupProfileSettings();
+		this.setupMiniProfilePopover();
 		this.setupPanelTabs();
+		this.setupFriendsSystem();
+		this.setupRoomSettingsModal();
+		this.setupJoinByInviteModal();
+		this.setupRoomInvitesToast();
 		this.setupRoomListeners();
 		this.setupSourcePicker();
 		this.setupSubTabs();
@@ -376,33 +553,48 @@ class ShiroApp {
 
 		await this.refreshRooms();
 		await this.refreshSources();
+		await this.refreshFriends();
 		await this.refreshUsersList();
 
 		this.heartbeatInterval = setInterval(() => sendHeartbeat(), 60_000);
 		sendHeartbeat();
 
 		this.usersRefreshInterval = setInterval(() => this.refreshUsersList(), 20_000);
-		this.roomsRefreshInterval = setInterval(() => this.refreshRooms(), 2_500);
+		this.roomsRefreshInterval = setInterval(() => this.refreshRooms(), 15_000);
+		this.friendsRefreshInterval = setInterval(() => this.refreshFriends(), 10_000);
 		this.thumbnailInterval = setInterval(() => this.updateAllThumbnails(), 120_000); // Atualiza preview estática a cada 2 minutos
 
 		window.addEventListener("keydown", (e) => {
 			if (e.key === "Escape") this.restoreGridMode();
+		});
+
+		window.addEventListener("beforeunload", () => {
+			if (this.currentRoom) {
+				const roomId = this.currentRoom.roomId;
+				if (this.p2pManager?.getIsStreaming()) {
+					notifyRoomStream(roomId, "stop").catch(() => {});
+				}
+				leaveRoom(roomId).catch(() => {});
+			}
+			this.p2pManager?.hangupAll();
 		});
 	}
 
 	private setupPanelTabs(): void {
 		const tabRooms = document.getElementById("panel-tab-rooms");
 		const tabSources = document.getElementById("panel-tab-sources");
+		const tabFriends = document.getElementById("panel-tab-friends");
 		const tabUsers = document.getElementById("panel-tab-users");
 		const btnToggleSidebar = document.getElementById("btn-toggle-sidebar");
 
 		const panelRooms = document.getElementById("panel-rooms");
 		const panelSources = document.getElementById("panel-sources");
+		const panelFriends = document.getElementById("panel-friends");
 		const panelUsers = document.getElementById("panel-users");
 
 		const activate = (activeTab: HTMLElement | null, activePanel: HTMLElement | null) => {
-			[tabRooms, tabSources, tabUsers].forEach((t) => t?.classList.remove("active"));
-			[panelRooms, panelSources, panelUsers].forEach((p) => p?.classList.add("hidden"));
+			[tabRooms, tabSources, tabFriends, tabUsers].forEach((t) => t?.classList.remove("active"));
+			[panelRooms, panelSources, panelFriends, panelUsers].forEach((p) => p?.classList.add("hidden"));
 
 			activeTab?.classList.add("active");
 			activePanel?.classList.remove("hidden");
@@ -411,8 +603,12 @@ class ShiroApp {
 
 		tabRooms?.addEventListener("click", () => activate(tabRooms, panelRooms));
 		tabSources?.addEventListener("click", () => {
-			if (!this.currentRoom) return; // O botão fica disabled via atributos HTML/CSS com tooltip no hover
+			if (!this.currentRoom) return;
 			activate(tabSources, panelSources);
+		});
+		tabFriends?.addEventListener("click", () => {
+			activate(tabFriends, panelFriends);
+			this.refreshFriends();
 		});
 		tabUsers?.addEventListener("click", () => activate(tabUsers, panelUsers));
 
@@ -426,9 +622,9 @@ class ShiroApp {
 		document.getElementById("btn-expand-sidebar-floating")?.addEventListener("click", toggleSidebar);
 	}
 
-	// ══════════════════════════════════════════
+	// ------------------------------------------------------------------------------------------------------------------------------
 	//  ROOMS, MODALS & SEARCH
-	// ══════════════════════════════════════════
+	// ------------------------------------------------------------------------------------------------------------------------------
 	private setupRoomListeners(): void {
 		// Abrir modal de criação de sala
 		document.getElementById("btn-open-create-room")?.addEventListener("click", () => {
@@ -453,7 +649,7 @@ class ShiroApp {
 			if (passInput) passInput.value = randomPass;
 		});
 
-		// Submeter formulário de criar sala
+		// Submeter formulÃ¡rio de criar sala
 		document.getElementById("form-create-room")?.addEventListener("submit", async (e) => {
 			e.preventDefault();
 			const name = (document.getElementById("create-room-name") as HTMLInputElement)?.value.trim();
@@ -488,6 +684,19 @@ class ShiroApp {
 		document.getElementById("btn-open-join-by-id")?.addEventListener("click", () => {
 			const modal = document.getElementById("modal-join-by-id");
 			if (modal) modal.classList.remove("hidden");
+
+			const tabId = document.getElementById("tab-join-mode-id");
+			const tabInvite = document.getElementById("tab-join-mode-invite");
+			const formId = document.getElementById("form-join-by-id");
+			const formInvite = document.getElementById("form-join-by-invite-code");
+			const indicator = document.getElementById("join-tab-indicator");
+
+			tabId?.classList.add("active");
+			tabInvite?.classList.remove("active");
+			indicator?.classList.remove("on-register");
+			formId?.classList.remove("hidden");
+			formInvite?.classList.add("hidden");
+
 			(document.getElementById("join-by-id-room-id") as HTMLInputElement)?.focus();
 			this.refreshIcons();
 		});
@@ -592,7 +801,12 @@ class ShiroApp {
 			if (sourcesTab) {
 				sourcesTab.classList.add("disabled");
 				sourcesTab.setAttribute("disabled", "true");
-				sourcesTab.title = "Entre em uma sala para liberar as fontes";
+				sourcesTab.removeAttribute("data-tooltip");
+				sourcesTab.title = "";
+			}
+			const sourcesWrapper = sourcesTab?.closest(".panel-tab-wrapper");
+			if (sourcesWrapper) {
+				sourcesWrapper.setAttribute("data-tooltip", "Entre em uma sala para liberar as fontes");
 			}
 
 			// Volta para aba de salas
@@ -628,15 +842,57 @@ class ShiroApp {
 				}, 1500);
 			}
 		});
+
+		// Botão de copiar Código de Convite da sala ativa (Apenas dono da sala)
+		document.getElementById("btn-copy-invite-code")?.addEventListener("click", () => {
+			const user = getUser();
+			const isOwner = !!(user && this.currentRoom && (this.currentRoom.ownerId === user.id || this.currentRoom.createdBy === user.username));
+			if (!isOwner || !this.currentRoom?.inviteCode) return;
+			navigator.clipboard.writeText(this.currentRoom.inviteCode);
+			const btn = document.getElementById("btn-copy-invite-code");
+			if (btn) {
+				btn.classList.add("copied");
+				btn.innerHTML = `<i data-lucide="check"></i>`;
+				this.refreshIcons();
+				setTimeout(() => {
+					btn.classList.remove("copied");
+					btn.innerHTML = `<i data-lucide="key-round"></i>`;
+					this.refreshIcons();
+				}, 1500);
+			}
+		});
 	}
 
 	private getRoomMembersCount(room?: any): number {
 		if (!room) return 1;
+
+		if (Array.isArray(room.members)) {
+			if (this.onlineUsers && this.onlineUsers.length > 0) {
+				const activeMembers = room.members.filter((m: any) => {
+					const id = typeof m === "string" ? m : m?.id || m?.userId;
+					const name = typeof m === "string" ? m : m?.username || m?.name;
+					return this.onlineUsers.some((u) => u.id === id || u.username === name);
+				});
+				if (activeMembers.length > 0) return activeMembers.length;
+			}
+			return room.members.length;
+		}
+
+		if (Array.isArray(room.users)) {
+			if (this.onlineUsers && this.onlineUsers.length > 0) {
+				const activeUsers = room.users.filter((u: any) => {
+					const id = typeof u === "string" ? u : u?.id || u?.userId;
+					const name = typeof u === "string" ? u : u?.username || u?.name;
+					return this.onlineUsers.some((ou) => ou.id === id || ou.username === name);
+				});
+				if (activeUsers.length > 0) return activeUsers.length;
+			}
+			return room.users.length;
+		}
+
 		if (typeof room.membersCount === "number" && !isNaN(room.membersCount)) return room.membersCount;
 		if (typeof room.memberCount === "number" && !isNaN(room.memberCount)) return room.memberCount;
-		if (Array.isArray(room.members)) return room.members.length;
 		if (typeof room.members === "number" && !isNaN(room.members)) return room.members;
-		if (Array.isArray(room.users)) return room.users.length;
 		return 1;
 	}
 
@@ -662,7 +918,10 @@ class ShiroApp {
 
 			const badgeEl = document.getElementById("current-room-type-badge");
 			if (badgeEl) {
-				if (this.currentRoom.isPrivate) {
+				if (this.currentRoom.roomId === "GERAL") {
+					badgeEl.className = "badge badge-global";
+					badgeEl.innerHTML = `<i data-lucide="globe" class="badge-icon"></i> <span id="current-room-type-text">SALA GLOBAL</span>`;
+				} else if (this.currentRoom.isPrivate) {
 					badgeEl.className = "badge badge-private";
 					badgeEl.innerHTML = `<i data-lucide="lock" class="badge-icon"></i> <span id="current-room-type-text">SALA PRIVADA</span>`;
 				} else {
@@ -677,11 +936,15 @@ class ShiroApp {
 			const idCodeEl = document.getElementById("current-room-id-code");
 			if (idCodeEl) idCodeEl.textContent = this.currentRoom.roomId;
 
+			const user = getUser();
+			const isOwner = !!(user && this.currentRoom && (this.currentRoom.ownerId === user.id || this.currentRoom.createdBy === user.username));
+
 			const members = this.getRoomMembersCount(this.currentRoom);
+			const maxMembers = this.currentRoom.maxMembers || 20;
 			const streams = Array.isArray(this.currentRoom.activeStreams) ? this.currentRoom.activeStreams.length : 0;
 
 			const membersEl = document.getElementById("current-room-members-count");
-			if (membersEl) membersEl.innerHTML = `<i data-lucide="users"></i> ${members} membro(s)`;
+			if (membersEl) membersEl.innerHTML = `<i data-lucide="users"></i> ${members}/${maxMembers} membro(s)`;
 
 			const streamsEl = document.getElementById("current-room-streams-count");
 			if (streamsEl) streamsEl.innerHTML = `<i data-lucide="radio"></i> ${streams} ao vivo`;
@@ -690,12 +953,34 @@ class ShiroApp {
 			if (copyBtn && !copyBtn.querySelector("svg")) {
 				copyBtn.innerHTML = `<i data-lucide="copy"></i>`;
 			}
+
+			const copyInviteBtn = document.getElementById("btn-copy-invite-code");
+			if (copyInviteBtn) {
+				if (isOwner && this.currentRoom.inviteCode) {
+					copyInviteBtn.classList.remove("hidden");
+					copyInviteBtn.title = `Copiar Código de Convite (${this.currentRoom.inviteCode})`;
+				} else {
+					copyInviteBtn.classList.add("hidden");
+				}
+			}
+
+			const btnSettings = document.getElementById("btn-room-settings");
+			if (btnSettings) {
+				if (isOwner) {
+					btnSettings.classList.remove("hidden");
+				} else {
+					btnSettings.classList.add("hidden");
+				}
+			}
 		}
 
 		if (headerPill && headerRoomName) {
 			headerPill.classList.remove("hidden");
 			headerRoomName.textContent = this.currentRoom.name;
-			if (this.currentRoom.isPrivate) {
+			if (this.currentRoom.roomId === "GERAL") {
+				headerPill.classList.remove("is-private");
+				if (headerRoomIcon) headerRoomIcon.setAttribute("data-lucide", "globe");
+			} else if (this.currentRoom.isPrivate) {
 				headerPill.classList.add("is-private");
 				if (headerRoomIcon) headerRoomIcon.setAttribute("data-lucide", "lock");
 			} else {
@@ -708,12 +993,19 @@ class ShiroApp {
 	}
 
 	private async refreshRooms(): Promise<void> {
-		this.rooms = await getRooms();
+		try {
+			const res = await getRooms();
+			if (res.ok) {
+				this.rooms = res.rooms;
+			}
+		} catch (err) {
+			console.warn("[App] Erro ao carregar lista de salas:", err);
+		}
 		const searchInput = document.getElementById("input-search-rooms") as HTMLInputElement | null;
 		const query = searchInput?.value.toLowerCase() ?? "";
 		this.renderRoomsList(query);
 
-		// Atualiza o estado da sala ativa e auto-conecta a transmissões ativas
+		// Atualiza o estado da sala ativa e auto-conecta as transmissoes ativas
 		if (this.currentRoom) {
 			const updated = this.rooms.find((r) => r.roomId === this.currentRoom!.roomId);
 			if (updated) {
@@ -734,6 +1026,7 @@ class ShiroApp {
 			const isStillStreaming = activeStreams.some((s) => s.userId === peerId);
 			if (!isStillStreaming) {
 				console.log(`[App] Transmissão de ${peerId} encerrada. Removendo do grid.`);
+				this.p2pManager?.closePeer(peerId);
 				this.remoteStreams.delete(peerId);
 				if (this.maximizedStreamId === `stream-card-${peerId}`) {
 					this.restoreGridMode();
@@ -784,18 +1077,20 @@ class ShiroApp {
 				const streamCount = Array.isArray(r.activeStreams) ? r.activeStreams.length : 0;
 				const membersCount = this.getRoomMembersCount(r);
 
+				const isGlobal = r.roomId === "GERAL";
 				return `
-				<div class="room-item ${isActive ? "active" : ""}" data-room-id="${r.roomId}">
+				<div class="room-item ${isActive ? "active" : ""} ${isGlobal ? "room-global" : ""}" data-room-id="${r.roomId}">
 					<div class="room-item-left">
-						<i data-lucide="radio" class="room-item-icon"></i>
+						<i data-lucide="${isGlobal ? "globe" : "radio"}" class="room-item-icon ${isGlobal ? "icon-global" : ""}"></i>
 						<div class="room-item-details">
 							<span class="room-item-name">${this.escapeHtml(r.name)}</span>
-							<span class="room-item-sub">ID: ${r.roomId} • ${membersCount} membro(s)</span>
+							<span class="room-item-sub">ID: ${r.roomId} - ${membersCount} membro(s)</span>
 						</div>
 					</div>
 					<div class="room-item-right">
+						${isGlobal ? '<span class="room-global-badge"><i data-lucide="globe"></i> GLOBAL</span>' : ""}
 						${r.isPrivate ? '<span class="room-lock-badge" title="Sala Privada (Protegida por senha)"><i data-lucide="lock"></i></span>' : ""}
-						${streamCount > 0 ? `<span class="room-streams-badge">🔴 ${streamCount}</span>` : ""}
+						${streamCount > 0 ? `<span class="room-streams-badge">・´ ${streamCount}</span>` : ""}
 					</div>
 				</div>`;
 			})
@@ -819,6 +1114,8 @@ class ShiroApp {
 					const res = await joinRoom(targetRoom.roomId);
 					if (res.ok && res.room) {
 						await this.onRoomSelected(res.room);
+					} else if (!res.ok) {
+						alert(res.error || "Não foi possível entrar na sala.");
 					}
 				}
 			});
@@ -854,7 +1151,12 @@ class ShiroApp {
 		if (sourcesTab) {
 			sourcesTab.classList.remove("disabled");
 			sourcesTab.removeAttribute("disabled");
-			sourcesTab.title = "Fontes de captura";
+			sourcesTab.setAttribute("data-tooltip", "Fontes de captura");
+			sourcesTab.title = "";
+		}
+		const sourcesWrapper = sourcesTab?.closest(".panel-tab-wrapper");
+		if (sourcesWrapper) {
+			sourcesWrapper.removeAttribute("data-tooltip");
 		}
 
 		// Ativa a aba de fontes para o usuário selecionar o que transmitir
@@ -863,14 +1165,14 @@ class ShiroApp {
 		sourcesTab?.classList.add("active");
 		panelSources?.classList.remove("hidden");
 
-		// Auto-conecta a transmissões ativas já em andamento na sala
+		// Auto-conecta as transmissões ativas já em andamento na sala
 		await this.autoConnectRoomStreams();
 		await this.refreshRooms();
 	}
 
-	// ══════════════════════════════════════════
+	// ------------------------------------------------------------------------------------------------------------------------------
 	//  LIVE MULTI-STREAM GRID & MAXIMIZE
-	// ══════════════════════════════════════════
+	// ------------------------------------------------------------------------------------------------------------------------------
 	private renderLiveStreamsGrid(): void {
 		const gridEl = document.getElementById("live-streams-grid");
 		if (!gridEl) return;
@@ -903,7 +1205,7 @@ class ShiroApp {
 						<i data-lucide="user"></i>
 						<span>${this.escapeHtml(user?.username ?? "Você")} (Você Transmitindo)</span>
 					</div>
-					<span class="badge badge-live">🔴 AO VIVO</span>
+					<span class="badge badge-live">・´ AO VIVO</span>
 				</div>
 				<canvas class="stream-card-canvas ${isMax ? "hidden" : ""}"></canvas>
 				<video class="stream-card-video ${isMax ? "" : "hidden"}" autoplay playsinline muted></video>
@@ -947,7 +1249,7 @@ class ShiroApp {
 							<input type="range" class="stream-vol-slider" min="0" max="100" value="${savedVol}">
 							<span class="stream-vol-percent">${savedVol}%</span>
 						</div>
-						<span class="badge badge-live">🔴 AO VIVO</span>
+						<span class="badge badge-live">・´ AO VIVO</span>
 					</div>
 				</div>
 				<canvas class="stream-card-canvas ${isMax ? "hidden" : ""}"></canvas>
@@ -971,7 +1273,7 @@ class ShiroApp {
 			const updateVolumeUI = (volume: number) => {
 				const isCurrentMax = this.maximizedStreamId === cardId;
 				videoEl.volume = volume / 100;
-				// Se a transmissão estiver aberta (maximizada), toca no volume desejado; senão mantém mudo na preview
+				// Se a transmissão estiver aberta (maximizada), toca no volume desejado; se não mantém mudo na preview
 				videoEl.muted = !isCurrentMax || volume === 0;
 				volSlider.value = volume.toString();
 				volPercent.textContent = `${volume}%`;
@@ -1179,21 +1481,11 @@ class ShiroApp {
 	private setupSubTabs(): void {
 		const tabWindows = document.getElementById("tab-windows");
 		const tabScreens = document.getElementById("tab-screens");
-		const indicator = document.querySelector(".sub-tabs-indicator") as HTMLElement | null;
-
-		const moveIndicator = (tab: HTMLElement) => {
-			if (!indicator) return;
-			indicator.style.width = `${tab.offsetWidth}px`;
-			indicator.style.left = `${tab.offsetLeft}px`;
-		};
 
 		if (tabWindows && tabScreens) {
-			moveIndicator(tabWindows);
-
 			tabWindows.addEventListener("click", () => {
 				tabWindows.classList.add("active");
 				tabScreens.classList.remove("active");
-				moveIndicator(tabWindows);
 				this.leftSourcePicker?.setFilter("window");
 				this.mainSourcePicker?.setFilter("window");
 				this.refreshIcons();
@@ -1202,15 +1494,9 @@ class ShiroApp {
 			tabScreens.addEventListener("click", () => {
 				tabScreens.classList.add("active");
 				tabWindows.classList.remove("active");
-				moveIndicator(tabScreens);
 				this.leftSourcePicker?.setFilter("screen");
 				this.mainSourcePicker?.setFilter("screen");
 				this.refreshIcons();
-			});
-
-			window.addEventListener("resize", () => {
-				const activeTab = document.querySelector(".sub-tab-btn.active") as HTMLElement | null;
-				if (activeTab) moveIndicator(activeTab);
 			});
 		}
 	}
@@ -1238,9 +1524,9 @@ class ShiroApp {
 		setInterval(() => this.refreshSources(), 15_000);
 	}
 
-	// ══════════════════════════════════════════
-	//  USERS PANEL (Exibe todos, inclusive Você)
-	// ══════════════════════════════════════════
+	// ------------------------------------------------------------------------------------------------------------------------------
+	//  USERS PANEL (Exibe todos, inclusive VocÃª)
+	// ------------------------------------------------------------------------------------------------------------------------------
 	private async refreshUsersList(): Promise<void> {
 		const listEl = document.getElementById("users-list");
 		if (!listEl) return;
@@ -1263,16 +1549,25 @@ class ShiroApp {
 			.map((u) => {
 				const isSelf = u.id === currentUser?.id;
 				const isSelected = this.selectedTargetUserId === u.id;
+				const displayName = u.nickname ? this.escapeHtml(u.nickname) : this.escapeHtml(u.username);
+				const subText = u.nickname ? `@${this.escapeHtml(u.username)} • ID: ${u.id}` : `ID: ${u.id}`;
+				const initial = (u.nickname || u.username)[0].toUpperCase();
+
+				const avatarHtml = u.avatar && u.avatar.trim().startsWith("http")
+					? `<img src="${this.escapeHtml(u.avatar.trim())}" alt="${displayName}" onerror="this.remove(); this.parentElement.textContent='${initial}';" />`
+					: initial;
 
 				return `
 			<div class="user-card ${isSelected ? "selected" : ""} ${isSelf ? "self-user" : ""}" data-user-id="${u.id}" data-username="${u.username}">
-				<div class="user-card-avatar">
-					${u.username[0].toUpperCase()}
-					<div class="user-card-status-dot"></div>
+				<div class="user-card-avatar-wrapper">
+					<div class="user-card-avatar">
+						${avatarHtml}
+					</div>
+					<div class="user-card-status-dot" title="Online"></div>
 				</div>
 				<div class="user-card-info">
-					<span class="user-card-name">${this.escapeHtml(u.username)} ${isSelf ? '<span class="user-self-tag">você</span>' : ""}</span>
-					<span class="user-card-id">ID: ${u.id}</span>
+					<span class="user-card-name">${displayName} ${isSelf ? '<span class="user-self-tag">você</span>' : ""}</span>
+					<span class="user-card-id">${subText}</span>
 				</div>
 			</div>`;
 			})
@@ -1280,8 +1575,17 @@ class ShiroApp {
 
 		listEl.querySelectorAll<HTMLElement>(".user-card").forEach((card) => {
 			card.addEventListener("click", () => {
+				const userId = card.dataset.userId;
+				if (this.activeMiniProfileUserId === userId) {
+					this.hideUserMiniProfile();
+					return;
+				}
 				listEl.querySelectorAll(".user-card").forEach((c) => c.classList.remove("selected"));
 				card.classList.add("selected");
+				const userObj = this.onlineUsers.find((u) => u.id === userId) || (currentUser?.id === userId ? currentUser : null);
+				if (userObj) {
+					this.showUserMiniProfile(userObj, card);
+				}
 			});
 		});
 
@@ -1466,7 +1770,7 @@ class ShiroApp {
 		this.p2pManager?.setLocalStream(stream);
 		this.p2pManager?.setIsStreaming(true);
 
-		setStreamStatus(true, "🔴 AO VIVO");
+		setStreamStatus(true, "ðŸ”´ AO VIVO");
 		if (window.api) window.api.reportStreamShareState(true);
 
 		document.getElementById("btn-start-stream")?.classList.add("hidden");
@@ -1478,22 +1782,9 @@ class ShiroApp {
 			if (this.currentRoom) {
 				await notifyRoomStream(this.currentRoom.roomId, "start");
 			}
-
-			if (this.selectedTargetUserId) {
-				await this.p2pManager?.renegotiate(this.selectedTargetUserId);
-			} else {
-				const onlineUsers = await getOnlineUsers();
-				this.onlineUsers = onlineUsers;
-				const currentUser = getUser();
-				for (const u of onlineUsers) {
-					if (u.id !== currentUser?.id) {
-						await this.p2pManager?.renegotiate(u.id);
-					}
-				}
-			}
 		} catch (err: any) {
-			console.error("[App] Erro P2P:", err);
-			alert(`Erro ao conectar P2P: ${err.message}`);
+			console.error("[App] Erro ao notificar sala:", err);
+			alert(`Erro ao iniciar transmissão na sala: ${err.message}`);
 			setStreamStatus(false, "Erro ao Conectar");
 			this.stopStreaming();
 		}
@@ -1786,7 +2077,7 @@ class ShiroApp {
 		btnCancel?.addEventListener("click", closeModal);
 		btnClose?.addEventListener("click", closeModal);
 
-		// Toast de notificação de atualização baixada
+		// Toast de notificaÃ§Ã£o de atualizaÃ§Ã£o baixada
 		const toast = document.getElementById("toast-update-notification");
 		const toastVersion = document.getElementById("toast-update-version");
 		const btnApply = document.getElementById("btn-apply-update-now");
@@ -1844,11 +2135,621 @@ class ShiroApp {
 		}
 	}
 
+
+	// ------------------------------------------------------------------------------------------------------------------------------
+	//  SISTEMA DE AMIGOS & CONVITES
+	// ------------------------------------------------------------------------------------------------------------------------------
+	private setupFriendsSystem(): void {
+		// Abrir modal de adicionar amigo
+		document.getElementById("btn-open-add-friend")?.addEventListener("click", () => {
+			const modal = document.getElementById("modal-add-friend");
+			if (modal) modal.classList.remove("hidden");
+			(document.getElementById("input-add-friend-target") as HTMLInputElement)?.focus();
+			this.refreshIcons();
+		});
+
+		const closeAddModal = () => {
+			document.getElementById("modal-add-friend")?.classList.add("hidden");
+			const err = document.getElementById("add-friend-error");
+			const succ = document.getElementById("add-friend-success");
+			if (err) err.textContent = "";
+			if (succ) {
+				succ.textContent = "";
+				succ.classList.add("hidden");
+			}
+		};
+
+		document.getElementById("btn-close-add-friend")?.addEventListener("click", closeAddModal);
+		document.getElementById("btn-cancel-add-friend")?.addEventListener("click", closeAddModal);
+
+		// Submeter pedido de amizade
+		document.getElementById("form-add-friend")?.addEventListener("submit", async (e) => {
+			e.preventDefault();
+			const targetInput = document.getElementById("input-add-friend-target") as HTMLInputElement | null;
+			const target = targetInput?.value.trim();
+			const errorEl = document.getElementById("add-friend-error");
+			const successEl = document.getElementById("add-friend-success");
+
+			if (!target) {
+				if (errorEl) errorEl.textContent = "Digite o nome de usuário ou ID.";
+				return;
+			}
+
+			if (errorEl) errorEl.textContent = "";
+			if (successEl) {
+				successEl.textContent = "";
+				successEl.classList.add("hidden");
+			}
+
+			this.setAuthLoading("btn-submit-add-friend", true);
+			const res = await sendFriendRequest(target);
+			this.setAuthLoading("btn-submit-add-friend", false);
+
+			if (!res.ok) {
+				if (errorEl) errorEl.textContent = res.error ?? "Erro ao enviar pedido de amizade.";
+				return;
+			}
+
+			if (successEl) {
+				successEl.textContent = res.message || "Pedido de amizade enviado com sucesso!";
+				successEl.classList.remove("hidden");
+			}
+
+			if (targetInput) targetInput.value = "";
+			await this.refreshFriends();
+
+			setTimeout(() => {
+				closeAddModal();
+			}, 1200);
+		});
+
+		// Botão de atualizar lista de amigos
+		document.getElementById("btn-refresh-friends")?.addEventListener("click", () => this.refreshFriends());
+	}
+
+	private async refreshFriends(): Promise<void> {
+		try {
+			const res = await getFriends();
+			this.friends = res.friends;
+			this.friendRequests = res.friendRequests;
+			this.roomInvites = res.roomInvites;
+
+			// Atualiza ponto de notificação na aba
+			const dot = document.getElementById("friends-badge-dot");
+			const hasNotif = this.friendRequests.length > 0 || this.roomInvites.length > 0;
+			if (dot) {
+				if (hasNotif) dot.classList.remove("hidden");
+				else dot.classList.add("hidden");
+			}
+
+			// Renderiza pedidos pendentes
+			this.renderFriendRequests();
+
+			// Renderiza lista de amigos
+			this.renderFriendsList();
+
+			// Verifica se há convite de sala para exibir toast
+			this.checkRoomInvites();
+		} catch (err) {
+			console.warn("[App] Erro ao carregar amigos:", err);
+		}
+	}
+
+	private renderFriendRequests(): void {
+		const section = document.getElementById("friend-requests-section");
+		const countEl = document.getElementById("friend-requests-count");
+		const listEl = document.getElementById("friend-requests-list");
+
+		if (!section || !listEl) return;
+
+		if (this.friendRequests.length === 0) {
+			section.classList.add("hidden");
+			return;
+		}
+
+		section.classList.remove("hidden");
+		if (countEl) countEl.textContent = this.friendRequests.length.toString();
+
+		listEl.innerHTML = this.friendRequests
+			.map((req: FriendRequest) => {
+				const initial = (req.fromUsername || "?")[0].toUpperCase();
+				return `
+				<div class="friend-request-card" data-user-id="${this.escapeHtml(req.fromUserId)}">
+					<div class="friend-card-avatar">${initial}</div>
+					<div class="friend-card-details">
+						<span class="friend-card-name">@${this.escapeHtml(req.fromUsername)}</span>
+						<span class="friend-card-sub">Quer ser seu amigo</span>
+					</div>
+					<div class="friend-card-actions">
+						<button class="btn btn-primary btn-xs btn-accept-friend" data-user-id="${this.escapeHtml(req.fromUserId)}" title="Aceitar pedido">
+							<i data-lucide="check"></i>
+						</button>
+						<button class="btn btn-danger-ghost btn-xs btn-reject-friend" data-user-id="${this.escapeHtml(req.fromUserId)}" title="Recusar">
+							<i data-lucide="x"></i>
+						</button>
+					</div>
+				</div>`;
+			})
+			.join("");
+
+		listEl.querySelectorAll<HTMLButtonElement>(".btn-accept-friend").forEach((btn) => {
+			btn.addEventListener("click", async () => {
+				const userId = btn.dataset.userId!;
+				btn.disabled = true;
+				await acceptFriendRequest(userId);
+				await this.refreshFriends();
+			});
+		});
+
+		listEl.querySelectorAll<HTMLButtonElement>(".btn-reject-friend").forEach((btn) => {
+			btn.addEventListener("click", async () => {
+				const userId = btn.dataset.userId!;
+				btn.disabled = true;
+				await rejectFriend(userId);
+				await this.refreshFriends();
+			});
+		});
+
+		this.refreshIcons();
+	}
+
+	private renderFriendsList(): void {
+		const listEl = document.getElementById("friends-list");
+		if (!listEl) return;
+
+		if (this.friends.length === 0) {
+			listEl.innerHTML = `
+				<div class="users-empty">
+					<i data-lucide="user-plus"></i>
+					<span>Nenhum amigo adicionado ainda. Clique em <b>+ Adicionar</b> acima!</span>
+				</div>`;
+			this.refreshIcons();
+			return;
+		}
+
+		const inCurrentRoom = !!this.currentRoom;
+
+		listEl.innerHTML = this.friends
+			.map((f: FriendInfo) => {
+				const displayName = f.nickname ? this.escapeHtml(f.nickname) : this.escapeHtml(f.username);
+				const initial = (displayName && displayName.length > 0) ? displayName[0].toUpperCase() : "?";
+				const avatarHtml = f.avatar && f.avatar.trim().startsWith("http")
+					? `<img src="${this.escapeHtml(f.avatar.trim())}" alt="${displayName}" onerror="this.remove(); this.parentElement.textContent='${initial}';" />`
+					: initial;
+
+				const roomStatus = f.currentRoom
+					? `<span class="friend-room-badge"><i data-lucide="radio"></i> ${this.escapeHtml(f.currentRoom.name)}</span>`
+					: (f.isOnline ? '<span class="friend-online-text">Disponível</span>' : '<span class="friend-offline-text">Offline</span>');
+
+				return `
+				<div class="friend-card" data-friend-id="${f.id}">
+					<div class="user-card-avatar-wrapper">
+						<div class="user-card-avatar">${avatarHtml}</div>
+						<div class="user-card-status-dot ${f.isOnline ? "" : "offline"}" title="${f.isOnline ? "Online" : "Offline"}"></div>
+					</div>
+					<div class="friend-card-info">
+						<span class="friend-card-name">${displayName}</span>
+						<div class="friend-card-sub">@${this.escapeHtml(f.username)} â€¢ ${roomStatus}</div>
+					</div>
+					<div class="friend-card-actions">
+						${
+							inCurrentRoom && f.isOnline
+								? `<button class="btn btn-secondary btn-xs btn-invite-friend-room" data-friend-id="${f.id}" title="Convidar para sua sala ativa">
+									<i data-lucide="radio"></i>
+									<span>Convidar</span>
+								</button>`
+								: ""
+						}
+						<button class="btn btn-ghost btn-xs btn-remove-friend" data-friend-id="${f.id}" title="Desfazer amizade">
+							<i data-lucide="trash-2"></i>
+						</button>
+					</div>
+				</div>`;
+			})
+			.join("");
+
+		listEl.querySelectorAll<HTMLButtonElement>(".btn-invite-friend-room").forEach((btn) => {
+			btn.addEventListener("click", async () => {
+				if (!this.currentRoom) return;
+				const friendId = btn.dataset.friendId!;
+				btn.disabled = true;
+				btn.innerHTML = `<i data-lucide="loader-2" class="spin"></i>`;
+				this.refreshIcons();
+
+				const res = await inviteFriendToRoom(friendId, this.currentRoom.roomId);
+				if (res.ok) {
+					btn.innerHTML = `<i data-lucide="check"></i> <span>Enviado!</span>`;
+					this.refreshIcons();
+					setTimeout(() => {
+						btn.disabled = false;
+						btn.innerHTML = `<i data-lucide="radio"></i> <span>Convidar</span>`;
+						this.refreshIcons();
+					}, 2000);
+				} else {
+					btn.disabled = false;
+					btn.innerHTML = `<i data-lucide="radio"></i> <span>Convidar</span>`;
+					this.refreshIcons();
+					alert(res.error || "Erro ao convidar amigo.");
+				}
+			});
+		});
+
+		listEl.querySelectorAll<HTMLButtonElement>(".btn-remove-friend").forEach((btn) => {
+			btn.addEventListener("click", async () => {
+				const friendId = btn.dataset.friendId!;
+				if (!confirm("Deseja realmente desfazer a amizade com este usuário?")) return;
+				btn.disabled = true;
+				await rejectFriend(friendId);
+				await this.refreshFriends();
+			});
+		});
+
+		listEl.querySelectorAll<HTMLElement>(".friend-card").forEach((card) => {
+			card.addEventListener("click", (e) => {
+				if ((e.target as HTMLElement).closest("button")) return;
+				const friendId = card.dataset.friendId;
+				if (this.activeMiniProfileUserId === friendId) {
+					this.hideUserMiniProfile();
+					return;
+				}
+				listEl.querySelectorAll(".friend-card").forEach((c) => c.classList.remove("selected"));
+				card.classList.add("selected");
+				const friendObj = this.friends.find((f: FriendInfo) => f.id === friendId);
+				if (friendObj) {
+					this.showUserMiniProfile(friendObj, card);
+				}
+			});
+		});
+
+		this.refreshIcons();
+	}
+
+	// ------------------------------------------------------------------------------------------------------------------------------
+	//  MODAL: GERENCIAR SALA (DONO / PROPRIETÁRIO)
+	// ------------------------------------------------------------------------------------------------------------------------------
+	private setupRoomSettingsModal(): void {
+		const modal = document.getElementById("modal-room-settings");
+		const btnOpen = document.getElementById("btn-room-settings");
+		const btnClose = document.getElementById("btn-close-room-settings");
+		const btnCancel = document.getElementById("btn-cancel-room-settings");
+		const form = document.getElementById("form-room-settings");
+
+		const inputName = document.getElementById("room-settings-name") as HTMLInputElement | null;
+		const inputPass = document.getElementById("room-settings-password") as HTMLInputElement | null;
+		const inputMax = document.getElementById("room-settings-max-members") as HTMLInputElement | null;
+		const privacyBadge = document.getElementById("room-settings-privacy-badge");
+		const passHint = document.getElementById("room-settings-password-hint");
+		const removePassWrap = document.getElementById("room-settings-remove-password-wrap");
+		const removePassCheckbox = document.getElementById("room-settings-remove-password") as HTMLInputElement | null;
+		const btnGenPass = document.getElementById("btn-generate-room-settings-password");
+
+		const codeText = document.getElementById("room-settings-invite-code-text");
+		const btnCopyCode = document.getElementById("btn-copy-settings-invite-code");
+		const btnRegenCode = document.getElementById("btn-regenerate-invite-code");
+
+		const errorEl = document.getElementById("room-settings-error");
+		const successEl = document.getElementById("room-settings-success");
+
+		const openModal = () => {
+			if (!this.currentRoom) return;
+			const user = getUser();
+			const isOwner = !!(user && this.currentRoom && (this.currentRoom.ownerId === user.id || this.currentRoom.createdBy === user.username));
+			if (!isOwner) return;
+
+			if (errorEl) errorEl.textContent = "";
+			if (successEl) {
+				successEl.textContent = "";
+				successEl.classList.add("hidden");
+			}
+
+			if (inputName) inputName.value = this.currentRoom.name;
+			if (inputPass) {
+				inputPass.value = "";
+				inputPass.disabled = false;
+			}
+			if (inputMax) inputMax.value = (this.currentRoom.maxMembers || 15).toString();
+			if (codeText) codeText.textContent = this.currentRoom.inviteCode || "INV-XXXXXX";
+
+			if (removePassCheckbox) removePassCheckbox.checked = false;
+
+			if (this.currentRoom.isPrivate) {
+				if (privacyBadge) {
+					privacyBadge.className = "badge badge-private";
+					privacyBadge.textContent = "Privada";
+				}
+				if (passHint) {
+					passHint.textContent = "Deixe em branco para manter a senha atual, digite 8 dígitos para alterar, ou marque abaixo para remover.";
+				}
+				if (inputPass) inputPass.placeholder = "Nova senha de 8 dígitos (ou deixe em branco)";
+				removePassWrap?.classList.remove("hidden");
+			} else {
+				if (privacyBadge) {
+					privacyBadge.className = "badge badge-public";
+					privacyBadge.textContent = "Pública";
+				}
+				if (passHint) {
+					passHint.textContent = "Digite 8 dígitos para definir uma senha e tornar a sala privada.";
+				}
+				if (inputPass) inputPass.placeholder = "8 dígitos numéricos";
+				removePassWrap?.classList.add("hidden");
+			}
+
+			modal?.classList.remove("hidden");
+			this.refreshIcons();
+			inputName?.focus();
+		};
+
+		const closeModal = () => {
+			modal?.classList.add("hidden");
+			if (errorEl) errorEl.textContent = "";
+			if (successEl) {
+				successEl.textContent = "";
+				successEl.classList.add("hidden");
+			}
+		};
+
+		btnOpen?.addEventListener("click", openModal);
+		btnClose?.addEventListener("click", closeModal);
+		btnCancel?.addEventListener("click", closeModal);
+
+		btnGenPass?.addEventListener("click", () => {
+			const randomPass = Math.floor(10000000 + Math.random() * 90000000).toString();
+			if (inputPass) {
+				inputPass.disabled = false;
+				inputPass.value = randomPass;
+			}
+			if (removePassCheckbox) removePassCheckbox.checked = false;
+		});
+
+		removePassCheckbox?.addEventListener("change", () => {
+			if (!inputPass) return;
+			if (removePassCheckbox.checked) {
+				inputPass.value = "";
+				inputPass.disabled = true;
+			} else {
+				inputPass.disabled = false;
+			}
+		});
+
+		btnCopyCode?.addEventListener("click", () => {
+			if (!this.currentRoom?.inviteCode) return;
+			navigator.clipboard.writeText(this.currentRoom.inviteCode);
+			if (btnCopyCode) {
+				btnCopyCode.innerHTML = `<i data-lucide="check"></i> <span>Copiado!</span>`;
+				this.refreshIcons();
+				setTimeout(() => {
+					btnCopyCode.innerHTML = `<i data-lucide="copy"></i> <span>Copiar</span>`;
+					this.refreshIcons();
+				}, 1500);
+			}
+		});
+
+		btnRegenCode?.addEventListener("click", async () => {
+			if (!this.currentRoom) return;
+			if (btnRegenCode) {
+				btnRegenCode.setAttribute("disabled", "true");
+				btnRegenCode.innerHTML = `<i data-lucide="loader-2" class="spin"></i>`;
+				this.refreshIcons();
+			}
+
+			const res = await updateRoomSettings(this.currentRoom.roomId, { regenerateInviteCode: true });
+			if (btnRegenCode) {
+				btnRegenCode.removeAttribute("disabled");
+				btnRegenCode.innerHTML = `<i data-lucide="rotate-cw"></i> <span>Regenerar</span>`;
+				this.refreshIcons();
+			}
+
+			if (res.ok && res.room) {
+				this.currentRoom = res.room;
+				if (codeText) codeText.textContent = res.room.inviteCode || "";
+				this.updateCurrentRoomBanner();
+			} else {
+				if (errorEl) errorEl.textContent = res.error || "Erro ao regenerar código de convite.";
+			}
+		});
+
+		form?.addEventListener("submit", async (e) => {
+			e.preventDefault();
+			if (!this.currentRoom) return;
+
+			const name = inputName?.value.trim();
+			const pass = inputPass?.value.trim();
+			const maxMembers = inputMax ? parseInt(inputMax.value, 10) : undefined;
+			const shouldRemovePassword = removePassCheckbox?.checked;
+
+			if (!name) {
+				if (errorEl) errorEl.textContent = "O nome da sala não pode estar vazio.";
+				return;
+			}
+
+			if (pass && !shouldRemovePassword && !/^\d{8}$/.test(pass)) {
+				if (errorEl) errorEl.textContent = "A senha deve conter exatamente 8 dígitos numéricos.";
+				return;
+			}
+
+			if (errorEl) errorEl.textContent = "";
+			if (successEl) {
+				successEl.textContent = "";
+				successEl.classList.add("hidden");
+			}
+
+			this.setAuthLoading("btn-save-room-settings", true);
+
+			const updatePayload: any = { name };
+			if (shouldRemovePassword) {
+				updatePayload.password = "";
+			} else if (pass) {
+				updatePayload.password = pass;
+			}
+
+			if (maxMembers && !isNaN(maxMembers)) {
+				updatePayload.maxMembers = maxMembers;
+			}
+
+			const res = await updateRoomSettings(this.currentRoom.roomId, updatePayload);
+			this.setAuthLoading("btn-save-room-settings", false);
+
+			if (!res.ok || !res.room) {
+				if (errorEl) errorEl.textContent = res.error || "Erro ao atualizar configurações da sala.";
+				return;
+			}
+
+			this.currentRoom = res.room;
+			this.updateCurrentRoomBanner();
+			await this.refreshRooms();
+
+			if (successEl) {
+				successEl.textContent = "Configurações da sala salvas com sucesso!";
+				successEl.classList.remove("hidden");
+			}
+
+			setTimeout(() => {
+				closeModal();
+			}, 900);
+		});
+	}
+
+	// ------------------------------------------------------------------------------------------------------------------------------
+	//  MODAL: ENTRAR POR CÓDIGO DE CONVITE / ID
+	// ------------------------------------------------------------------------------------------------------------------------------
+	private setupJoinByInviteModal(): void {
+		const tabId = document.getElementById("tab-join-mode-id");
+		const tabInvite = document.getElementById("tab-join-mode-invite");
+		const formId = document.getElementById("form-join-by-id");
+		const formInvite = document.getElementById("form-join-by-invite-code");
+		const indicator = document.getElementById("join-tab-indicator");
+
+		tabId?.addEventListener("click", () => {
+			tabId.classList.add("active");
+			tabInvite?.classList.remove("active");
+			indicator?.classList.remove("on-register");
+			formId?.classList.remove("hidden");
+			formInvite?.classList.add("hidden");
+			(document.getElementById("join-by-id-room-id") as HTMLInputElement)?.focus();
+		});
+
+		tabInvite?.addEventListener("click", () => {
+			tabInvite.classList.add("active");
+			tabId?.classList.remove("active");
+			indicator?.classList.add("on-register");
+			formInvite?.classList.remove("hidden");
+			formId?.classList.add("hidden");
+			(document.getElementById("join-invite-code-input") as HTMLInputElement)?.focus();
+		});
+
+		const closeJoinModal = () => {
+			document.getElementById("modal-join-by-id")?.classList.add("hidden");
+			const err1 = document.getElementById("join-by-id-error");
+			const err2 = document.getElementById("join-by-invite-error");
+			if (err1) err1.textContent = "";
+			if (err2) err2.textContent = "";
+		};
+
+		document.getElementById("btn-cancel-join-by-invite")?.addEventListener("click", closeJoinModal);
+
+		// Submissão por Código de Convite Direto
+		formInvite?.addEventListener("submit", async (e) => {
+			e.preventDefault();
+			const codeInput = document.getElementById("join-invite-code-input") as HTMLInputElement | null;
+			const code = codeInput?.value.trim().toUpperCase();
+			const errorEl = document.getElementById("join-by-invite-error");
+
+			if (!code) {
+				if (errorEl) errorEl.textContent = "Digite o código de convite.";
+				return;
+			}
+
+			if (errorEl) errorEl.textContent = "";
+			this.setAuthLoading("btn-submit-join-by-invite", true);
+			const res = await joinRoomByInvite(code);
+			this.setAuthLoading("btn-submit-join-by-invite", false);
+
+			if (!res.ok || !res.room) {
+				if (errorEl) errorEl.textContent = res.error || "Código de convite inválido ou expirado.";
+				return;
+			}
+
+			closeJoinModal();
+			await this.onRoomSelected(res.room);
+		});
+	}
+
+	// ------------------------------------------------------------------------------------------------------------------------------
+	//  TOAST: CONVITES DE SALA EM TEMPO REAL
+	// ------------------------------------------------------------------------------------------------------------------------------
+	private setupRoomInvitesToast(): void {
+		const toast = document.getElementById("toast-room-invite");
+		const btnAccept = document.getElementById("btn-accept-room-invite");
+		const btnDismiss = document.getElementById("btn-dismiss-room-invite");
+
+		btnAccept?.addEventListener("click", async () => {
+			if (!this.activeRoomInvite) return;
+			const invite = this.activeRoomInvite;
+			if (toast) toast.classList.add("hidden");
+
+			await dismissRoomInvite(invite.id);
+			this.activeRoomInvite = null;
+
+			// Entra direto usando o código de convite da sala
+			const res = await joinRoomByInvite(invite.inviteCode);
+			if (res.ok && res.room) {
+				await this.onRoomSelected(res.room);
+			} else {
+				// Fallback caso a sala seja pública
+				const resJoin = await joinRoom(invite.roomId);
+				if (resJoin.ok && resJoin.room) {
+					await this.onRoomSelected(resJoin.room);
+				} else {
+					alert(res.error || "Não foi possível entrar na sala convidada.");
+				}
+			}
+		});
+
+		btnDismiss?.addEventListener("click", async () => {
+			if (!this.activeRoomInvite) return;
+			const invite = this.activeRoomInvite;
+			if (toast) toast.classList.add("hidden");
+			await dismissRoomInvite(invite.id);
+			this.activeRoomInvite = null;
+		});
+	}
+
+	private checkRoomInvites(): void {
+		const toast = document.getElementById("toast-room-invite");
+		const senderEl = document.getElementById("toast-invite-sender");
+		const roomNameEl = document.getElementById("toast-invite-room-name");
+
+		if (!toast || !senderEl || !roomNameEl) return;
+
+		// Se jÃ¡ estiver na sala do convite, nÃ£o exibe
+		const validInvites = this.roomInvites.filter(
+			(inv: RoomInvite) => !this.currentRoom || this.currentRoom.roomId !== inv.roomId,
+		);
+
+		if (validInvites.length === 0) {
+			if (this.activeRoomInvite) {
+				toast.classList.add("hidden");
+				this.activeRoomInvite = null;
+			}
+			return;
+		}
+
+		const latestInvite = validInvites[0];
+		if (this.activeRoomInvite?.id !== latestInvite.id) {
+			this.activeRoomInvite = latestInvite;
+			const senderName = latestInvite.fromNickname || latestInvite.fromUsername;
+			senderEl.textContent = senderName;
+			roomNameEl.textContent = latestInvite.roomName;
+			toast.classList.remove("hidden");
+			this.refreshIcons();
+		}
+	}
+
 	private setupStreamDeckBridge(): void {
 		if (!window.api || this.streamDeckBridgeInitialized) return;
 		this.streamDeckBridgeInitialized = true;
 
-		// 1. Toggle stream (iniciar / parar transmissão)
+		// 1. Toggle stream (iniciar / parar transmissÃ£o)
 		window.api.onStreamDeckToggle(() => {
 			if (this.p2pManager?.getIsStreaming()) {
 				this.stopStreaming();
@@ -1957,6 +2858,448 @@ class ShiroApp {
 	}
 
 
+	private updateHeaderUserInfo(): void {
+		const user = getUser();
+		if (!user) return;
+		const headerUsername = document.getElementById("header-username");
+		const headerAvatar = document.getElementById("header-user-avatar");
+		const displayName = user.nickname || user.username;
+
+		if (headerUsername) {
+			headerUsername.textContent = displayName;
+			headerUsername.title = user.nickname
+				? `${user.nickname} (@${user.username}) ・ Clique para editar perfil`
+				: `@${user.username} ・ Clique para editar perfil`;
+		}
+		if (headerAvatar) {
+			this.renderUserAvatar(headerAvatar, user);
+		}
+	}
+
+	private renderUserAvatar(
+		container: HTMLElement,
+		user: { username: string; nickname?: string; avatar?: string },
+	): void {
+		const displayName = user.nickname || user.username;
+		const initial = (displayName && displayName.trim().length > 0) ? displayName.trim()[0].toUpperCase() : "?";
+
+		container.innerHTML = "";
+		if (user.avatar && user.avatar.trim().startsWith("http")) {
+			const img = document.createElement("img");
+			img.src = user.avatar.trim();
+			img.alt = displayName;
+			img.onerror = () => {
+				img.remove();
+				container.textContent = initial;
+			};
+			container.appendChild(img);
+		} else {
+			container.textContent = initial;
+		}
+	}
+
+
+	private setupProfileSettings(): void {
+		const headerInfo = document.getElementById("header-user-info");
+		const modal = document.getElementById("modal-profile-settings");
+		const btnClose = document.getElementById("btn-close-profile-modal");
+		const btnCancel = document.getElementById("btn-cancel-profile-settings");
+		const form = document.getElementById("form-profile-settings");
+		const inputNick = document.getElementById("input-profile-nickname") as HTMLInputElement | null;
+		const inputAvatar = document.getElementById("input-profile-avatar") as HTMLInputElement | null;
+		const inputBanner = document.getElementById("input-profile-banner") as HTMLInputElement | null;
+		const btnClearAvatar = document.getElementById("btn-clear-profile-avatar");
+		const btnClearBanner = document.getElementById("btn-clear-profile-banner");
+		const previewDisplayName = document.getElementById("profile-preview-display-name");
+		const previewUsername = document.getElementById("profile-preview-username");
+		const previewFallback = document.getElementById("profile-avatar-preview-fallback");
+		const previewImg = document.getElementById("profile-avatar-preview-img") as HTMLImageElement | null;
+		const previewBanner = document.getElementById("profile-banner-preview");
+		const rateBadge = document.getElementById("nickname-rate-badge");
+		const rateText = document.getElementById("nickname-rate-text");
+		const errorEl = document.getElementById("profile-settings-error");
+		const successEl = document.getElementById("profile-settings-success");
+
+		let remainingChanges = 6;
+		let maxChanges = 6;
+
+		const updateRateBadge = (remaining: number, max = 6) => {
+			remainingChanges = remaining;
+			maxChanges = max;
+			if (rateText) {
+				rateText.textContent = `${remaining}/${max} trocas restantes`;
+			}
+			if (rateBadge) {
+				rateBadge.classList.remove("warning", "danger");
+				if (remaining === 0) {
+					rateBadge.classList.add("danger");
+				} else if (remaining <= 2) {
+					rateBadge.classList.add("warning");
+				}
+			}
+		};
+
+		const updateLivePreview = () => {
+			const user = getUser();
+			if (!user) return;
+
+			const nickVal = inputNick?.value.trim() || "";
+			const avatarVal = inputAvatar?.value.trim() || "";
+			const bannerVal = inputBanner?.value.trim() || "";
+
+			const displayName = nickVal.length > 0 ? nickVal : user.username;
+			if (previewDisplayName) previewDisplayName.textContent = displayName;
+			if (previewUsername) previewUsername.textContent = `@${user.username}`;
+
+			if (previewFallback) {
+				previewFallback.textContent = displayName[0]?.toUpperCase() || "?";
+			}
+
+			if (avatarVal.startsWith("http")) {
+				if (previewImg) {
+					previewImg.src = avatarVal;
+					previewImg.classList.remove("hidden");
+					if (previewFallback) previewFallback.classList.add("hidden");
+					previewImg.onerror = () => {
+						previewImg.classList.add("hidden");
+						if (previewFallback) previewFallback.classList.remove("hidden");
+					};
+					previewImg.onload = () => {
+						previewImg.classList.remove("hidden");
+						if (previewFallback) previewFallback.classList.add("hidden");
+					};
+				}
+				if (btnClearAvatar) btnClearAvatar.classList.remove("hidden");
+			} else {
+				if (previewImg) {
+					previewImg.classList.add("hidden");
+					previewImg.src = "";
+				}
+				if (previewFallback) previewFallback.classList.remove("hidden");
+				if (btnClearAvatar) btnClearAvatar.classList.add("hidden");
+			}
+
+			if (bannerVal.startsWith("http")) {
+				if (previewBanner) {
+					previewBanner.style.backgroundImage = `url("${bannerVal}")`;
+				}
+				if (btnClearBanner) btnClearBanner.classList.remove("hidden");
+			} else {
+				if (previewBanner) {
+					previewBanner.style.backgroundImage = "";
+				}
+				if (btnClearBanner) btnClearBanner.classList.add("hidden");
+			}
+		};
+
+		const openModal = async () => {
+			const user = getUser();
+			if (!user) return;
+
+			if (errorEl) errorEl.textContent = "";
+			if (successEl) {
+				successEl.textContent = "";
+				successEl.classList.add("hidden");
+			}
+
+			if (inputNick) inputNick.value = user.nickname || "";
+			if (inputAvatar) inputAvatar.value = user.avatar || "";
+			if (inputBanner) inputBanner.value = user.banner || "";
+
+			updateLivePreview();
+			modal?.classList.remove("hidden");
+			this.refreshIcons();
+
+			// Carrega limites reais do backend
+			try {
+				const profileData = await getProfile();
+				if (profileData.ok && profileData.user) {
+					if (profileData.remainingNicknameChanges !== undefined) {
+						updateRateBadge(profileData.remainingNicknameChanges, profileData.maxNicknameChangesPerHour || 6);
+					}
+				}
+			} catch (err) {
+				console.warn("[App] Erro ao obter perfil atualizado:", err);
+			}
+
+			inputNick?.focus();
+		};
+
+		const closeModal = () => {
+			modal?.classList.add("hidden");
+			if (errorEl) errorEl.textContent = "";
+			if (successEl) {
+				successEl.textContent = "";
+				successEl.classList.add("hidden");
+			}
+		};
+
+		headerInfo?.addEventListener("click", openModal);
+		btnClose?.addEventListener("click", closeModal);
+		btnCancel?.addEventListener("click", closeModal);
+
+		inputNick?.addEventListener("input", updateLivePreview);
+		inputAvatar?.addEventListener("input", updateLivePreview);
+		inputBanner?.addEventListener("input", updateLivePreview);
+
+		btnClearAvatar?.addEventListener("click", () => {
+			if (inputAvatar) inputAvatar.value = "";
+			updateLivePreview();
+		});
+
+		btnClearBanner?.addEventListener("click", () => {
+			if (inputBanner) inputBanner.value = "";
+			updateLivePreview();
+		});
+
+		form?.addEventListener("submit", async (e) => {
+			e.preventDefault();
+			const nickname = inputNick?.value.trim();
+			const avatar = inputAvatar?.value.trim();
+			const banner = inputBanner?.value.trim();
+
+			if (errorEl) errorEl.textContent = "";
+			if (successEl) {
+				successEl.textContent = "";
+				successEl.classList.add("hidden");
+			}
+
+			this.setAuthLoading("btn-save-profile-settings", true);
+
+			const result = await updateProfile({
+				nickname: nickname !== undefined ? nickname : undefined,
+				avatar: avatar !== undefined ? avatar : undefined,
+				banner: banner !== undefined ? banner : undefined,
+			});
+
+			this.setAuthLoading("btn-save-profile-settings", false);
+
+			if (!result.ok) {
+				if (errorEl) errorEl.textContent = result.error ?? "Erro ao salvar perfil.";
+				return;
+			}
+
+			if (result.remainingNicknameChanges !== undefined) {
+				updateRateBadge(result.remainingNicknameChanges, result.maxNicknameChangesPerHour || 6);
+			}
+
+			if (successEl) {
+				successEl.textContent = "Perfil atualizado com sucesso!";
+				successEl.classList.remove("hidden");
+			}
+
+			this.updateHeaderUserInfo();
+			this.refreshUsersList();
+
+			setTimeout(() => {
+				closeModal();
+			}, 900);
+		});
+	}
+
+	// ------------------------------------------------------------------------------------------------------------------------------
+	//  MINI PERFIL FLUTUANTE (POPOVER LATERAL DIREITO)
+	// ------------------------------------------------------------------------------------------------------------------------------
+	private setupMiniProfilePopover(): void {
+		const popover = document.getElementById("user-mini-profile-popover");
+		const btnClose = document.getElementById("btn-close-mini-profile");
+
+		btnClose?.addEventListener("click", () => {
+			this.hideUserMiniProfile();
+		});
+
+		document.addEventListener("click", (e) => {
+			const target = e.target as HTMLElement;
+			if (popover && !popover.classList.contains("hidden")) {
+				if (!popover.contains(target) && !target.closest(".user-card") && !target.closest(".friend-card")) {
+					this.hideUserMiniProfile();
+				}
+			}
+		});
+
+		window.addEventListener("keydown", (e) => {
+			if (e.key === "Escape") {
+				this.hideUserMiniProfile();
+			}
+		});
+	}
+
+	private showUserMiniProfile(
+		userData: { id: string; username: string; nickname?: string; avatar?: string; banner?: string; isOnline?: boolean },
+		targetEl: HTMLElement,
+	): void {
+		const popover = document.getElementById("user-mini-profile-popover");
+		if (!popover) return;
+
+		this.activeMiniProfileUserId = userData.id;
+
+		const currentUser = getUser();
+		const isSelf = userData.id === currentUser?.id || userData.username === currentUser?.username;
+		const displayName = userData.nickname ? userData.nickname : userData.username;
+		const initial = (displayName && displayName.length > 0) ? displayName[0].toUpperCase() : "?";
+
+		const bannerEl = document.getElementById("user-mini-banner");
+		if (bannerEl) {
+			if (userData.banner && userData.banner.trim().startsWith("http")) {
+				bannerEl.style.backgroundImage = `url("${this.escapeHtml(userData.banner.trim())}")`;
+			} else {
+				bannerEl.style.backgroundImage = "";
+			}
+		}
+
+		const avatarEl = document.getElementById("user-mini-avatar");
+		if (avatarEl) {
+			if (userData.avatar && userData.avatar.trim().startsWith("http")) {
+				avatarEl.innerHTML = `<img src="${this.escapeHtml(userData.avatar.trim())}" alt="${this.escapeHtml(displayName)}" onerror="this.remove(); this.parentElement.textContent='${initial}';" />`;
+			} else {
+				avatarEl.textContent = initial;
+			}
+		}
+
+		const statusDot = document.getElementById("user-mini-status-dot");
+		if (statusDot) {
+			if (userData.isOnline === false) {
+				statusDot.className = "user-mini-status-dot offline";
+				statusDot.title = "Offline";
+			} else {
+				statusDot.className = "user-mini-status-dot online";
+				statusDot.title = "Online";
+			}
+		}
+
+		const badgesEl = document.getElementById("user-mini-badges");
+		if (badgesEl) {
+			badgesEl.innerHTML = isSelf
+				? `<span class="badge badge-purple" style="font-size: 10px; padding: 2px 7px;">Você</span>`
+				: "";
+		}
+
+		const nameEl = document.getElementById("user-mini-display-name");
+		if (nameEl) nameEl.textContent = displayName;
+
+		const userEl = document.getElementById("user-mini-username");
+		if (userEl) userEl.textContent = `@${userData.username}`;
+
+		const nickValEl = document.getElementById("user-mini-nick-val");
+		if (nickValEl) nickValEl.textContent = `${userData.username}`;
+
+		const idValEl = document.getElementById("user-mini-id-val");
+		if (idValEl) idValEl.textContent = userData.id;
+
+		const btnCopyNick = document.getElementById("btn-copy-mini-nick");
+		if (btnCopyNick) {
+			btnCopyNick.onclick = () => {
+				navigator.clipboard.writeText(userData.username);
+				btnCopyNick.classList.add("copied");
+				btnCopyNick.innerHTML = `<i data-lucide="check"></i> <span>Copiado!</span>`;
+				this.refreshIcons();
+				setTimeout(() => {
+					btnCopyNick.classList.remove("copied");
+					btnCopyNick.innerHTML = `<i data-lucide="copy"></i> <span>Copiar</span>`;
+					this.refreshIcons();
+				}, 1500);
+			};
+		}
+
+		const btnCopyId = document.getElementById("btn-copy-mini-id");
+		if (btnCopyId) {
+			btnCopyId.onclick = () => {
+				navigator.clipboard.writeText(userData.id);
+				btnCopyId.classList.add("copied");
+				btnCopyId.innerHTML = `<i data-lucide="check"></i> <span>Copiado!</span>`;
+				this.refreshIcons();
+				setTimeout(() => {
+					btnCopyId.classList.remove("copied");
+					btnCopyId.innerHTML = `<i data-lucide="copy"></i> <span>Copiar</span>`;
+					this.refreshIcons();
+				}, 1500);
+			};
+		}
+
+		const actionsEl = document.getElementById("user-mini-actions");
+		if (actionsEl) {
+			if (isSelf) {
+				actionsEl.innerHTML = `
+					<button type="button" id="btn-mini-edit-profile" class="btn btn-secondary btn-sm">
+						<i data-lucide="user-cog"></i>
+						<span>Editar Meu Perfil</span>
+					</button>
+				`;
+				document.getElementById("btn-mini-edit-profile")?.addEventListener("click", () => {
+					this.hideUserMiniProfile();
+					document.getElementById("header-user-info")?.click();
+				});
+			} else {
+				let actionButtons = "";
+				if (this.currentRoom) {
+					actionButtons += `
+						<button type="button" id="btn-mini-invite-room" class="btn btn-primary btn-sm">
+							<i data-lucide="radio"></i>
+							<span>Convidar para Sala</span>
+						</button>
+					`;
+				}
+				actionsEl.innerHTML = actionButtons;
+				if (this.currentRoom) {
+					document.getElementById("btn-mini-invite-room")?.addEventListener("click", async () => {
+						const btn = document.getElementById("btn-mini-invite-room") as HTMLButtonElement | null;
+						if (btn) {
+							btn.disabled = true;
+							btn.innerHTML = `<i data-lucide="loader-2" class="spin"></i>`;
+							this.refreshIcons();
+						}
+						const res = await inviteFriendToRoom(userData.id, this.currentRoom!.roomId);
+						if (btn) {
+							if (res.ok) {
+								btn.innerHTML = `<i data-lucide="check"></i> <span>Convite Enviado!</span>`;
+							} else {
+								btn.innerHTML = `<span>${this.escapeHtml(res.error || "Erro ao convidar")}</span>`;
+							}
+							this.refreshIcons();
+							setTimeout(() => {
+								if (btn) {
+									btn.disabled = false;
+									btn.innerHTML = `<i data-lucide="radio"></i> <span>Convidar para Sala</span>`;
+									this.refreshIcons();
+								}
+							}, 2000);
+						}
+					});
+				}
+			}
+		}
+
+		popover.classList.remove("hidden");
+		this.refreshIcons();
+
+		// Posiciona à direita do targetEl, flutuando sem colisão com o que está atrás
+		const targetRect = targetEl.getBoundingClientRect();
+		const popoverRect = popover.getBoundingClientRect();
+		const popoverWidth = popoverRect.width || 290;
+		const popoverHeight = popoverRect.height || 300;
+
+		let left = targetRect.right + 12;
+		if (left + popoverWidth > window.innerWidth - 12) {
+			left = Math.max(12, targetRect.left - popoverWidth - 12);
+		}
+
+		let top = targetRect.top - 16;
+		if (top + popoverHeight > window.innerHeight - 16) {
+			top = window.innerHeight - popoverHeight - 16;
+		}
+		if (top < 16) top = 16;
+
+		popover.style.left = `${left}px`;
+		popover.style.top = `${top}px`;
+	}
+
+	private hideUserMiniProfile(): void {
+		const popover = document.getElementById("user-mini-profile-popover");
+		if (popover) popover.classList.add("hidden");
+		this.activeMiniProfileUserId = null;
+		document.querySelectorAll(".user-card.selected, .friend-card.selected").forEach((c) => c.classList.remove("selected"));
+	}
+
 	private refreshIcons(): void {
 		try {
 			createIcons({
@@ -1965,7 +3308,9 @@ class ShiroApp {
 					AppWindow, ScreenShare, Video, PlayCircle, Volume1, Volume2, ShieldCheck,
 					VolumeX, MicOff, Radio, CheckCircle2, Play, Square, Loader2,
 					Settings, X, Power, User, Users, Lock, Eye, EyeOff, LogOut, Search,
-					ChevronLeft, ChevronRight, Check, Copy, RotateCw, Sparkles,
+					ChevronLeft, ChevronRight, Check, Copy, RotateCw, Sparkles, Globe,
+					UserCog, BadgeCheck, Camera, Image, Trash2, Clock,
+					UserCheck, UserPlus, Bell, LogIn, KeyRound, Hash,
 				},
 			});
 		} catch (err) {

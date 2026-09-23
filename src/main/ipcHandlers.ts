@@ -203,7 +203,7 @@ const DEFAULT_API_KEY = "c7c14f354ac71f78695a5529064e681d8588224515366760ed76815
 			const baseUrl = process.env.SHIRO_API_URL || DEFAULT_API_URL;
 			const apiKey = process.env.SHIRO_API_KEY || DEFAULT_API_KEY;
 
-			console.log(`[IPC] api-request → ${opts.method ?? "GET"} ${opts.endpoint}`);
+			console.log(`[IPC] api-request -> ${opts.method ?? "GET"} ${opts.endpoint}`);
 			return makeSecureRequest(baseUrl, apiKey, opts);
 		},
 	);
@@ -323,19 +323,19 @@ const DEFAULT_API_KEY = "c7c14f354ac71f78695a5529064e681d8588224515366760ed76815
 		try {
 			sseUrl = new URL(`/api/signal/sse?token=${encodedToken}`, baseUrl);
 		} catch (err) {
-			console.error("[SSE] URL inválida:", err);
+			console.error("[SSE] URL invalida:", err);
 			return;
 		}
 
 		const isHttps = sseUrl.protocol === "https:";
 		const client = isHttps ? https : http;
 
-		console.log(`[SSE] Abrindo conexão para ${sseUrl.origin}/api/signal/sse`);
+		console.log(`[SSE] Abrindo conexao para ${sseUrl.origin}/api/signal/sse`);
 
 		const scheduleReconnect = () => {
 			if (!currentSseUserToken || currentSseUserToken !== userToken || window.isDestroyed()) return;
 			if (sseReconnectTimer) return;
-			console.log("[SSE] Reconexão agendada em 1.5s...");
+			console.log("[SSE] Reconexao agendada em 1.5s...");
 			sseReconnectTimer = setTimeout(() => {
 				sseReconnectTimer = null;
 				if (currentSseUserToken === userToken && !window.isDestroyed()) {
@@ -362,7 +362,7 @@ const DEFAULT_API_KEY = "c7c14f354ac71f78695a5529064e681d8588224515366760ed76815
 				return;
 			}
 
-			console.log("[SSE] Conexão SSE estabelecida com sucesso.");
+			console.log("[SSE] Conexao SSE estabelecida com sucesso.");
 			let buffer = "";
 
 			res.setEncoding("utf8");
@@ -401,7 +401,7 @@ const DEFAULT_API_KEY = "c7c14f354ac71f78695a5529064e681d8588224515366760ed76815
 			});
 
 			res.on("end", () => {
-				console.log("[SSE] Conexão finalizada pelo servidor/timeout.");
+				console.log("[SSE] Conexao finalizada pelo servidor/timeout.");
 				if (!window.isDestroyed()) {
 					window.webContents.send("sse-closed");
 				}
@@ -415,7 +415,7 @@ const DEFAULT_API_KEY = "c7c14f354ac71f78695a5529064e681d8588224515366760ed76815
 		});
 
 		req.on("error", (err) => {
-			console.error("[SSE] Erro na requisição:", err.message);
+			console.error("[SSE] Erro na requisicao:", err.message);
 			if (!window.isDestroyed()) {
 				window.webContents.send("sse-error", err.message);
 			}
@@ -442,7 +442,7 @@ const DEFAULT_API_KEY = "c7c14f354ac71f78695a5529064e681d8588224515366760ed76815
 				activeSseRequest.destroy();
 			} catch {}
 			activeSseRequest = null;
-			console.log("[SSE] Conexão encerrada pelo renderer.");
+			console.log("[SSE] Conexao encerrada pelo renderer.");
 		}
 	});
 }

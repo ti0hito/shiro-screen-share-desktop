@@ -18,6 +18,9 @@ const FOURTEEN_DAYS_MS = 14 * 24 * 60 * 60 * 1000; // 14 dias
 export interface ShiroUser {
 	id: string;
 	username: string;
+	nickname?: string;
+	avatar?: string;
+	banner?: string;
 	createdAt: string;
 }
 
@@ -46,6 +49,18 @@ export function getUser(): ShiroUser | null {
 		return JSON.parse(raw) as ShiroUser;
 	} catch {
 		return null;
+	}
+}
+
+/** Atualiza a sessão local com novos dados do usuário */
+export function updateUserSession(user: ShiroUser): void {
+	sessionStorage.setItem(USER_KEY, JSON.stringify(user));
+	const rememberMe = localStorage.getItem(REMEMBER_KEY) === "true";
+	if (rememberMe) {
+		localStorage.setItem(REMEMBER_USER, JSON.stringify(user));
+		if (user.username) {
+			localStorage.setItem(REMEMBER_USERNAME, user.username);
+		}
 	}
 }
 
@@ -201,6 +216,79 @@ export async function sendHeartbeat(): Promise<void> {
 }
 
 // ══════════════════════════════════════════
+//  PROFILE API (Apelido & Foto de Perfil)
+// ══════════════════════════════════════════
+
+export interface ProfileResponse {
+	ok: boolean;
+	error?: string;
+	user?: ShiroUser;
+	remainingNicknameChanges?: number;
+	maxNicknameChangesPerHour?: number;
+}
+
+/** Obtém os dados de perfil e limites de troca */
+export async function getProfile(): Promise<ProfileResponse> {
+	const token = getToken();
+	if (!token || !window.api?.apiRequest) return { ok: false, error: "Não autenticado." };
+
+	const result = await window.api.apiRequest({
+		endpoint: "/api/users/profile",
+		method: "GET",
+		token,
+	});
+
+	if (!result.ok) {
+		const data = result.data as any;
+		return { ok: false, error: data?.error ?? "Erro ao carregar perfil." };
+	}
+
+	const data = result.data as any;
+	if (data.user) {
+		updateUserSession(data.user);
+	}
+	return {
+		ok: true,
+		user: data.user,
+		remainingNicknameChanges: data.remainingNicknameChanges,
+		maxNicknameChangesPerHour: data.maxNicknameChangesPerHour,
+	};
+}
+
+/** Atualiza apelido e/ou foto/banner de perfil */
+export async function updateProfile(body: {
+	nickname?: string;
+	avatar?: string;
+	banner?: string;
+}): Promise<ProfileResponse> {
+	const token = getToken();
+	if (!token || !window.api?.apiRequest) return { ok: false, error: "Não autenticado." };
+
+	const result = await window.api.apiRequest({
+		endpoint: "/api/users/profile",
+		method: "PATCH",
+		token,
+		body,
+	});
+
+	if (!result.ok) {
+		const data = result.data as any;
+		return { ok: false, error: data?.error ?? `Erro ${result.status}` };
+	}
+
+	const data = result.data as any;
+	if (data.user) {
+		updateUserSession(data.user);
+	}
+	return {
+		ok: true,
+		user: data.user,
+		remainingNicknameChanges: data.remainingNicknameChanges,
+		maxNicknameChangesPerHour: data.maxNicknameChangesPerHour,
+	};
+}
+
+// ══════════════════════════════════════════
 //  ROOMS API
 // ══════════════════════════════════════════
 
@@ -217,14 +305,18 @@ export interface RoomInfo {
 	name: string;
 	isPrivate: boolean;
 	createdBy: string;
+	ownerId?: string;
+	inviteCode?: string;
+	maxMembers?: number;
 	membersCount: number;
+	members?: string[];
 	activeStreams: ActiveStreamInfo[];
 	createdAt?: string;
 }
 
-export async function getRooms(): Promise<RoomInfo[]> {
+export async function getRooms(): Promise<{ ok: boolean; rooms: RoomInfo[] }> {
 	const token = getToken();
-	if (!token || !window.api?.apiRequest) return [];
+	if (!token || !window.api?.apiRequest) return { ok: false, rooms: [] };
 
 	const result = await window.api.apiRequest({
 		endpoint: "/api/rooms/list",
@@ -232,14 +324,15 @@ export async function getRooms(): Promise<RoomInfo[]> {
 		token,
 	});
 
-	if (!result.ok) return [];
-	return (result.data as any).rooms ?? [];
+	if (!result.ok) return { ok: false, rooms: [] };
+	return { ok: true, rooms: (result.data as any).rooms ?? [] };
 }
 
 export async function createRoom(data: {
 	name: string;
 	roomId?: string;
 	password?: string;
+	maxMembers?: number;
 }): Promise<{ ok: boolean; error?: string; room?: RoomInfo }> {
 	const token = getToken();
 	if (!token || !window.api?.apiRequest) return { ok: false, error: "Não autenticado." };
@@ -281,6 +374,77 @@ export async function joinRoom(
 	return { ok: true, room: (result.data as any).room };
 }
 
+export async function joinRoomByInvite(
+	inviteCode: string,
+): Promise<{ ok: boolean; error?: string; room?: RoomInfo }> {
+	const token = getToken();
+	if (!token || !window.api?.apiRequest) return { ok: false, error: "Não autenticado." };
+
+	const result = await window.api.apiRequest({
+		endpoint: "/api/rooms/join-by-invite",
+		method: "POST",
+		token,
+		body: { inviteCode },
+	});
+
+	if (!result.ok) {
+		const resData = result.data as any;
+		return { ok: false, error: resData?.error ?? `Erro ${result.status}` };
+	}
+
+	return { ok: true, room: (result.data as any).room };
+}
+
+export async function updateRoomSettings(
+	roomId: string,
+	data: {
+		name?: string;
+		password?: string | null;
+		maxMembers?: number;
+		regenerateInviteCode?: boolean;
+	},
+): Promise<{ ok: boolean; error?: string; room?: RoomInfo }> {
+	const token = getToken();
+	if (!token || !window.api?.apiRequest) return { ok: false, error: "Não autenticado." };
+
+	const result = await window.api.apiRequest({
+		endpoint: `/api/rooms/settings/${encodeURIComponent(roomId)}`,
+		method: "PATCH",
+		token,
+		body: data,
+	});
+
+	if (!result.ok) {
+		const resData = result.data as any;
+		return { ok: false, error: resData?.error ?? `Erro ${result.status}` };
+	}
+
+	return { ok: true, room: (result.data as any).room };
+}
+
+export async function kickUserFromRoom(
+	roomId: string,
+	targetUsername: string,
+	targetUserId?: string,
+): Promise<{ ok: boolean; error?: string }> {
+	const token = getToken();
+	if (!token || !window.api?.apiRequest) return { ok: false, error: "Não autenticado." };
+
+	const result = await window.api.apiRequest({
+		endpoint: `/api/rooms/kick/${encodeURIComponent(roomId)}`,
+		method: "POST",
+		token,
+		body: { targetUsername, targetUserId },
+	});
+
+	if (!result.ok) {
+		const resData = result.data as any;
+		return { ok: false, error: resData?.error ?? `Erro ${result.status}` };
+	}
+
+	return { ok: true };
+}
+
 export async function leaveRoom(roomId: string): Promise<void> {
 	const token = getToken();
 	if (!token || !window.api?.apiRequest) return;
@@ -309,3 +473,153 @@ export async function notifyRoomStream(
 	});
 }
 
+// ══════════════════════════════════════════
+//  FRIENDS & INVITES API
+// ══════════════════════════════════════════
+
+export interface FriendInfo {
+	id: string;
+	username: string;
+	nickname?: string;
+	avatar?: string;
+	banner?: string;
+	isOnline: boolean;
+	lastSeen?: string;
+	currentRoom?: { roomId: string; name: string } | null;
+}
+
+export interface FriendRequest {
+	fromUserId: string;
+	fromUsername: string;
+	sentAt: string;
+}
+
+export interface RoomInvite {
+	id: string;
+	fromUserId: string;
+	fromUsername: string;
+	fromNickname?: string;
+	fromAvatar?: string;
+	roomId: string;
+	roomName: string;
+	inviteCode: string;
+	sentAt: string;
+}
+
+export interface FriendsResponse {
+	friends: FriendInfo[];
+	friendRequests: FriendRequest[];
+	roomInvites: RoomInvite[];
+}
+
+export async function getFriends(): Promise<FriendsResponse> {
+	const token = getToken();
+	if (!token || !window.api?.apiRequest) {
+		return { friends: [], friendRequests: [], roomInvites: [] };
+	}
+
+	const result = await window.api.apiRequest({
+		endpoint: "/api/friends/list",
+		method: "GET",
+		token,
+	});
+
+	if (!result.ok) {
+		return { friends: [], friendRequests: [], roomInvites: [] };
+	}
+
+	const data = result.data as any;
+	return {
+		friends: data.friends ?? [],
+		friendRequests: data.friendRequests ?? [],
+		roomInvites: data.roomInvites ?? [],
+	};
+}
+
+export async function sendFriendRequest(target: string): Promise<{ ok: boolean; error?: string; message?: string }> {
+	const token = getToken();
+	if (!token || !window.api?.apiRequest) return { ok: false, error: "Não autenticado." };
+
+	const result = await window.api.apiRequest({
+		endpoint: "/api/friends/request",
+		method: "POST",
+		token,
+		body: { target },
+	});
+
+	const data = result.data as any;
+	if (!result.ok) {
+		return { ok: false, error: data?.error ?? `Erro ${result.status}` };
+	}
+
+	return { ok: true, message: data?.message };
+}
+
+export async function acceptFriendRequest(fromUserId: string): Promise<{ ok: boolean; error?: string }> {
+	const token = getToken();
+	if (!token || !window.api?.apiRequest) return { ok: false, error: "Não autenticado." };
+
+	const result = await window.api.apiRequest({
+		endpoint: "/api/friends/accept",
+		method: "POST",
+		token,
+		body: { fromUserId },
+	});
+
+	const data = result.data as any;
+	if (!result.ok) {
+		return { ok: false, error: data?.error ?? `Erro ${result.status}` };
+	}
+
+	return { ok: true };
+}
+
+export async function rejectFriend(fromUserId: string): Promise<{ ok: boolean; error?: string }> {
+	const token = getToken();
+	if (!token || !window.api?.apiRequest) return { ok: false, error: "Não autenticado." };
+
+	const result = await window.api.apiRequest({
+		endpoint: "/api/friends/reject",
+		method: "POST",
+		token,
+		body: { fromUserId },
+	});
+
+	const data = result.data as any;
+	if (!result.ok) {
+		return { ok: false, error: data?.error ?? `Erro ${result.status}` };
+	}
+
+	return { ok: true };
+}
+
+export async function inviteFriendToRoom(targetUserId: string, roomId: string): Promise<{ ok: boolean; error?: string }> {
+	const token = getToken();
+	if (!token || !window.api?.apiRequest) return { ok: false, error: "Não autenticado." };
+
+	const result = await window.api.apiRequest({
+		endpoint: "/api/friends/invite-to-room",
+		method: "POST",
+		token,
+		body: { targetUserId, roomId },
+	});
+
+	const data = result.data as any;
+	if (!result.ok) {
+		return { ok: false, error: data?.error ?? `Erro ${result.status}` };
+	}
+
+	return { ok: true };
+}
+
+export async function dismissRoomInvite(inviteId: string): Promise<void> {
+	const token = getToken();
+	if (!token || !window.api?.apiRequest) return;
+
+	await window.api.apiRequest({
+		endpoint: "/api/friends/dismiss-invite",
+		method: "POST",
+		token,
+		body: { inviteId },
+	});
+}

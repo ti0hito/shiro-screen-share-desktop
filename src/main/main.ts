@@ -213,7 +213,7 @@ function setupAutoUpdater(): void {
 
 	autoUpdater.on("update-available", (info) => {
 		if (!autoUpdateEnabled) return;
-		console.log(`[AutoUpdater] 🚀 New update available: v${info.version}`);
+		console.log(`[AutoUpdater] New update available: v${info.version}`);
 		if (mainWindow && !mainWindow.isDestroyed()) {
 			mainWindow.webContents.send("update-available", info);
 		}

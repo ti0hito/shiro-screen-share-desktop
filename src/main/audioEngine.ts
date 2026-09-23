@@ -84,13 +84,13 @@ export class AudioCaptureEngine {
 			}
 
 			console.warn(
-				"[AudioEngine] ⚠️ WASAPI Process Loopback could not bind to candidate PIDs. Falling back to system loopback...",
+				"[AudioEngine] WASAPI Process Loopback could not bind to candidate PIDs. Falling back to system loopback...",
 			);
 		}
 
 		// System loopback mode (or fallback if process capture failed completely)
 		try {
-			console.log(`[AudioEngine] 🔊 Initiating System WASAPI Loopback Capture`);
+			console.log(`[AudioEngine] Initiating System WASAPI Loopback Capture`);
 			const systemSuccess = await this.trySystemLoopback(window);
 			if (systemSuccess) {
 				this.currentStatus = {
@@ -106,7 +106,7 @@ export class AudioCaptureEngine {
 				return this.currentStatus;
 			}
 		} catch (err: any) {
-			console.error(`[AudioEngine] ❌ System loopback capture failed:`, err);
+			console.error(`[AudioEngine] System loopback capture failed:`, err);
 			this.currentStatus = {
 				active: false,
 				mode: "disabled",

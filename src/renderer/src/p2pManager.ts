@@ -14,6 +14,7 @@ export interface P2PCallbacks {
 	onDisconnected: (peerId: string) => void;
 	onError: (err: string) => void;
 	onRemoteStream?: (stream: MediaStream, peerId: string) => void;
+	isPeerAllowed?: (peerId: string) => boolean;
 }
 
 const ICE_SERVERS: RTCIceServer[] = [
@@ -371,6 +372,11 @@ export class P2PManager {
 	}
 
 	private async handleOffer(fromUserId: string, sdp: string, _sessionId: string): Promise<void> {
+		if (this.callbacks.isPeerAllowed && !this.callbacks.isPeerAllowed(fromUserId)) {
+			console.warn(`[P2P] Oferta de ${fromUserId} rejeitada: usuário não está na mesma sala.`);
+			return;
+		}
+
 		console.log(`[P2P] Recebida oferta de ${fromUserId}`);
 		let pc = this.peerConnections.get(fromUserId);
 		if (!pc || pc.connectionState === "closed" || pc.connectionState === "failed") {
@@ -421,6 +427,12 @@ export class P2PManager {
 	}
 
 	private async handleAnswer(fromUserId: string, sdp: string): Promise<void> {
+		if (this.callbacks.isPeerAllowed && !this.callbacks.isPeerAllowed(fromUserId)) {
+			console.warn(`[P2P] Resposta de ${fromUserId} ignorada: usuário não está na mesma sala.`);
+			this.closePeer(fromUserId);
+			return;
+		}
+
 		console.log(`[P2P] Recebida resposta (Answer) de ${fromUserId}`);
 		const pc = this.peerConnections.get(fromUserId);
 		if (!pc) {
@@ -439,6 +451,10 @@ export class P2PManager {
 	}
 
 	private async handleIceCandidate(fromUserId: string, candidate: RTCIceCandidateInit): Promise<void> {
+		if (this.callbacks.isPeerAllowed && !this.callbacks.isPeerAllowed(fromUserId)) {
+			return;
+		}
+
 		const pc = this.peerConnections.get(fromUserId);
 		if (!pc || !pc.remoteDescription) {
 			if (!this.pendingCandidates.has(fromUserId)) {
@@ -457,7 +473,7 @@ export class P2PManager {
 		}
 	}
 
-	private closePeer(peerId: string): void {
+	closePeer(peerId: string): void {
 		const pc = this.peerConnections.get(peerId);
 		if (pc) {
 			try {
