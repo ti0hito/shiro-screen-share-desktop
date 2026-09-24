@@ -1,7 +1,9 @@
 import {
+	AlertTriangle,
 	AppWindow,
 	BadgeCheck,
 	Bell,
+	BellOff,
 	Camera,
 	Check,
 	CheckCircle2,
@@ -12,14 +14,17 @@ import {
 	createIcons,
 	Eye,
 	EyeOff,
+	CheckCheck,
 	Globe,
 	Hash,
 	Image,
+	Info,
 	KeyRound,
 	Loader2,
 	Lock,
 	LogIn,
 	LogOut,
+	Megaphone,
 	MicOff,
 	Monitor,
 	Moon,
@@ -31,6 +36,7 @@ import {
 	RotateCw,
 	ScreenShare,
 	Search,
+	Send,
 	Settings,
 	ShieldCheck,
 	Sparkles,
@@ -105,12 +111,34 @@ function setStreamStatus(live: boolean, text: string): void {
 	badge.textContent = text;
 	badge.className = `badge ${live ? "badge-live" : "badge-offline"}`;
 }
+export const DEV_ADMIN_ID = "6ab1e7120ee994421cd420be";
+
+export interface SystemNotice {
+	id: string;
+	title: string;
+	message: string;
+	type: "info" | "warning" | "update";
+	date: string;
+}
+
 class ShiroApp {
 	private friendsRefreshInterval: ReturnType<typeof setInterval> | null = null;
 	private friends: FriendInfo[] = [];
 	private friendRequests: FriendRequest[] = [];
 	private roomInvites: RoomInvite[] = [];
 	private activeRoomInvite: RoomInvite | null = null;
+	private activeFriendRequest: FriendRequest | null = null;
+	private sentFriendRequestUserIds: Set<string> = new Set();
+	private systemNotices: SystemNotice[] = [
+		{
+			id: "sys-v21",
+			title: "Shiro Screen Share v2.1.0",
+			message: "Nova arquitetura WebRTC P2P multi-stream ativa com isolamento de áudio.",
+			type: "info",
+			date: "Sistema",
+		},
+	];
+	private activeNotifFilter: "all" | "friends" | "invites" | "system" = "all";
 
 	private leftSourcePicker: SourcePicker | null = null;
 	private mainSourcePicker: SourcePicker | null = null;
@@ -489,7 +517,7 @@ class ShiroApp {
 				onConnected: (peerId) => {
 					console.log(`[App] P2P conectado com sucesso a ${peerId}`);
 					if (this.p2pManager?.getIsStreaming()) {
-						setStreamStatus(true, "・´ AO VIVO");
+						setStreamStatus(true, "AO VIVO");
 						if (window.api) window.api.reportStreamShareState(true);
 						document.getElementById("btn-start-stream")?.classList.add("hidden");
 						document.getElementById("btn-stop-stream")?.classList.remove("hidden");
@@ -523,6 +551,10 @@ class ShiroApp {
 					this.remoteStreams.set(peerId, { stream, username });
 					this.renderLiveStreamsGrid();
 				},
+				onSystemNotice: (notice) => {
+					this.addSystemNotice(notice);
+					this.showSystemNoticeToast(notice);
+				},
 			});
 			this.p2pManager.startSignaling();
 		}
@@ -536,6 +568,10 @@ class ShiroApp {
 		this.setupRoomSettingsModal();
 		this.setupJoinByInviteModal();
 		this.setupRoomInvitesToast();
+		this.setupFriendRequestToast();
+		this.setupNotificationsPopover();
+		this.setupCreateNoticeModal();
+		this.setupSystemNoticeToast();
 		this.setupRoomListeners();
 		this.setupSourcePicker();
 		this.setupSubTabs();
@@ -1090,7 +1126,7 @@ class ShiroApp {
 					<div class="room-item-right">
 						${isGlobal ? '<span class="room-global-badge"><i data-lucide="globe"></i> GLOBAL</span>' : ""}
 						${r.isPrivate ? '<span class="room-lock-badge" title="Sala Privada (Protegida por senha)"><i data-lucide="lock"></i></span>' : ""}
-						${streamCount > 0 ? `<span class="room-streams-badge">・´ ${streamCount}</span>` : ""}
+						${streamCount > 0 ? `<span class="room-streams-badge">${streamCount}</span>` : ""}
 					</div>
 				</div>`;
 			})
@@ -1205,7 +1241,7 @@ class ShiroApp {
 						<i data-lucide="user"></i>
 						<span>${this.escapeHtml(user?.username ?? "Você")} (Você Transmitindo)</span>
 					</div>
-					<span class="badge badge-live">・´ AO VIVO</span>
+					<span class="badge badge-live">AO VIVO</span>
 				</div>
 				<canvas class="stream-card-canvas ${isMax ? "hidden" : ""}"></canvas>
 				<video class="stream-card-video ${isMax ? "" : "hidden"}" autoplay playsinline muted></video>
@@ -1249,7 +1285,7 @@ class ShiroApp {
 							<input type="range" class="stream-vol-slider" min="0" max="100" value="${savedVol}">
 							<span class="stream-vol-percent">${savedVol}%</span>
 						</div>
-						<span class="badge badge-live">・´ AO VIVO</span>
+						<span class="badge badge-live">AO VIVO</span>
 					</div>
 				</div>
 				<canvas class="stream-card-canvas ${isMax ? "hidden" : ""}"></canvas>
@@ -1770,7 +1806,7 @@ class ShiroApp {
 		this.p2pManager?.setLocalStream(stream);
 		this.p2pManager?.setIsStreaming(true);
 
-		setStreamStatus(true, "ðŸ”´ AO VIVO");
+		setStreamStatus(true, "AO VIVO");
 		if (window.api) window.api.reportStreamShareState(true);
 
 		document.getElementById("btn-start-stream")?.classList.add("hidden");
@@ -2214,6 +2250,10 @@ class ShiroApp {
 			this.friendRequests = res.friendRequests;
 			this.roomInvites = res.roomInvites;
 
+			if (this.roomInvites.length > 0) {
+				console.log(`[App] 📬 ${this.roomInvites.length} convite(s) de sala encontrado(s):`, this.roomInvites);
+			}
+
 			// Atualiza ponto de notificação na aba
 			const dot = document.getElementById("friends-badge-dot");
 			const hasNotif = this.friendRequests.length > 0 || this.roomInvites.length > 0;
@@ -2228,8 +2268,14 @@ class ShiroApp {
 			// Renderiza lista de amigos
 			this.renderFriendsList();
 
+			// Atualiza notificações na Central de Notificações
+			this.renderNotifications();
+
 			// Verifica se há convite de sala para exibir toast
 			this.checkRoomInvites();
+
+			// Verifica se há pedidos de amizade para exibir toast
+			this.checkFriendRequestsToast();
 		} catch (err) {
 			console.warn("[App] Erro ao carregar amigos:", err);
 		}
@@ -2254,7 +2300,7 @@ class ShiroApp {
 			.map((req: FriendRequest) => {
 				const initial = (req.fromUsername || "?")[0].toUpperCase();
 				return `
-				<div class="friend-request-card" data-user-id="${this.escapeHtml(req.fromUserId)}">
+				<div class="friend-request-card" data-user-id="${this.escapeHtml(req.fromUserId)}" data-username="${this.escapeHtml(req.fromUsername)}" title="Clique para ver o perfil do usuário">
 					<div class="friend-card-avatar">${initial}</div>
 					<div class="friend-card-details">
 						<span class="friend-card-name">@${this.escapeHtml(req.fromUsername)}</span>
@@ -2272,8 +2318,25 @@ class ShiroApp {
 			})
 			.join("");
 
+		listEl.querySelectorAll<HTMLElement>(".friend-request-card").forEach((card) => {
+			card.addEventListener("click", () => {
+				const userId = card.dataset.userId!;
+				const username = card.dataset.username!;
+				listEl.querySelectorAll(".friend-request-card").forEach((c) => c.classList.remove("selected"));
+				card.classList.add("selected");
+				const userObj = this.onlineUsers.find((u) => u.id === userId || u.username === username) || {
+					id: userId,
+					username: username,
+					nickname: username,
+					isOnline: true,
+				};
+				this.showUserMiniProfile(userObj, card);
+			});
+		});
+
 		listEl.querySelectorAll<HTMLButtonElement>(".btn-accept-friend").forEach((btn) => {
-			btn.addEventListener("click", async () => {
+			btn.addEventListener("click", async (e) => {
+				e.stopPropagation();
 				const userId = btn.dataset.userId!;
 				btn.disabled = true;
 				await acceptFriendRequest(userId);
@@ -2282,7 +2345,8 @@ class ShiroApp {
 		});
 
 		listEl.querySelectorAll<HTMLButtonElement>(".btn-reject-friend").forEach((btn) => {
-			btn.addEventListener("click", async () => {
+			btn.addEventListener("click", async (e) => {
+				e.stopPropagation();
 				const userId = btn.dataset.userId!;
 				btn.disabled = true;
 				await rejectFriend(userId);
@@ -2727,6 +2791,9 @@ class ShiroApp {
 		);
 
 		if (validInvites.length === 0) {
+			if (this.roomInvites.length > 0) {
+				console.log("[App] Convite(s) recebido(s), mas ignorado(s) pois você já está na sala:", this.roomInvites);
+			}
 			if (this.activeRoomInvite) {
 				toast.classList.add("hidden");
 				this.activeRoomInvite = null;
@@ -2740,9 +2807,410 @@ class ShiroApp {
 			const senderName = latestInvite.fromNickname || latestInvite.fromUsername;
 			senderEl.textContent = senderName;
 			roomNameEl.textContent = latestInvite.roomName;
+			console.log(`[App] 🔔 Exibindo toast de convite para sala '${latestInvite.roomName}' de ${senderName}`);
 			toast.classList.remove("hidden");
 			this.refreshIcons();
 		}
+	}
+
+	private setupFriendRequestToast(): void {
+		const toast = document.getElementById("toast-friend-request");
+		const contentEl = document.getElementById("toast-friend-req-content");
+		const btnAccept = document.getElementById("btn-accept-toast-friend");
+		const btnDismiss = document.getElementById("btn-dismiss-toast-friend");
+
+		// Clicar no corpo do toast abre o mini perfil da pessoa para visualizá-la
+		contentEl?.addEventListener("click", () => {
+			if (!this.activeFriendRequest) return;
+			const req = this.activeFriendRequest;
+			if (toast) toast.classList.add("hidden");
+
+			const userObj = this.onlineUsers.find((u) => u.id === req.fromUserId || u.username === req.fromUsername) || {
+				id: req.fromUserId,
+				username: req.fromUsername,
+				nickname: req.fromUsername,
+				isOnline: true,
+			};
+			if (toast) {
+				this.showUserMiniProfile(userObj, toast);
+			}
+		});
+
+		btnAccept?.addEventListener("click", async (e) => {
+			e.stopPropagation();
+			if (!this.activeFriendRequest) return;
+			const req = this.activeFriendRequest;
+			if (toast) toast.classList.add("hidden");
+
+			await acceptFriendRequest(req.fromUserId);
+			this.activeFriendRequest = null;
+			await this.refreshFriends();
+		});
+
+		btnDismiss?.addEventListener("click", async (e) => {
+			e.stopPropagation();
+			if (!this.activeFriendRequest) return;
+			const req = this.activeFriendRequest;
+			if (toast) toast.classList.add("hidden");
+
+			await rejectFriend(req.fromUserId);
+			this.activeFriendRequest = null;
+			await this.refreshFriends();
+		});
+	}
+
+	private checkFriendRequestsToast(): void {
+		const toast = document.getElementById("toast-friend-request");
+		const senderEl = document.getElementById("toast-friend-req-sender");
+		if (!toast || !senderEl) return;
+
+		if (this.friendRequests.length === 0) {
+			if (this.activeFriendRequest) {
+				toast.classList.add("hidden");
+				this.activeFriendRequest = null;
+			}
+			return;
+		}
+
+		const latestReq = this.friendRequests[0];
+		if (this.activeFriendRequest?.fromUserId !== latestReq.fromUserId) {
+			this.activeFriendRequest = latestReq;
+			senderEl.textContent = `@${latestReq.fromUsername}`;
+			console.log(`[App] 🔔 Exibindo toast de pedido de amizade de @${latestReq.fromUsername}`);
+			toast.classList.remove("hidden");
+			this.refreshIcons();
+		}
+	}
+
+	private setupNotificationsPopover(): void {
+		const btnToggle = document.getElementById("btn-notifications-toggle");
+		const popover = document.getElementById("notifications-popover");
+		const btnClose = document.getElementById("btn-close-notifs");
+		const btnClear = document.getElementById("btn-clear-notifs");
+		const btnCreateNotice = document.getElementById("btn-open-create-notice");
+
+		const updateDevBtn = () => {
+			const currentUser = getUser();
+			if (btnCreateNotice) {
+				if (currentUser && currentUser.id === DEV_ADMIN_ID) {
+					btnCreateNotice.classList.remove("hidden");
+				} else {
+					btnCreateNotice.classList.add("hidden");
+				}
+			}
+		};
+		updateDevBtn();
+
+		btnToggle?.addEventListener("click", (e) => {
+			e.stopPropagation();
+			if (!popover) return;
+			updateDevBtn();
+			const isHidden = popover.classList.contains("hidden");
+			if (isHidden) {
+				popover.classList.remove("hidden");
+				this.renderNotifications();
+			} else {
+				popover.classList.add("hidden");
+			}
+		});
+
+		btnClose?.addEventListener("click", () => {
+			popover?.classList.add("hidden");
+		});
+
+		popover?.addEventListener("click", (e) => {
+			const target = e.target as HTMLElement;
+
+			// Dispensar aviso do sistema via delegação
+			const btnDismissSys = target.closest<HTMLButtonElement>(".btn-notif-dismiss-sys");
+			if (btnDismissSys) {
+				e.preventDefault();
+				e.stopPropagation();
+				const id = btnDismissSys.getAttribute("data-notice-id") || btnDismissSys.dataset.noticeId;
+				if (id) {
+					this.dismissSystemNotice(id);
+				}
+				return;
+			}
+		});
+
+		btnClear?.addEventListener("click", (e) => {
+			e.stopPropagation();
+			for (const sys of this.systemNotices) {
+				this.dismissSystemNotice(sys.id);
+			}
+			this.systemNotices = [];
+			this.renderNotifications();
+		});
+
+		// Filtros por abas
+		const filterTabs = document.querySelectorAll<HTMLButtonElement>(".notif-filter-tab");
+		filterTabs.forEach((tab) => {
+			tab.addEventListener("click", () => {
+				const filter = tab.dataset.filter as "all" | "friends" | "invites" | "system" | undefined;
+				if (!filter) return;
+				this.activeNotifFilter = filter;
+				filterTabs.forEach((t) => t.classList.toggle("active", t.dataset.filter === filter));
+				this.renderNotifications();
+			});
+		});
+
+		document.addEventListener("click", (e) => {
+			const target = e.target as HTMLElement;
+			if (popover && !popover.classList.contains("hidden")) {
+				if (!popover.contains(target) && !btnToggle?.contains(target)) {
+					popover.classList.add("hidden");
+				}
+			}
+		});
+
+		window.addEventListener("keydown", (e) => {
+			if (e.key === "Escape" && popover && !popover.classList.contains("hidden")) {
+				popover.classList.add("hidden");
+			}
+		});
+
+		this.renderNotifications();
+	}
+
+	private isNoticeDismissed(id: string): boolean {
+		try {
+			const dismissed: string[] = JSON.parse(localStorage.getItem("shiro_dismissed_notices") || "[]");
+			return Array.isArray(dismissed) && dismissed.includes(id);
+		} catch {
+			return false;
+		}
+	}
+
+	public dismissSystemNotice(id: string): void {
+		try {
+			const dismissed: string[] = JSON.parse(localStorage.getItem("shiro_dismissed_notices") || "[]");
+			if (!dismissed.includes(id)) {
+				dismissed.push(id);
+				localStorage.setItem("shiro_dismissed_notices", JSON.stringify(dismissed));
+			}
+		} catch (err) {
+			console.warn("[App] Erro ao persistir aviso dispensado:", err);
+		}
+		this.systemNotices = this.systemNotices.filter((s) => s.id !== id);
+		this.renderNotifications();
+	}
+
+	private renderNotifications(): void {
+		const listEl = document.getElementById("notifications-list");
+		const emptyEl = document.getElementById("notifications-empty-state");
+		const badgeEl = document.getElementById("header-notif-badge");
+		const totalBadge = document.getElementById("notif-total-badge");
+
+		const countAllEl = document.getElementById("count-notif-all");
+		const countFriendsEl = document.getElementById("count-notif-friends");
+		const countInvitesEl = document.getElementById("count-notif-invites");
+		const countSystemEl = document.getElementById("count-notif-system");
+
+		const friendsCount = this.friendRequests.length;
+		const invitesCount = this.roomInvites.length;
+		const activeSystemNotices = this.systemNotices.filter((s) => !this.isNoticeDismissed(s.id));
+		const systemCount = activeSystemNotices.length;
+		const totalCount = friendsCount + invitesCount + systemCount;
+
+		if (countAllEl) countAllEl.textContent = totalCount.toString();
+		if (countFriendsEl) countFriendsEl.textContent = friendsCount.toString();
+		if (countInvitesEl) countInvitesEl.textContent = invitesCount.toString();
+		if (countSystemEl) countSystemEl.textContent = systemCount.toString();
+		if (totalBadge) totalBadge.textContent = totalCount.toString();
+
+		if (badgeEl) {
+			if (totalCount > 0) {
+				badgeEl.textContent = totalCount > 99 ? "99+" : totalCount.toString();
+				badgeEl.classList.remove("hidden");
+			} else {
+				badgeEl.classList.add("hidden");
+			}
+		}
+
+		if (!listEl) return;
+
+		let itemsHtml = "";
+		let visibleCount = 0;
+
+		// 1. Pedidos de Amizade
+		if (this.activeNotifFilter === "all" || this.activeNotifFilter === "friends") {
+			for (const req of this.friendRequests) {
+				visibleCount++;
+				itemsHtml += `
+					<div class="notif-item" data-type="friend">
+						<div class="notif-item-header">
+							<div class="notif-item-icon friend">
+								<i data-lucide="user-plus"></i>
+							</div>
+							<div class="notif-item-body">
+								<div class="notif-item-title">
+									<strong>@${this.escapeHtml(req.fromUsername)}</strong> quer ser seu amigo
+								</div>
+								<div class="notif-item-sub">Pedido de amizade pendente</div>
+							</div>
+						</div>
+						<div class="notif-item-actions">
+							<button type="button" class="btn btn-ghost btn-xs btn-notif-profile" data-user-id="${this.escapeHtml(req.fromUserId)}" data-username="${this.escapeHtml(req.fromUsername)}" title="Ver Perfil">
+								<i data-lucide="user"></i> <span>Ver Perfil</span>
+							</button>
+							<button type="button" class="btn btn-primary btn-xs btn-notif-accept-friend" data-user-id="${this.escapeHtml(req.fromUserId)}">
+								<i data-lucide="check"></i> <span>Aceitar</span>
+							</button>
+							<button type="button" class="btn btn-danger-ghost btn-xs btn-notif-reject-friend" data-user-id="${this.escapeHtml(req.fromUserId)}" title="Recusar">
+								<i data-lucide="x"></i> <span>Recusar</span>
+							</button>
+						</div>
+					</div>
+				`;
+			}
+		}
+
+		// 2. Convites de Sala
+		if (this.activeNotifFilter === "all" || this.activeNotifFilter === "invites") {
+			for (const inv of this.roomInvites) {
+				visibleCount++;
+				const sender = inv.fromNickname || inv.fromUsername;
+				itemsHtml += `
+					<div class="notif-item" data-type="invite">
+						<div class="notif-item-header">
+							<div class="notif-item-icon invite">
+								<i data-lucide="radio"></i>
+							</div>
+							<div class="notif-item-body">
+								<div class="notif-item-title">
+									<strong>${this.escapeHtml(sender)}</strong> convidou você para a sala
+								</div>
+								<div class="notif-item-sub">Sala: <strong style="color: #c4b5fd;">${this.escapeHtml(inv.roomName)}</strong></div>
+							</div>
+						</div>
+						<div class="notif-item-actions">
+							<button type="button" class="btn btn-primary btn-xs btn-notif-join-room" data-invite-id="${this.escapeHtml(inv.id)}" data-invite-code="${this.escapeHtml(inv.inviteCode)}" data-room-id="${this.escapeHtml(inv.roomId)}">
+								<i data-lucide="log-in"></i> <span>Entrar na Sala</span>
+							</button>
+							<button type="button" class="btn btn-ghost btn-xs btn-notif-dismiss-invite" data-invite-id="${this.escapeHtml(inv.id)}" title="Recusar">
+								<span>Recusar</span>
+							</button>
+						</div>
+					</div>
+				`;
+			}
+		}
+
+		// 3. Avisos do Sistema
+		if (this.activeNotifFilter === "all" || this.activeNotifFilter === "system") {
+			for (const sys of activeSystemNotices) {
+				visibleCount++;
+				itemsHtml += `
+					<div class="notif-item" data-type="system">
+						<div class="notif-item-header">
+							<div class="notif-item-icon system">
+								<i data-lucide="info"></i>
+							</div>
+							<div class="notif-item-body">
+								<div class="notif-item-title">${this.escapeHtml(sys.title)}</div>
+								<div class="notif-item-sub">${this.escapeHtml(sys.message)}</div>
+							</div>
+						</div>
+						<div class="notif-item-actions">
+							<button type="button" class="btn btn-ghost btn-xs btn-notif-dismiss-sys" data-notice-id="${this.escapeHtml(sys.id)}" title="Dispensar aviso">
+								<i data-lucide="check"></i> <span>Dispensar</span>
+							</button>
+						</div>
+					</div>
+				`;
+			}
+		}
+
+		listEl.innerHTML = itemsHtml;
+
+		if (emptyEl) {
+			if (visibleCount === 0) emptyEl.classList.remove("hidden");
+			else emptyEl.classList.add("hidden");
+		}
+
+		// Ações dos botões nas notificações:
+		listEl.querySelectorAll<HTMLButtonElement>(".btn-notif-profile").forEach((btn) => {
+			btn.addEventListener("click", () => {
+				const userId = btn.dataset.userId!;
+				const username = btn.dataset.username!;
+				const userObj = this.onlineUsers.find((u) => u.id === userId || u.username === username) || {
+					id: userId,
+					username: username,
+					nickname: username,
+					isOnline: true,
+				};
+				const popover = document.getElementById("notifications-popover");
+				if (popover) popover.classList.add("hidden");
+				this.showUserMiniProfile(userObj, btn);
+			});
+		});
+
+		listEl.querySelectorAll<HTMLButtonElement>(".btn-notif-accept-friend").forEach((btn) => {
+			btn.addEventListener("click", async () => {
+				const userId = btn.dataset.userId!;
+				btn.disabled = true;
+				await acceptFriendRequest(userId);
+				await this.refreshFriends();
+			});
+		});
+
+		listEl.querySelectorAll<HTMLButtonElement>(".btn-notif-reject-friend").forEach((btn) => {
+			btn.addEventListener("click", async () => {
+				const userId = btn.dataset.userId!;
+				btn.disabled = true;
+				await rejectFriend(userId);
+				await this.refreshFriends();
+			});
+		});
+
+		listEl.querySelectorAll<HTMLButtonElement>(".btn-notif-join-room").forEach((btn) => {
+			btn.addEventListener("click", async () => {
+				const inviteId = btn.dataset.inviteId!;
+				const inviteCode = btn.dataset.inviteCode!;
+				const roomId = btn.dataset.roomId!;
+				btn.disabled = true;
+				await dismissRoomInvite(inviteId);
+
+				const popover = document.getElementById("notifications-popover");
+				if (popover) popover.classList.add("hidden");
+
+				const res = await joinRoomByInvite(inviteCode);
+				if (res.ok && res.room) {
+					await this.onRoomSelected(res.room);
+				} else {
+					const resJoin = await joinRoom(roomId);
+					if (resJoin.ok && resJoin.room) {
+						await this.onRoomSelected(resJoin.room);
+					} else {
+						alert(res.error || "Não foi possível entrar na sala.");
+					}
+				}
+				await this.refreshFriends();
+			});
+		});
+
+		listEl.querySelectorAll<HTMLButtonElement>(".btn-notif-dismiss-invite").forEach((btn) => {
+			btn.addEventListener("click", async () => {
+				const inviteId = btn.dataset.inviteId!;
+				btn.disabled = true;
+				await dismissRoomInvite(inviteId);
+				await this.refreshFriends();
+			});
+		});
+
+		listEl.querySelectorAll<HTMLButtonElement>(".btn-notif-dismiss-sys").forEach((btn) => {
+			btn.addEventListener("click", (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				const id = btn.getAttribute("data-notice-id") || btn.dataset.noticeId;
+				if (id) {
+					this.dismissSystemNotice(id);
+				}
+			});
+		});
+
+		this.refreshIcons();
 	}
 
 	private setupStreamDeckBridge(): void {
@@ -3230,7 +3698,41 @@ class ShiroApp {
 					document.getElementById("header-user-info")?.click();
 				});
 			} else {
+				const isFriend = this.friends.some((f) => f.id === userData.id || f.username === userData.username);
+				const incomingReq = this.friendRequests.find((r) => r.fromUserId === userData.id || r.fromUsername === userData.username);
+				const requestSent = this.sentFriendRequestUserIds.has(userData.id);
+
 				let actionButtons = "";
+
+				if (incomingReq) {
+					actionButtons += `
+						<div class="user-mini-actions-row">
+							<button type="button" id="btn-mini-accept-friend" class="btn btn-primary btn-sm">
+								<i data-lucide="user-check"></i>
+								<span>Aceitar Pedido</span>
+							</button>
+							<button type="button" id="btn-mini-reject-friend" class="btn btn-danger-ghost btn-sm" title="Recusar pedido">
+								<i data-lucide="x"></i>
+								<span>Recusar</span>
+							</button>
+						</div>
+					`;
+				} else if (isFriend) {
+					actionButtons += `
+						<div class="user-mini-friend-badge">
+							<i data-lucide="user-check"></i>
+							<span>Vocês são amigos</span>
+						</div>
+					`;
+				} else {
+					actionButtons += `
+						<button type="button" id="btn-mini-add-friend" class="btn ${this.currentRoom ? "btn-secondary" : "btn-primary"} btn-sm" ${requestSent ? "disabled" : ""}>
+							<i data-lucide="${requestSent ? "check" : "user-plus"}"></i>
+							<span>${requestSent ? "Pedido Enviado" : "Adicionar Amigo"}</span>
+						</button>
+					`;
+				}
+
 				if (this.currentRoom) {
 					actionButtons += `
 						<button type="button" id="btn-mini-invite-room" class="btn btn-primary btn-sm">
@@ -3239,7 +3741,78 @@ class ShiroApp {
 						</button>
 					`;
 				}
+
 				actionsEl.innerHTML = actionButtons;
+
+				// 1. Ação de Aceitar Pedido no perfil
+				document.getElementById("btn-mini-accept-friend")?.addEventListener("click", async () => {
+					const btnAccept = document.getElementById("btn-mini-accept-friend") as HTMLButtonElement | null;
+					const btnReject = document.getElementById("btn-mini-reject-friend") as HTMLButtonElement | null;
+					if (btnAccept) {
+						btnAccept.disabled = true;
+						btnAccept.innerHTML = `<i data-lucide="loader-2" class="spin"></i>`;
+						this.refreshIcons();
+					}
+					if (btnReject) btnReject.disabled = true;
+
+					const reqUserId = incomingReq?.fromUserId || userData.id;
+					const res = await acceptFriendRequest(reqUserId);
+					if (res.ok) {
+						await this.refreshFriends();
+						this.showUserMiniProfile(userData, targetEl);
+					} else {
+						if (btnAccept) {
+							btnAccept.disabled = false;
+							btnAccept.innerHTML = `<span>Erro ao aceitar</span>`;
+						}
+						if (btnReject) btnReject.disabled = false;
+					}
+				});
+
+				// 2. Ação de Recusar Pedido no perfil
+				document.getElementById("btn-mini-reject-friend")?.addEventListener("click", async () => {
+					const btnAccept = document.getElementById("btn-mini-accept-friend") as HTMLButtonElement | null;
+					const btnReject = document.getElementById("btn-mini-reject-friend") as HTMLButtonElement | null;
+					if (btnReject) {
+						btnReject.disabled = true;
+						btnReject.innerHTML = `<i data-lucide="loader-2" class="spin"></i>`;
+						this.refreshIcons();
+					}
+					if (btnAccept) btnAccept.disabled = true;
+
+					const reqUserId = incomingReq?.fromUserId || userData.id;
+					await rejectFriend(reqUserId);
+					await this.refreshFriends();
+					this.hideUserMiniProfile();
+				});
+
+				// 3. Ação de Enviar Pedido de Amizade no perfil
+				document.getElementById("btn-mini-add-friend")?.addEventListener("click", async () => {
+					const btn = document.getElementById("btn-mini-add-friend") as HTMLButtonElement | null;
+					if (!btn || btn.disabled) return;
+					btn.disabled = true;
+					btn.innerHTML = `<i data-lucide="loader-2" class="spin"></i> <span>Enviando...</span>`;
+					this.refreshIcons();
+
+					const res = await sendFriendRequest(userData.username || userData.id);
+					if (res.ok) {
+						btn.innerHTML = `<i data-lucide="check"></i> <span>Pedido Enviado!</span>`;
+						this.sentFriendRequestUserIds.add(userData.id);
+						this.refreshIcons();
+						await this.refreshFriends();
+					} else {
+						btn.innerHTML = `<span>${this.escapeHtml(res.error || "Erro ao adicionar")}</span>`;
+						setTimeout(() => {
+							if (btn && !this.sentFriendRequestUserIds.has(userData.id)) {
+								btn.disabled = false;
+								btn.innerHTML = `<i data-lucide="user-plus"></i> <span>Adicionar Amigo</span>`;
+								this.refreshIcons();
+							}
+						}, 2500);
+					}
+				});
+
+				// 4. Ação de Convidar para Sala
 				if (this.currentRoom) {
 					document.getElementById("btn-mini-invite-room")?.addEventListener("click", async () => {
 						const btn = document.getElementById("btn-mini-invite-room") as HTMLButtonElement | null;
@@ -3300,6 +3873,183 @@ class ShiroApp {
 		document.querySelectorAll(".user-card.selected, .friend-card.selected").forEach((c) => c.classList.remove("selected"));
 	}
 
+	public addSystemNotice(notice: { title: string; message: string; type?: "info" | "warning" | "update"; date?: string }): void {
+		const newNotice: SystemNotice = {
+			id: `sys-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+			title: notice.title,
+			message: notice.message,
+			type: notice.type || "info",
+			date: notice.date || "Agora",
+		};
+		this.systemNotices.unshift(newNotice);
+		this.renderNotifications();
+	}
+
+	private setupSystemNoticeToast(): void {
+		const btnDismiss = document.getElementById("btn-dismiss-system-toast");
+		const toast = document.getElementById("toast-system-notice");
+		const toastContent = document.getElementById("toast-system-notice-content");
+
+		btnDismiss?.addEventListener("click", (e) => {
+			e.stopPropagation();
+			toast?.classList.add("hidden");
+		});
+
+		toastContent?.addEventListener("click", () => {
+			toast?.classList.add("hidden");
+			const popover = document.getElementById("notifications-popover");
+			if (popover) {
+				popover.classList.remove("hidden");
+				const systemTab = document.querySelector<HTMLButtonElement>('.notif-filter-tab[data-filter="system"]');
+				if (systemTab) systemTab.click();
+			}
+		});
+	}
+
+	public showSystemNoticeToast(notice: SystemNotice): void {
+		const toast = document.getElementById("toast-system-notice");
+		const titleEl = document.getElementById("toast-system-title");
+		const msgEl = document.getElementById("toast-system-msg");
+		const badgeEl = document.getElementById("toast-system-badge");
+		const iconEl = document.getElementById("toast-system-notice-icon");
+
+		if (!toast || !titleEl || !msgEl) return;
+
+		titleEl.textContent = notice.title;
+		msgEl.textContent = notice.message;
+
+		if (badgeEl && iconEl) {
+			if (notice.type === "warning") {
+				badgeEl.textContent = "ALERTA";
+				badgeEl.style.background = "linear-gradient(135deg, #f59e0b, #d97706)";
+				iconEl.style.background = "linear-gradient(135deg, #f59e0b, #d97706)";
+				iconEl.innerHTML = `<i data-lucide="alert-triangle"></i>`;
+			} else if (notice.type === "update") {
+				badgeEl.textContent = "NOVIDADE";
+				badgeEl.style.background = "linear-gradient(135deg, #a855f7, #7c3aed)";
+				iconEl.style.background = "linear-gradient(135deg, #a855f7, #7c3aed)";
+				iconEl.innerHTML = `<i data-lucide="sparkles"></i>`;
+			} else {
+				badgeEl.textContent = "COMUNICADO";
+				badgeEl.style.background = "linear-gradient(135deg, #3b82f6, #1d4ed8)";
+				iconEl.style.background = "linear-gradient(135deg, #3b82f6, #1d4ed8)";
+				iconEl.innerHTML = `<i data-lucide="info"></i>`;
+			}
+		}
+
+		toast.classList.remove("hidden");
+		this.refreshIcons();
+
+		setTimeout(() => {
+			if (titleEl.textContent === notice.title) {
+				toast.classList.add("hidden");
+			}
+		}, 12000);
+	}
+
+	private setupCreateNoticeModal(): void {
+		const modal = document.getElementById("modal-create-notice");
+		const btnOpen = document.getElementById("btn-open-create-notice");
+		const btnClose = document.getElementById("btn-close-create-notice-modal");
+		const btnCancel = document.getElementById("btn-cancel-create-notice");
+		const form = document.getElementById("form-create-notice") as HTMLFormElement | null;
+		const inputTitle = document.getElementById("input-notice-title") as HTMLInputElement | null;
+		const inputMessage = document.getElementById("input-notice-message") as HTMLTextAreaElement | null;
+		const checkPopup = document.getElementById("check-notice-popup") as HTMLInputElement | null;
+		const checkOS = document.getElementById("check-notice-os") as HTMLInputElement | null;
+
+		const closeModal = () => {
+			modal?.classList.add("hidden");
+			form?.reset();
+		};
+
+		btnOpen?.addEventListener("click", () => {
+			const currentUser = getUser();
+			if (!currentUser || currentUser.id !== DEV_ADMIN_ID) {
+				alert("Acesso exclusivo do Desenvolvedor.");
+				return;
+			}
+			document.getElementById("notifications-popover")?.classList.add("hidden");
+			modal?.classList.remove("hidden");
+			inputTitle?.focus();
+			this.refreshIcons();
+		});
+
+		btnClose?.addEventListener("click", closeModal);
+		btnCancel?.addEventListener("click", closeModal);
+
+		form?.addEventListener("submit", async (e) => {
+			e.preventDefault();
+			const currentUser = getUser();
+			if (!currentUser || currentUser.id !== DEV_ADMIN_ID) {
+				alert("Ação não autorizada. Apenas o desenvolvedor pode lançar comunicados.");
+				return;
+			}
+
+			const title = inputTitle?.value.trim() || "";
+			const message = inputMessage?.value.trim() || "";
+			const typeEl = form.querySelector<HTMLInputElement>('input[name="noticeType"]:checked');
+			const type = (typeEl?.value as "info" | "warning" | "update") || "info";
+
+			if (!title || !message) return;
+
+			const notice: SystemNotice = {
+				id: `sys-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+				title,
+				message,
+				type,
+				date: "Agora",
+			};
+
+			// 1. Registra localmente no aplicativo
+			this.addSystemNotice(notice);
+
+			// 2. Se habilitado, dispara toast popup imediato na tela
+			if (checkPopup?.checked) {
+				this.showSystemNoticeToast(notice);
+			}
+
+			// 3. Se habilitado, dispara notificação nativa do Windows
+			if (checkOS?.checked && "Notification" in window) {
+				try {
+					if (Notification.permission === "granted") {
+						new Notification(title, {
+							body: message,
+						});
+					} else if (Notification.permission !== "denied") {
+						Notification.requestPermission().then((perm) => {
+							if (perm === "granted") {
+								new Notification(title, {
+									body: message,
+								});
+							}
+						});
+					}
+				} catch (err) {
+					console.warn("[App] Notificação nativa não suportada ou bloqueada:", err);
+				}
+			}
+
+			// 4. Propagação via WebRTC P2P DataChannel para todos os peers conectados
+			this.p2pManager?.broadcastNotice(notice);
+
+			// 5. Tenta enviar para o backend API para persistência global
+			const token = getToken();
+			if (window.api && token) {
+				window.api.apiRequest?.({
+					endpoint: "/api/system/notice",
+					method: "POST",
+					token,
+					body: notice,
+				}).catch(() => {
+					// Fallback silencioso se a rota no backend não estiver criada ainda
+				});
+			}
+
+			closeModal();
+		});
+	}
+
 	private refreshIcons(): void {
 		try {
 			createIcons({
@@ -3310,7 +4060,8 @@ class ShiroApp {
 					Settings, X, Power, User, Users, Lock, Eye, EyeOff, LogOut, Search,
 					ChevronLeft, ChevronRight, Check, Copy, RotateCw, Sparkles, Globe,
 					UserCog, BadgeCheck, Camera, Image, Trash2, Clock,
-					UserCheck, UserPlus, Bell, LogIn, KeyRound, Hash,
+					UserCheck, UserPlus, Bell, BellOff, LogIn, KeyRound, Hash, CheckCheck,
+					Megaphone, AlertTriangle, Send, Info,
 				},
 			});
 		} catch (err) {
@@ -3320,4 +4071,5 @@ class ShiroApp {
 }
 
 const app = new ShiroApp();
+(window as any).shiroApp = app;
 app.initialize().catch((err) => console.error("[App] Init error:", err));

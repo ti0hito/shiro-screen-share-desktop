@@ -199,6 +199,11 @@
             <span class="header-username" id="header-username">—</span>
             <i data-lucide="settings" class="header-user-edit-icon"></i>
           </div>
+          <!-- Central de Notificações com sino e badge -->
+          <button id="btn-notifications-toggle" class="win-btn notif-toggle-btn" title="Central de Notificações">
+            <i data-lucide="bell"></i>
+            <span id="header-notif-badge" class="header-notif-badge hidden">0</span>
+          </button>
           <!-- Ações do header -->
           <button id="btn-theme-toggle" class="win-btn theme-toggle-btn" title="Alternar Tema">
             <i data-lucide="sun"></i>
@@ -979,6 +984,68 @@
   </div>
 
   <!-- ======================================================= -->
+  <!-- CENTRAL DE NOTIFICAÇÕES (POPOVER)                       -->
+  <!-- ======================================================= -->
+  <div id="notifications-popover" class="notif-popover hidden" role="dialog" aria-label="Central de Notificações">
+    <div class="notif-card">
+      <div class="notif-header">
+        <div class="notif-header-title">
+          <i data-lucide="bell"></i>
+          <span>Notificações</span>
+          <span id="notif-total-badge" class="notif-counter-tag">0</span>
+        </div>
+        <div class="notif-header-actions">
+          <button type="button" id="btn-open-create-notice" class="btn-notif-create-notice hidden" title="Criar e Enviar Aviso (Dev)">
+            <i data-lucide="megaphone"></i>
+            <span>Criar Aviso</span>
+          </button>
+          <button type="button" id="btn-clear-notifs" class="btn-notif-clear" title="Limpar avisos do sistema">
+            <i data-lucide="check-check"></i>
+            <span>Limpar</span>
+          </button>
+          <button type="button" id="btn-close-notifs" class="notif-close-btn" title="Fechar">
+            <i data-lucide="x"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- Filtros por Categoria -->
+      <div class="notif-filter-tabs">
+        <button type="button" class="notif-filter-tab active" data-filter="all">
+          <span>Todas</span>
+          <span class="notif-filter-count" id="count-notif-all">0</span>
+        </button>
+        <button type="button" class="notif-filter-tab" data-filter="friends">
+          <i data-lucide="user-plus"></i>
+          <span>Amizades</span>
+          <span class="notif-filter-count" id="count-notif-friends">0</span>
+        </button>
+        <button type="button" class="notif-filter-tab" data-filter="invites">
+          <i data-lucide="radio"></i>
+          <span>Convites</span>
+          <span class="notif-filter-count" id="count-notif-invites">0</span>
+        </button>
+        <button type="button" class="notif-filter-tab" data-filter="system">
+          <i data-lucide="info"></i>
+          <span>Avisos</span>
+          <span class="notif-filter-count" id="count-notif-system">0</span>
+        </button>
+      </div>
+
+      <!-- Lista de Notificações -->
+      <div id="notifications-list" class="notif-list-container">
+        <!-- Renderizado dinamicamente via TypeScript -->
+      </div>
+
+      <!-- Estado Vazio -->
+      <div id="notifications-empty-state" class="notif-empty-state hidden">
+        <i data-lucide="bell-off"></i>
+        <span>Nenhuma notificação nesta categoria</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================================================= -->
   <!-- TOAST FLUTUANTE: CONVITE DE SALA                        -->
   <!-- ======================================================= -->
   <div id="toast-room-invite" class="toast-update-notification hidden">
@@ -1002,6 +1069,144 @@
       <button id="btn-dismiss-room-invite" class="btn btn-ghost btn-sm" title="Recusar">
         <span>Recusar</span>
       </button>
+    </div>
+  </div>
+
+  <!-- ======================================================= -->
+  <!-- TOAST FLUTUANTE: PEDIDO DE AMIZADE                      -->
+  <!-- ======================================================= -->
+  <div id="toast-friend-request" class="toast-update-notification hidden">
+    <div class="toast-update-content" id="toast-friend-req-content" style="cursor: pointer;" title="Clique para ver o perfil do usuário">
+      <div class="toast-update-icon" style="background: linear-gradient(135deg, #10b981, #047857);">
+        <i data-lucide="user-plus"></i>
+      </div>
+      <div class="toast-update-text">
+        <div class="toast-update-title">
+          <span class="badge badge-update" style="background: linear-gradient(135deg, #10b981, #047857);">PEDIDO DE AMIZADE</span>
+          <strong id="toast-friend-req-sender">—</strong>
+        </div>
+        <p id="toast-friend-req-msg">Quer ser seu amigo! Clique para ver o perfil.</p>
+      </div>
+    </div>
+    <div class="toast-update-actions">
+      <button id="btn-accept-toast-friend" class="btn btn-primary btn-sm">
+        <i data-lucide="user-check"></i>
+        <span>Aceitar</span>
+      </button>
+      <button id="btn-dismiss-toast-friend" class="btn btn-ghost btn-sm" title="Recusar">
+        <span>Recusar</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- ======================================================= -->
+  <!-- TOAST FLUTUANTE: AVISO DO SISTEMA                       -->
+  <!-- ======================================================= -->
+  <div id="toast-system-notice" class="toast-update-notification hidden">
+    <div class="toast-update-content" id="toast-system-notice-content">
+      <div class="toast-update-icon" id="toast-system-notice-icon" style="background: linear-gradient(135deg, #3b82f6, #1d4ed8);">
+        <i data-lucide="info"></i>
+      </div>
+      <div class="toast-update-text">
+        <div class="toast-update-title">
+          <span class="badge badge-update" id="toast-system-badge" style="background: linear-gradient(135deg, #3b82f6, #1d4ed8);">COMUNICADO</span>
+          <strong id="toast-system-title">—</strong>
+        </div>
+        <p id="toast-system-msg">—</p>
+      </div>
+    </div>
+    <div class="toast-update-actions">
+      <button id="btn-dismiss-system-toast" class="btn btn-primary btn-sm">
+        <span>Entendido</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- ======================================================= -->
+  <!-- MODAL: CRIAR NOTIFICAÇÃO GLOBAL (DEV / ADMIN)           -->
+  <!-- ======================================================= -->
+  <div id="modal-create-notice" class="modal-overlay hidden" role="dialog" aria-label="Criar Aviso do Sistema">
+    <div class="modal-card modal-create-notice-card">
+      <div class="modal-header">
+        <h3><i data-lucide="megaphone"></i> Lançar Notificação Global</h3>
+        <button type="button" id="btn-close-create-notice-modal" class="modal-close-btn" title="Fechar">
+          <i data-lucide="x"></i>
+        </button>
+      </div>
+
+      <form id="form-create-notice" class="modal-body" novalidate>
+        <div class="input-group">
+          <label for="input-notice-title" class="input-label">Título da Notificação</label>
+          <div class="input-wrapper">
+            <i data-lucide="bell" class="input-icon"></i>
+            <input
+              type="text"
+              id="input-notice-title"
+              class="auth-input"
+              placeholder="Ex: Manutenção Programada, Nova Live..."
+              required
+              maxlength="60"
+            />
+          </div>
+        </div>
+
+        <div class="input-group">
+          <label for="input-notice-message" class="input-label">Mensagem do Comunicado</label>
+          <textarea
+            id="input-notice-message"
+            class="auth-textarea"
+            rows="3"
+            placeholder="Descreva o comunicado detalhadamente..."
+            required
+            maxlength="250"
+          ></textarea>
+        </div>
+
+        <div class="input-group">
+          <label class="input-label">Tipo de Notificação</label>
+          <div class="notice-type-selector">
+            <label class="notice-type-option">
+              <input type="radio" name="noticeType" value="info" checked />
+              <span class="notice-type-badge info">
+                <i data-lucide="info"></i> Informativo
+              </span>
+            </label>
+            <label class="notice-type-option">
+              <input type="radio" name="noticeType" value="warning" />
+              <span class="notice-type-badge warning">
+                <i data-lucide="alert-triangle"></i> Alerta
+              </span>
+            </label>
+            <label class="notice-type-option">
+              <input type="radio" name="noticeType" value="update" />
+              <span class="notice-type-badge update">
+                <i data-lucide="sparkles"></i> Novidade
+              </span>
+            </label>
+          </div>
+        </div>
+
+        <div class="notice-options-group">
+          <label class="notice-checkbox-row">
+            <input type="checkbox" id="check-notice-popup" checked />
+            <span>Exibir popup flutuante (Toast) na tela imediatamente</span>
+          </label>
+          <label class="notice-checkbox-row">
+            <input type="checkbox" id="check-notice-os" checked />
+            <span>Disparar notificação nativa do Windows</span>
+          </label>
+        </div>
+
+        <div class="modal-actions">
+          <button type="button" id="btn-cancel-create-notice" class="btn btn-ghost">
+            <span>Cancelar</span>
+          </button>
+          <button type="submit" id="btn-submit-create-notice" class="btn btn-primary">
+            <i data-lucide="send"></i>
+            <span>Lançar Notificação</span>
+          </button>
+        </div>
+      </form>
     </div>
   </div>
 

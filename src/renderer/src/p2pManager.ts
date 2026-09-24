@@ -15,6 +15,7 @@ export interface P2PCallbacks {
 	onError: (err: string) => void;
 	onRemoteStream?: (stream: MediaStream, peerId: string) => void;
 	isPeerAllowed?: (peerId: string) => boolean;
+	onSystemNotice?: (notice: any) => void;
 }
 
 const ICE_SERVERS: RTCIceServer[] = [
@@ -113,6 +114,7 @@ function prioritizeH264(pc: RTCPeerConnection): void {
 
 export class P2PManager {
 	private peerConnections = new Map<string, RTCPeerConnection>();
+	private dataChannels = new Map<string, RTCDataChannel>();
 	private pendingCandidates = new Map<string, RTCIceCandidateInit[]>();
 	private localStream: MediaStream | null = null;
 	private callbacks: P2PCallbacks;
@@ -314,6 +316,17 @@ export class P2PManager {
 			iceCandidatePoolSize: 2,
 		});
 
+		try {
+			const dc = pc.createDataChannel("shiro-notices", { negotiated: true, id: 10 });
+			this.setupDataChannel(peerId, dc);
+		} catch (err) {
+			console.warn("[P2P] Erro ao criar DataChannel:", err);
+		}
+
+		pc.ondatachannel = (e) => {
+			this.setupDataChannel(peerId, e.channel);
+		};
+
 		pc.onicecandidate = async (e) => {
 			if (e.candidate) {
 				console.log(`[P2P] Novo ICE candidate gerado para ${peerId}:`, e.candidate.type, e.candidate.protocol);
@@ -474,6 +487,12 @@ export class P2PManager {
 	}
 
 	closePeer(peerId: string): void {
+		const dc = this.dataChannels.get(peerId);
+		if (dc) {
+			try { dc.close(); } catch {}
+			this.dataChannels.delete(peerId);
+		}
+
 		const pc = this.peerConnections.get(peerId);
 		if (pc) {
 			try {
@@ -483,6 +502,38 @@ export class P2PManager {
 			this.pendingCandidates.delete(peerId);
 			this.callbacks.onDisconnected(peerId);
 			console.log(`[P2P] PeerConnection com ${peerId} encerrada.`);
+		}
+	}
+
+	private setupDataChannel(peerId: string, dc: RTCDataChannel): void {
+		dc.onmessage = (event) => {
+			try {
+				const data = JSON.parse(event.data);
+				if (data.type === "system-notice" && data.notice) {
+					console.log(`[P2P] Aviso recebido via DataChannel de ${peerId}:`, data.notice);
+					this.callbacks.onSystemNotice?.(data.notice);
+				}
+			} catch (err) {
+				console.warn("[P2P] Erro ao parsear mensagem DataChannel:", err);
+			}
+		};
+		dc.onclose = () => {
+			this.dataChannels.delete(peerId);
+		};
+		this.dataChannels.set(peerId, dc);
+	}
+
+	broadcastNotice(notice: any): void {
+		const payload = JSON.stringify({ type: "system-notice", notice });
+		for (const [peerId, dc] of this.dataChannels) {
+			if (dc.readyState === "open") {
+				try {
+					dc.send(payload);
+					console.log(`[P2P] Aviso transmitido via DataChannel para ${peerId}`);
+				} catch (err) {
+					console.warn(`[P2P] Falha ao enviar aviso para ${peerId}:`, err);
+				}
+			}
 		}
 	}
 
