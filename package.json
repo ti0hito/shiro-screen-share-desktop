@@ -1,6 +1,6 @@
 {
 	"name": "shiro-screen-share",
-	"version": "2.1.0",
+	"version": "2.1.1",
 	"description": "Shiro Screen Share — Desktop app with isolated process audio capture and WebRTC P2P multi-stream",
 	"main": "dist/main/main.js",
 	"author": "Hito",

@@ -119,11 +119,35 @@ svg {
    ══════════════════════════════════════════════════════════ */
 
 .view-login {
+  position: relative;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  background: #000;
+  background: #09090b;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
   z-index: 100;
+}
+
+.login-header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  width: 100%;
+  height: 38px;
+  background: rgba(14, 14, 18, 0.4);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 0 0 12px;
+  -webkit-app-region: drag;
+  z-index: 200;
 }
 
 /* Drag bar para janela sem frame */
@@ -365,20 +389,35 @@ svg {
   color: rgba(161, 161, 170, 0.5);
 }
 
+.btn-toggle-eye,
 .input-eye {
   position: absolute;
   right: 10px;
-  background: none;
+  background: transparent;
   border: none;
   color: var(--text-muted);
   cursor: pointer;
-  padding: 4px;
+  padding: 4px 6px;
   display: flex;
   align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  transition: all 0.15s ease;
+  outline: none;
+  z-index: 2;
 }
 
-.input-eye:hover { color: var(--text-main); }
-.input-eye svg { width: 16px; height: 16px; }
+.btn-toggle-eye:hover,
+.input-eye:hover {
+  color: var(--text-main);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.btn-toggle-eye svg,
+.input-eye svg {
+  width: 16px;
+  height: 16px;
+}
 
 /* Remember Me Checkbox */
 .remember-me-row {

@@ -666,13 +666,27 @@ class ShiroApp {
 		document.getElementById("btn-open-create-room")?.addEventListener("click", () => {
 			const modal = document.getElementById("modal-create-room");
 			if (modal) modal.classList.remove("hidden");
-			(document.getElementById("create-room-name") as HTMLInputElement)?.focus();
+			const nameInput = document.getElementById("create-room-name") as HTMLInputElement | null;
+			const idInput = document.getElementById("create-room-id") as HTMLInputElement | null;
+			const passInput = document.getElementById("create-room-password") as HTMLInputElement | null;
+			const err = document.getElementById("create-room-error");
+			if (nameInput) nameInput.value = "";
+			if (idInput) idInput.value = "";
+			if (passInput) passInput.value = "";
+			if (err) err.textContent = "";
+			nameInput?.focus();
 			this.refreshIcons();
 		});
 
 		const closeCreateModal = () => {
 			document.getElementById("modal-create-room")?.classList.add("hidden");
+			const nameInput = document.getElementById("create-room-name") as HTMLInputElement | null;
+			const idInput = document.getElementById("create-room-id") as HTMLInputElement | null;
+			const passInput = document.getElementById("create-room-password") as HTMLInputElement | null;
 			const err = document.getElementById("create-room-error");
+			if (nameInput) nameInput.value = "";
+			if (idInput) idInput.value = "";
+			if (passInput) passInput.value = "";
 			if (err) err.textContent = "";
 		};
 		document.getElementById("btn-close-create-room")?.addEventListener("click", closeCreateModal);
@@ -685,9 +699,13 @@ class ShiroApp {
 			if (passInput) passInput.value = randomPass;
 		});
 
-		// Submeter formulÃ¡rio de criar sala
+		// Submeter formulário de criar sala
 		document.getElementById("form-create-room")?.addEventListener("submit", async (e) => {
 			e.preventDefault();
+			const form = e.currentTarget as HTMLFormElement;
+			const submitBtn = form.querySelector<HTMLButtonElement>('button[type="submit"]');
+			if (submitBtn?.disabled) return;
+
 			const name = (document.getElementById("create-room-name") as HTMLInputElement)?.value.trim();
 			const customId = (document.getElementById("create-room-id") as HTMLInputElement)?.value.trim();
 			const password = (document.getElementById("create-room-password") as HTMLInputElement)?.value.trim();
@@ -703,17 +721,36 @@ class ShiroApp {
 				return;
 			}
 
-			if (errorEl) errorEl.textContent = "";
-			const res = await createRoom({ name, roomId: customId || undefined, password: password || undefined });
-
-			if (!res.ok || !res.room) {
-				if (errorEl) errorEl.textContent = res.error ?? "Erro ao criar sala.";
-				return;
+			if (submitBtn) {
+				submitBtn.disabled = true;
+				submitBtn.innerHTML = `<i data-lucide="loader-2" class="spin"></i> <span>Criando Sala...</span>`;
+				this.refreshIcons();
 			}
 
-			closeCreateModal();
-			await this.refreshRooms();
-			await this.onRoomSelected(res.room);
+			if (errorEl) errorEl.textContent = "";
+			try {
+				const res = await createRoom({ name, roomId: customId || undefined, password: password || undefined });
+
+				if (!res.ok || !res.room) {
+					if (errorEl) errorEl.textContent = res.error ?? "Erro ao criar sala.";
+					if (submitBtn) {
+						submitBtn.disabled = false;
+						submitBtn.innerHTML = `<span>Criar Sala</span>`;
+					}
+					return;
+				}
+
+				closeCreateModal();
+				await this.refreshRooms();
+				await this.onRoomSelected(res.room);
+			} catch (err: any) {
+				if (errorEl) errorEl.textContent = err?.message || "Erro ao criar sala.";
+			} finally {
+				if (submitBtn) {
+					submitBtn.disabled = false;
+					submitBtn.innerHTML = `<span>Criar Sala</span>`;
+				}
+			}
 		});
 
 		// Abrir modal de Buscar / Entrar em Sala por ID
@@ -733,14 +770,33 @@ class ShiroApp {
 			formId?.classList.remove("hidden");
 			formInvite?.classList.add("hidden");
 
-			(document.getElementById("join-by-id-room-id") as HTMLInputElement)?.focus();
+			const idInput = document.getElementById("join-by-id-room-id") as HTMLInputElement | null;
+			const passInput = document.getElementById("join-by-id-password") as HTMLInputElement | null;
+			const inviteInput = document.getElementById("join-invite-code-input") as HTMLInputElement | null;
+			const err1 = document.getElementById("join-by-id-error");
+			const err2 = document.getElementById("join-by-invite-error");
+			if (idInput) idInput.value = "";
+			if (passInput) passInput.value = "";
+			if (inviteInput) inviteInput.value = "";
+			if (err1) err1.textContent = "";
+			if (err2) err2.textContent = "";
+
+			idInput?.focus();
 			this.refreshIcons();
 		});
 
 		const closeJoinByIdModal = () => {
 			document.getElementById("modal-join-by-id")?.classList.add("hidden");
-			const err = document.getElementById("join-by-id-error");
-			if (err) err.textContent = "";
+			const idInput = document.getElementById("join-by-id-room-id") as HTMLInputElement | null;
+			const passInput = document.getElementById("join-by-id-password") as HTMLInputElement | null;
+			const inviteInput = document.getElementById("join-invite-code-input") as HTMLInputElement | null;
+			const err1 = document.getElementById("join-by-id-error");
+			const err2 = document.getElementById("join-by-invite-error");
+			if (idInput) idInput.value = "";
+			if (passInput) passInput.value = "";
+			if (inviteInput) inviteInput.value = "";
+			if (err1) err1.textContent = "";
+			if (err2) err2.textContent = "";
 		};
 		document.getElementById("btn-close-join-by-id")?.addEventListener("click", closeJoinByIdModal);
 		document.getElementById("btn-cancel-join-by-id")?.addEventListener("click", closeJoinByIdModal);
@@ -772,7 +828,9 @@ class ShiroApp {
 		// Fechar/Cancelar modal de senha para entrar
 		const closeJoinModal = () => {
 			document.getElementById("modal-join-room-password")?.classList.add("hidden");
+			const passInput = document.getElementById("join-room-password") as HTMLInputElement | null;
 			const err = document.getElementById("join-room-error");
+			if (passInput) passInput.value = "";
 			if (err) err.textContent = "";
 			this.targetJoinRoomId = null;
 		};
@@ -1144,7 +1202,11 @@ class ShiroApp {
 					if (titleEl) titleEl.textContent = `${targetRoom.name} (${targetRoom.roomId})`;
 					const modal = document.getElementById("modal-join-room-password");
 					if (modal) modal.classList.remove("hidden");
-					(document.getElementById("join-room-password") as HTMLInputElement)?.focus();
+					const passInput = document.getElementById("join-room-password") as HTMLInputElement | null;
+					if (passInput) passInput.value = "";
+					const errorEl = document.getElementById("join-room-error");
+					if (errorEl) errorEl.textContent = "";
+					passInput?.focus();
 					this.refreshIcons();
 				} else {
 					const res = await joinRoom(targetRoom.roomId);
