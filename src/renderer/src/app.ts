@@ -5,6 +5,7 @@ import {
 	Bell,
 	BellOff,
 	Camera,
+	Cat,
 	Check,
 	CheckCircle2,
 	ChevronLeft,
@@ -12,6 +13,7 @@ import {
 	Clock,
 	Copy,
 	createIcons,
+	ExternalLink,
 	Eye,
 	EyeOff,
 	CheckCheck,
@@ -561,6 +563,7 @@ class ShiroApp {
 
 		setupWindowControls();
 		this.setupThemeToggle();
+		this.setupShiroPromo();
 		this.setupProfileSettings();
 		this.setupMiniProfilePopover();
 		this.setupPanelTabs();
@@ -2206,6 +2209,14 @@ class ShiroApp {
 		btnDismiss?.addEventListener("click", () => {
 			if (toast) toast.classList.add("hidden");
 		});
+	}
+
+	private setupShiroPromo(): void {
+		const openSite = () => {
+			window.api?.openExternal?.("https://shirobot.xyz");
+		};
+		document.getElementById("btn-shiro-promo")?.addEventListener("click", openSite);
+		document.getElementById("btn-shiro-promo-visit")?.addEventListener("click", openSite);
 	}
 
 	private setupThemeToggle(): void {
@@ -4123,7 +4134,7 @@ class ShiroApp {
 					ChevronLeft, ChevronRight, Check, Copy, RotateCw, Sparkles, Globe,
 					UserCog, BadgeCheck, Camera, Image, Trash2, Clock,
 					UserCheck, UserPlus, Bell, BellOff, LogIn, KeyRound, Hash, CheckCheck,
-					Megaphone, AlertTriangle, Send, Info,
+					Megaphone, AlertTriangle, Send, Info, Cat, ExternalLink,
 				},
 			});
 		} catch (err) {

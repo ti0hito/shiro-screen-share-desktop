@@ -25,6 +25,10 @@ const api: ElectronAPI = {
 		return ipcRenderer.invoke("api-request", opts);
 	},
 
+	openExternal: (url: string): Promise<boolean> => {
+		return ipcRenderer.invoke("open-external", url);
+	},
+
 	getResourcesPath: (): Promise<string> => {
 		return ipcRenderer.invoke("get-resources-path");
 	},

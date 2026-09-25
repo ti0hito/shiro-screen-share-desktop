@@ -1,6 +1,6 @@
 import http from "node:http";
 import https from "node:https";
-import { app, type BrowserWindow, ipcMain, nativeImage } from "electron";
+import { app, type BrowserWindow, ipcMain, nativeImage, shell } from "electron";
 import type { AudioCaptureConfig } from "../types/capture";
 import type { ApiRequestOptions, ApiRequestResult } from "../types/ipc";
 import type { AudioCaptureEngine } from "./audioEngine";
@@ -190,7 +190,7 @@ export function setupIpcHandlers(
 		audioEngine.stopCapture();
 	});
 
-const DEFAULT_API_URL = "https://shiro-screenshare-desktop-api.vercel.app";
+const DEFAULT_API_URL = "https://share.shirobot.xyz";
 const DEFAULT_API_KEY = "c7c14f354ac71f78695a5529064e681d8588224515366760ed76815618d9afbb";
 
 	/**
@@ -207,6 +207,23 @@ const DEFAULT_API_KEY = "c7c14f354ac71f78695a5529064e681d8588224515366760ed76815
 			return makeSecureRequest(baseUrl, apiKey, opts);
 		},
 	);
+
+	// Abre links externos no navegador padrão (apenas domínios permitidos)
+	ipcMain.handle("open-external", async (_event, rawUrl: string) => {
+		try {
+			const url = new URL(rawUrl);
+			const allowed = url.protocol === "https:" && (url.hostname === "shirobot.xyz" || url.hostname.endsWith(".shirobot.xyz"));
+			if (!allowed) {
+				console.warn(`[IPC] open-external bloqueado: ${rawUrl}`);
+				return false;
+			}
+			await shell.openExternal(url.toString());
+			return true;
+		} catch (err: any) {
+			console.error("[IPC] open-external error:", err.message);
+			return false;
+		}
+	});
 
 	// Get resources path
 	ipcMain.handle("get-resources-path", () => {

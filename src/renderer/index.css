@@ -674,6 +674,142 @@ svg {
   margin-right: 2px;
 }
 
+/* ── Divulgação da Shiro Bot (ícone de gatinho no header) ── */
+.shiro-promo {
+  position: relative;
+  -webkit-app-region: no-drag;
+}
+
+.shiro-promo-btn {
+  border-radius: var(--radius-sm);
+}
+
+.shiro-promo-btn svg {
+  transition: transform 0.2s ease, color 0.2s ease;
+}
+
+.shiro-promo:hover .shiro-promo-btn,
+.shiro-promo:focus-within .shiro-promo-btn {
+  color: var(--text-main);
+  background-color: rgba(128, 128, 128, 0.15);
+}
+
+.shiro-promo:hover .shiro-promo-btn svg,
+.shiro-promo:focus-within .shiro-promo-btn svg {
+  color: #a78bfa;
+  transform: rotate(-10deg) scale(1.1);
+}
+
+/* padding-top funciona como "ponte" para o mouse chegar ao menu sem fechá-lo */
+.shiro-promo-menu {
+  position: absolute;
+  top: 100%;
+  right: -8px;
+  padding-top: 6px;
+  width: 280px;
+  z-index: 1300;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-6px) scale(0.97);
+  transform-origin: top right;
+  transition: opacity 0.18s ease, transform 0.18s cubic-bezier(0.16, 1, 0.3, 1), visibility 0s linear 0.18s;
+  transition-delay: 0.12s;
+}
+
+.shiro-promo:hover .shiro-promo-menu,
+.shiro-promo:focus-within .shiro-promo-menu {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0) scale(1);
+  transition: opacity 0.18s ease, transform 0.18s cubic-bezier(0.16, 1, 0.3, 1), visibility 0s;
+}
+
+.shiro-promo-card {
+  background: var(--bg-panel);
+  border: 1px solid rgba(124, 58, 237, 0.35);
+  border-radius: var(--radius-lg);
+  padding: 14px;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.45), 0 0 22px rgba(124, 58, 237, 0.18);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.shiro-promo-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.shiro-promo-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent-purple), #4c1d95);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.shiro-promo-avatar svg {
+  width: 20px;
+  height: 20px;
+}
+
+.shiro-promo-heading {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.shiro-promo-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-heading);
+}
+
+.shiro-promo-subtitle {
+  font-size: 11px;
+  color: var(--accent-purple);
+}
+
+.shiro-promo-text {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.shiro-promo-visit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--accent-purple);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 2px 8px var(--accent-glow);
+  transition: filter 0.15s ease, transform 0.15s ease;
+}
+
+.shiro-promo-visit:hover {
+  filter: brightness(1.12);
+  transform: translateY(-1px);
+}
+
+.shiro-promo-visit svg {
+  width: 13px;
+  height: 13px;
+}
+
 /* ══════════════════════════════════════════════════════════
    MAIN LAYOUT — Left Panel + Right Section
    ══════════════════════════════════════════════════════════ */

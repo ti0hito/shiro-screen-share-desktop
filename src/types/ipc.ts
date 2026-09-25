@@ -35,6 +35,8 @@ export interface ElectronAPI {
 	stopAudioCapture: () => Promise<void>;
 	/** Rota segura: API Key é injetada pelo processo main, nunca exposta ao renderer */
 	apiRequest: (opts: ApiRequestOptions) => Promise<ApiRequestResult>;
+	/** Abre URL no navegador padrão (somente domínios shirobot.xyz) */
+	openExternal: (url: string) => Promise<boolean>;
 	getResourcesPath: () => Promise<string>;
 	getAppSettings: () => Promise<AppSettings>;
 	setOpenAtLogin: (enabled: boolean) => Promise<boolean>;
