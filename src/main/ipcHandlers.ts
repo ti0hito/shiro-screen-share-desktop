@@ -1,10 +1,15 @@
 import http from "node:http";
 import https from "node:https";
-import { app, type BrowserWindow, ipcMain, nativeImage } from "electron";
+import { app, type BrowserWindow, ipcMain, nativeImage, shell } from "electron";
 import type { AudioCaptureConfig } from "../types/capture";
 import type { ApiRequestOptions, ApiRequestResult } from "../types/ipc";
 import type { AudioCaptureEngine } from "./audioEngine";
-import { isAutoUpdateEnabled, setAutoUpdateEnabled } from "./main";
+import {
+	isAutoUpdateEnabled,
+	setAutoUpdateEnabled,
+	installUpdateNow,
+	checkForUpdatesNow,
+} from "./main";
 import { scanSources } from "./windowScanner";
 import {
 	broadcastState,
@@ -13,12 +18,19 @@ import {
 	respondToSourceRequest,
 	broadcastAudioMode,
 	respondToAudioRequest,
+	hasStreamDeckClients,
 } from "./websocketServer";
 
 // SSE bridge: guarda a requisição HTTP ativa para poder cancelar e reconectar
 let activeSseRequest: http.ClientRequest | null = null;
 let currentSseUserToken: string | null = null;
 let sseReconnectTimer: NodeJS.Timeout | null = null;
+
+// Agents com keep-alive: reaproveitam a conexão TLS entre requisições em vez de
+// abrir um handshake novo a cada chamada. Sockets ociosos são fechados após 20s.
+const keepAliveOptions = { keepAlive: true, keepAliveMsecs: 10_000, maxSockets: 6, maxFreeSockets: 2, timeout: 20_000 };
+const httpsAgent = new https.Agent(keepAliveOptions);
+const httpAgent = new http.Agent(keepAliveOptions);
 
 
 type SourceEntry = {
@@ -61,7 +73,6 @@ function makeSecureRequest(
 			const headers: Record<string, string | number> = {
 				"Content-Type": "application/json",
 				"X-API-Key": apiKey,
-				"Connection": "close",
 			};
 
 			if (opts.token) {
@@ -74,10 +85,11 @@ function makeSecureRequest(
 
 			const isHttps = url.protocol === "https:";
 			const client = isHttps ? https : http;
+			const agent = isHttps ? httpsAgent : httpAgent;
 
 			const req = client.request(
 				url,
-				{ method, headers, timeout: 15000, agent: false },
+				{ method, headers, timeout: 15000, agent },
 				(res) => {
 					let data = "";
 					res.on("data", (chunk) => (data += chunk));
@@ -142,6 +154,14 @@ export function setupIpcHandlers(
 		return enabled;
 	});
 
+	ipcMain.handle("install-update", () => {
+		installUpdateNow();
+	});
+
+	ipcMain.handle("check-for-updates", async () => {
+		return await checkForUpdatesNow();
+	});
+
 	// Get available window & screen sources with PID resolution
 	ipcMain.handle("get-available-sources", async () => {
 		try {
@@ -177,7 +197,7 @@ export function setupIpcHandlers(
 		audioEngine.stopCapture();
 	});
 
-const DEFAULT_API_URL = "https://shiro-screenshare-desktop-api.vercel.app";
+const DEFAULT_API_URL = "https://share.shirobot.xyz";
 const DEFAULT_API_KEY = "c7c14f354ac71f78695a5529064e681d8588224515366760ed76815618d9afbb";
 
 	/**
@@ -190,10 +210,27 @@ const DEFAULT_API_KEY = "c7c14f354ac71f78695a5529064e681d8588224515366760ed76815
 			const baseUrl = process.env.SHIRO_API_URL || DEFAULT_API_URL;
 			const apiKey = process.env.SHIRO_API_KEY || DEFAULT_API_KEY;
 
-			console.log(`[IPC] api-request → ${opts.method ?? "GET"} ${opts.endpoint}`);
+			console.log(`[IPC] api-request -> ${opts.method ?? "GET"} ${opts.endpoint}`);
 			return makeSecureRequest(baseUrl, apiKey, opts);
 		},
 	);
+
+	// Abre links externos no navegador padrão (apenas domínios permitidos)
+	ipcMain.handle("open-external", async (_event, rawUrl: string) => {
+		try {
+			const url = new URL(rawUrl);
+			const allowed = url.protocol === "https:" && (url.hostname === "shirobot.xyz" || url.hostname.endsWith(".shirobot.xyz"));
+			if (!allowed) {
+				console.warn(`[IPC] open-external bloqueado: ${rawUrl}`);
+				return false;
+			}
+			await shell.openExternal(url.toString());
+			return true;
+		} catch (err: any) {
+			console.error("[IPC] open-external error:", err.message);
+			return false;
+		}
+	});
 
 	// Get resources path
 	ipcMain.handle("get-resources-path", () => {
@@ -219,10 +256,12 @@ const DEFAULT_API_KEY = "c7c14f354ac71f78695a5529064e681d8588224515366760ed76815
 	// Stream Deck bridge: renderer reports its screen-share state
 	ipcMain.on("streamdeck-state-report", (_event, isSharing: boolean) => {
 		broadcastState({ isSharing });
+		respondToStateRequest({ isSharing });
 	});
 
 	// Stream Deck bridge: renderer responds to state query
 	ipcMain.on("streamdeck-state-response", (_event, isSharing: boolean) => {
+		broadcastState({ isSharing });
 		respondToStateRequest({ isSharing });
 	});
 
@@ -240,7 +279,10 @@ const DEFAULT_API_KEY = "c7c14f354ac71f78695a5529064e681d8588224515366760ed76815
 			}>,
 			selectedIndex: number,
 		) => {
-			respondToSourceRequest(resizeThumbnails(sources), selectedIndex);
+			if (!hasStreamDeckClients()) return;
+			const resized = resizeThumbnails(sources);
+			broadcastSources(resized, selectedIndex);
+			respondToSourceRequest(resized, selectedIndex);
 		},
 	);
 
@@ -258,7 +300,10 @@ const DEFAULT_API_KEY = "c7c14f354ac71f78695a5529064e681d8588224515366760ed76815
 			}>,
 			selectedIndex: number,
 		) => {
-			broadcastSources(resizeThumbnails(sources), selectedIndex);
+			if (!hasStreamDeckClients()) return;
+			const resized = resizeThumbnails(sources);
+			broadcastSources(resized, selectedIndex);
+			respondToSourceRequest(resized, selectedIndex);
 		},
 	);
 
@@ -266,6 +311,7 @@ const DEFAULT_API_KEY = "c7c14f354ac71f78695a5529064e681d8588224515366760ed76815
 	ipcMain.on(
 		"streamdeck-audio-mode-response",
 		(_event, mode: "process" | "system" | "disabled") => {
+			broadcastAudioMode(mode);
 			respondToAudioRequest(mode);
 		},
 	);
@@ -275,6 +321,7 @@ const DEFAULT_API_KEY = "c7c14f354ac71f78695a5529064e681d8588224515366760ed76815
 		"streamdeck-audio-mode-report",
 		(_event, mode: "process" | "system" | "disabled") => {
 			broadcastAudioMode(mode);
+			respondToAudioRequest(mode);
 		},
 	);
 
@@ -302,19 +349,19 @@ const DEFAULT_API_KEY = "c7c14f354ac71f78695a5529064e681d8588224515366760ed76815
 		try {
 			sseUrl = new URL(`/api/signal/sse?token=${encodedToken}`, baseUrl);
 		} catch (err) {
-			console.error("[SSE] URL inválida:", err);
+			console.error("[SSE] URL invalida:", err);
 			return;
 		}
 
 		const isHttps = sseUrl.protocol === "https:";
 		const client = isHttps ? https : http;
 
-		console.log(`[SSE] Abrindo conexão para ${sseUrl.origin}/api/signal/sse`);
+		console.log(`[SSE] Abrindo conexao para ${sseUrl.origin}/api/signal/sse`);
 
 		const scheduleReconnect = () => {
 			if (!currentSseUserToken || currentSseUserToken !== userToken || window.isDestroyed()) return;
 			if (sseReconnectTimer) return;
-			console.log("[SSE] Reconexão agendada em 1.5s...");
+			console.log("[SSE] Reconexao agendada em 1.5s...");
 			sseReconnectTimer = setTimeout(() => {
 				sseReconnectTimer = null;
 				if (currentSseUserToken === userToken && !window.isDestroyed()) {
@@ -341,7 +388,7 @@ const DEFAULT_API_KEY = "c7c14f354ac71f78695a5529064e681d8588224515366760ed76815
 				return;
 			}
 
-			console.log("[SSE] Conexão SSE estabelecida com sucesso.");
+			console.log("[SSE] Conexao SSE estabelecida com sucesso.");
 			let buffer = "";
 
 			res.setEncoding("utf8");
@@ -380,7 +427,7 @@ const DEFAULT_API_KEY = "c7c14f354ac71f78695a5529064e681d8588224515366760ed76815
 			});
 
 			res.on("end", () => {
-				console.log("[SSE] Conexão finalizada pelo servidor/timeout.");
+				console.log("[SSE] Conexao finalizada pelo servidor/timeout.");
 				if (!window.isDestroyed()) {
 					window.webContents.send("sse-closed");
 				}
@@ -394,7 +441,7 @@ const DEFAULT_API_KEY = "c7c14f354ac71f78695a5529064e681d8588224515366760ed76815
 		});
 
 		req.on("error", (err) => {
-			console.error("[SSE] Erro na requisição:", err.message);
+			console.error("[SSE] Erro na requisicao:", err.message);
 			if (!window.isDestroyed()) {
 				window.webContents.send("sse-error", err.message);
 			}
@@ -421,7 +468,7 @@ const DEFAULT_API_KEY = "c7c14f354ac71f78695a5529064e681d8588224515366760ed76815
 				activeSseRequest.destroy();
 			} catch {}
 			activeSseRequest = null;
-			console.log("[SSE] Conexão encerrada pelo renderer.");
+			console.log("[SSE] Conexao encerrada pelo renderer.");
 		}
 	});
 }

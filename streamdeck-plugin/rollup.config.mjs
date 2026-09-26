@@ -9,7 +9,6 @@ export default {
 		format: "cjs",
 		sourcemap: false,
 	},
-	external: ["sharp"],
 	plugins: [
 		typescript({ tsconfig: "./tsconfig.json" }),
 		resolve({ preferBuiltins: true }),

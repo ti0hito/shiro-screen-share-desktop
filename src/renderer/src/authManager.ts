@@ -15,10 +15,25 @@ const REMEMBER_TIME = "shiro_remember_time";
 const REMEMBER_USERNAME = "shiro_remember_username";
 const FOURTEEN_DAYS_MS = 14 * 24 * 60 * 60 * 1000; // 14 dias
 
+/** Insígnias de perfil (definidas e concedidas pela API — ver lib/badges.ts no servidor) */
+export type BadgeId = "developer" | "early-user" | "beta-tester" | "stream-24-7" | "builder" | "neighbor";
+
+/** Última contagem das estatísticas das insígnias (não é em tempo real) */
+export interface BadgeStats {
+	streamSeconds: number;
+	roomsCreated: number;
+	friendsCount: number;
+}
+
 export interface ShiroUser {
 	id: string;
 	username: string;
+	nickname?: string;
+	avatar?: string;
+	banner?: string;
 	createdAt: string;
+	badges?: BadgeId[];
+	badgeStats?: BadgeStats;
 }
 
 export interface AuthResult {
@@ -46,6 +61,18 @@ export function getUser(): ShiroUser | null {
 		return JSON.parse(raw) as ShiroUser;
 	} catch {
 		return null;
+	}
+}
+
+/** Atualiza a sessão local com novos dados do usuário */
+export function updateUserSession(user: ShiroUser): void {
+	sessionStorage.setItem(USER_KEY, JSON.stringify(user));
+	const rememberMe = localStorage.getItem(REMEMBER_KEY) === "true";
+	if (rememberMe) {
+		localStorage.setItem(REMEMBER_USER, JSON.stringify(user));
+		if (user.username) {
+			localStorage.setItem(REMEMBER_USERNAME, user.username);
+		}
 	}
 }
 
@@ -173,10 +200,10 @@ export async function login(username: string, password: string): Promise<AuthRes
 	return { ok: true, user: data.user };
 }
 
-/** Busca lista de usuários online */
-export async function getOnlineUsers(): Promise<ShiroUser[]> {
+/** Busca lista de usuários online. Retorna null se a requisição falhar. */
+export async function getOnlineUsers(): Promise<ShiroUser[] | null> {
 	const token = getToken();
-	if (!token || !window.api?.apiRequest) return [];
+	if (!token || !window.api?.apiRequest) return null;
 
 	const result = await window.api.apiRequest({
 		endpoint: "/api/users/online",
@@ -184,20 +211,94 @@ export async function getOnlineUsers(): Promise<ShiroUser[]> {
 		token,
 	});
 
-	if (!result.ok) return [];
+	if (!result.ok) return null;
 	return (result.data as any).users ?? [];
 }
 
 /** Envia heartbeat para manter usuário como "online" (chama a cada 60s) */
-export async function sendHeartbeat(): Promise<void> {
+export async function sendHeartbeat(): Promise<boolean> {
 	const token = getToken();
-	if (!token || !window.api?.apiRequest) return;
+	if (!token || !window.api?.apiRequest) return false;
 
-	await window.api.apiRequest({
+	const result = await window.api.apiRequest({
 		endpoint: "/api/users/heartbeat",
 		method: "POST",
 		token,
 	});
+	return result.ok;
+}
+
+// ══════════════════════════════════════════
+//  PROFILE API (Apelido & Foto de Perfil)
+// ══════════════════════════════════════════
+
+export interface ProfileResponse {
+	ok: boolean;
+	error?: string;
+	user?: ShiroUser;
+	remainingNicknameChanges?: number;
+	maxNicknameChangesPerHour?: number;
+}
+
+/** Obtém os dados de perfil e limites de troca */
+export async function getProfile(): Promise<ProfileResponse> {
+	const token = getToken();
+	if (!token || !window.api?.apiRequest) return { ok: false, error: "Não autenticado." };
+
+	const result = await window.api.apiRequest({
+		endpoint: "/api/users/profile",
+		method: "GET",
+		token,
+	});
+
+	if (!result.ok) {
+		const data = result.data as any;
+		return { ok: false, error: data?.error ?? "Erro ao carregar perfil." };
+	}
+
+	const data = result.data as any;
+	if (data.user) {
+		updateUserSession(data.user);
+	}
+	return {
+		ok: true,
+		user: data.user,
+		remainingNicknameChanges: data.remainingNicknameChanges,
+		maxNicknameChangesPerHour: data.maxNicknameChangesPerHour,
+	};
+}
+
+/** Atualiza apelido e/ou foto/banner de perfil */
+export async function updateProfile(body: {
+	nickname?: string;
+	avatar?: string;
+	banner?: string;
+}): Promise<ProfileResponse> {
+	const token = getToken();
+	if (!token || !window.api?.apiRequest) return { ok: false, error: "Não autenticado." };
+
+	const result = await window.api.apiRequest({
+		endpoint: "/api/users/profile",
+		method: "PATCH",
+		token,
+		body,
+	});
+
+	if (!result.ok) {
+		const data = result.data as any;
+		return { ok: false, error: data?.error ?? `Erro ${result.status}` };
+	}
+
+	const data = result.data as any;
+	if (data.user) {
+		updateUserSession(data.user);
+	}
+	return {
+		ok: true,
+		user: data.user,
+		remainingNicknameChanges: data.remainingNicknameChanges,
+		maxNicknameChangesPerHour: data.maxNicknameChangesPerHour,
+	};
 }
 
 // ══════════════════════════════════════════
@@ -217,14 +318,18 @@ export interface RoomInfo {
 	name: string;
 	isPrivate: boolean;
 	createdBy: string;
+	ownerId?: string;
+	inviteCode?: string;
+	maxMembers?: number;
 	membersCount: number;
+	members?: string[];
 	activeStreams: ActiveStreamInfo[];
 	createdAt?: string;
 }
 
-export async function getRooms(): Promise<RoomInfo[]> {
+export async function getRooms(): Promise<{ ok: boolean; rooms: RoomInfo[] }> {
 	const token = getToken();
-	if (!token || !window.api?.apiRequest) return [];
+	if (!token || !window.api?.apiRequest) return { ok: false, rooms: [] };
 
 	const result = await window.api.apiRequest({
 		endpoint: "/api/rooms/list",
@@ -232,14 +337,33 @@ export async function getRooms(): Promise<RoomInfo[]> {
 		token,
 	});
 
-	if (!result.ok) return [];
-	return (result.data as any).rooms ?? [];
+	if (!result.ok) return { ok: false, rooms: [] };
+	return { ok: true, rooms: (result.data as any).rooms ?? [] };
+}
+
+/**
+ * Transmissões ativas de uma sala (consulta leve, feita com frequência enquanto o usuário está na sala).
+ * Retorna null se a requisição falhar.
+ */
+export async function getRoomStreams(roomId: string): Promise<ActiveStreamInfo[] | null> {
+	const token = getToken();
+	if (!token || !window.api?.apiRequest) return null;
+
+	const result = await window.api.apiRequest({
+		endpoint: `/api/rooms/streams/${encodeURIComponent(roomId)}`,
+		method: "GET",
+		token,
+	});
+
+	if (!result.ok) return null;
+	return (result.data as any).activeStreams ?? [];
 }
 
 export async function createRoom(data: {
 	name: string;
 	roomId?: string;
 	password?: string;
+	maxMembers?: number;
 }): Promise<{ ok: boolean; error?: string; room?: RoomInfo }> {
 	const token = getToken();
 	if (!token || !window.api?.apiRequest) return { ok: false, error: "Não autenticado." };
@@ -281,6 +405,102 @@ export async function joinRoom(
 	return { ok: true, room: (result.data as any).room };
 }
 
+export async function joinRoomByInvite(
+	inviteCode: string,
+): Promise<{ ok: boolean; error?: string; room?: RoomInfo }> {
+	const token = getToken();
+	if (!token || !window.api?.apiRequest) return { ok: false, error: "Não autenticado." };
+
+	const result = await window.api.apiRequest({
+		endpoint: "/api/rooms/join-by-invite",
+		method: "POST",
+		token,
+		body: { inviteCode },
+	});
+
+	if (!result.ok) {
+		const resData = result.data as any;
+		return { ok: false, error: resData?.error ?? `Erro ${result.status}` };
+	}
+
+	return { ok: true, room: (result.data as any).room };
+}
+
+export async function updateRoomSettings(
+	roomId: string,
+	data: {
+		name?: string;
+		password?: string | null;
+		maxMembers?: number;
+		regenerateInviteCode?: boolean;
+	},
+): Promise<{ ok: boolean; error?: string; room?: RoomInfo }> {
+	const token = getToken();
+	if (!token || !window.api?.apiRequest) return { ok: false, error: "Não autenticado." };
+
+	const result = await window.api.apiRequest({
+		endpoint: `/api/rooms/settings/${encodeURIComponent(roomId)}`,
+		method: "PATCH",
+		token,
+		body: data,
+	});
+
+	if (!result.ok) {
+		const resData = result.data as any;
+		return { ok: false, error: resData?.error ?? `Erro ${result.status}` };
+	}
+
+	return { ok: true, room: (result.data as any).room };
+}
+
+export async function kickUserFromRoom(
+	roomId: string,
+	targetUsername: string,
+	targetUserId?: string,
+): Promise<{ ok: boolean; error?: string }> {
+	const token = getToken();
+	if (!token || !window.api?.apiRequest) return { ok: false, error: "Não autenticado." };
+
+	const result = await window.api.apiRequest({
+		endpoint: `/api/rooms/kick/${encodeURIComponent(roomId)}`,
+		method: "POST",
+		token,
+		body: { targetUsername, targetUserId },
+	});
+
+	if (!result.ok) {
+		const resData = result.data as any;
+		return { ok: false, error: resData?.error ?? `Erro ${result.status}` };
+	}
+
+	return { ok: true };
+}
+
+/** Concede ou remove uma insígnia manual (ex.: Beta Tester). Somente desenvolvedores (validado na API). */
+export async function setUserBadge(
+	targetUserId: string,
+	badge: BadgeId,
+	grant: boolean,
+): Promise<{ ok: boolean; error?: string; badges?: BadgeId[]; badgeStats?: BadgeStats }> {
+	const token = getToken();
+	if (!token || !window.api?.apiRequest) return { ok: false, error: "Não autenticado." };
+
+	const result = await window.api.apiRequest({
+		endpoint: "/api/users/badges",
+		method: "POST",
+		token,
+		body: { targetUserId, badge, grant },
+	});
+
+	const data = result.data as any;
+	if (result.status === 404) {
+		// Servidor ainda sem a rota de insígnias (API desatualizada)
+		return { ok: false, error: "O servidor ainda não suporta insígnias. Atualize a API e tente novamente." };
+	}
+	if (!result.ok) return { ok: false, error: data?.error ?? `Erro ${result.status}` };
+	return { ok: true, badges: data.badges ?? [], badgeStats: data.badgeStats };
+}
+
 export async function leaveRoom(roomId: string): Promise<void> {
 	const token = getToken();
 	if (!token || !window.api?.apiRequest) return;
@@ -309,3 +529,157 @@ export async function notifyRoomStream(
 	});
 }
 
+// ══════════════════════════════════════════
+//  FRIENDS & INVITES API
+// ══════════════════════════════════════════
+
+export interface FriendInfo {
+	id: string;
+	username: string;
+	nickname?: string;
+	avatar?: string;
+	banner?: string;
+	badges?: BadgeId[];
+	badgeStats?: BadgeStats;
+	isOnline: boolean;
+	lastSeen?: string;
+	currentRoom?: { roomId: string; name: string } | null;
+}
+
+export interface FriendRequest {
+	fromUserId: string;
+	fromUsername: string;
+	sentAt: string;
+}
+
+export interface RoomInvite {
+	id: string;
+	fromUserId: string;
+	fromUsername: string;
+	fromNickname?: string;
+	fromAvatar?: string;
+	roomId: string;
+	roomName: string;
+	inviteCode: string;
+	sentAt: string;
+}
+
+export interface FriendsResponse {
+	ok: boolean;
+	friends: FriendInfo[];
+	friendRequests: FriendRequest[];
+	roomInvites: RoomInvite[];
+}
+
+export async function getFriends(): Promise<FriendsResponse> {
+	const token = getToken();
+	if (!token || !window.api?.apiRequest) {
+		return { ok: false, friends: [], friendRequests: [], roomInvites: [] };
+	}
+
+	const result = await window.api.apiRequest({
+		endpoint: "/api/friends/list",
+		method: "GET",
+		token,
+	});
+
+	if (!result.ok) {
+		return { ok: false, friends: [], friendRequests: [], roomInvites: [] };
+	}
+
+	const data = result.data as any;
+	return {
+		ok: true,
+		friends: data.friends ?? [],
+		friendRequests: data.friendRequests ?? [],
+		roomInvites: data.roomInvites ?? [],
+	};
+}
+
+export async function sendFriendRequest(target: string): Promise<{ ok: boolean; error?: string; message?: string }> {
+	const token = getToken();
+	if (!token || !window.api?.apiRequest) return { ok: false, error: "Não autenticado." };
+
+	const result = await window.api.apiRequest({
+		endpoint: "/api/friends/request",
+		method: "POST",
+		token,
+		body: { target },
+	});
+
+	const data = result.data as any;
+	if (!result.ok) {
+		return { ok: false, error: data?.error ?? `Erro ${result.status}` };
+	}
+
+	return { ok: true, message: data?.message };
+}
+
+export async function acceptFriendRequest(fromUserId: string): Promise<{ ok: boolean; error?: string }> {
+	const token = getToken();
+	if (!token || !window.api?.apiRequest) return { ok: false, error: "Não autenticado." };
+
+	const result = await window.api.apiRequest({
+		endpoint: "/api/friends/accept",
+		method: "POST",
+		token,
+		body: { fromUserId },
+	});
+
+	const data = result.data as any;
+	if (!result.ok) {
+		return { ok: false, error: data?.error ?? `Erro ${result.status}` };
+	}
+
+	return { ok: true };
+}
+
+export async function rejectFriend(fromUserId: string): Promise<{ ok: boolean; error?: string }> {
+	const token = getToken();
+	if (!token || !window.api?.apiRequest) return { ok: false, error: "Não autenticado." };
+
+	const result = await window.api.apiRequest({
+		endpoint: "/api/friends/reject",
+		method: "POST",
+		token,
+		body: { fromUserId },
+	});
+
+	const data = result.data as any;
+	if (!result.ok) {
+		return { ok: false, error: data?.error ?? `Erro ${result.status}` };
+	}
+
+	return { ok: true };
+}
+
+export async function inviteFriendToRoom(targetUserId: string, roomId: string): Promise<{ ok: boolean; error?: string }> {
+	const token = getToken();
+	if (!token || !window.api?.apiRequest) return { ok: false, error: "Não autenticado." };
+
+	const result = await window.api.apiRequest({
+		endpoint: "/api/friends/invite-to-room",
+		method: "POST",
+		token,
+		body: { targetUserId, roomId },
+	});
+
+	const data = result.data as any;
+	if (!result.ok) {
+		return { ok: false, error: data?.error ?? `Erro ${result.status}` };
+	}
+
+	return { ok: true };
+}
+
+export async function dismissRoomInvite(inviteId: string): Promise<void> {
+	const token = getToken();
+	if (!token || !window.api?.apiRequest) return;
+
+	await window.api.apiRequest({
+		endpoint: "/api/friends/dismiss-invite",
+		method: "POST",
+		token,
+		body: { inviteId },
+	});
+}

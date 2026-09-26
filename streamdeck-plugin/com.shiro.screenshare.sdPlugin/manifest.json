@@ -62,22 +62,6 @@
 			"DisableAutomaticStates": true
 		},
 		{
-			"Icon": "imgs/actions/launch",
-			"Name": "Launch Activity",
-			"States": [
-				{
-					"Image": "imgs/actions/launch",
-					"Title": "GO LIVE",
-					"TitleColor": "#FFFFFF",
-					"ShowTitle": true,
-					"TitleAlignment": "bottom"
-				}
-			],
-			"UUID": "com.shiro.screenshare.launch-activity",
-			"Tooltip": "Open Discord Activity to start sharing",
-			"UserTitleEnabled": false
-		},
-		{
 			"Icon": "imgs/actions/preview",
 			"Name": "Source Preview",
 			"States": [
@@ -127,12 +111,14 @@
 		}
 	],
 	"Author": "Hito",
+	"Category": "Shiro Screen Share",
+	"CategoryIcon": "imgs/category",
 	"CodePath": "bin/plugin.js",
 	"Description": "Control Shiro Screen Share from your Stream Deck. Toggle sharing, switch windows, change audio modes, and see live previews.",
 	"Icon": "imgs/plugin-icon",
 	"Name": "Shiro Screen Share",
 	"Nodejs": {
-		"Version": "24"
+		"Version": "20"
 	},
 	"OS": [
 		{
@@ -151,7 +137,11 @@
 		"MinimumVersion": "6.6"
 	},
 	"ApplicationsToMonitor": {
-		"windows": ["Shiro Screen Share.exe"],
-		"mac": ["com.shiro.screenshare"]
+		"windows": [
+			"Shiro Screen Share.exe"
+		],
+		"mac": [
+			"com.shiro.screenshare"
+		]
 	}
 }

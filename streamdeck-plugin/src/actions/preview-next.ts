@@ -1,4 +1,4 @@
-import streamDeck, {
+import {
 	action,
 	type KeyDownEvent,
 	type WillAppearEvent,
@@ -6,18 +6,7 @@ import streamDeck, {
 } from "@elgato/streamdeck";
 import { getWsClient } from "../ws-client";
 import { previewState } from "../preview-state";
-
-function updateAllButtons(): void {
-	const source = previewState.currentSource;
-	streamDeck.actions.forEach((act: any) => {
-		if (act.manifestId === "com.shiro.screenshare.source-preview") {
-			if (source?.thumbnailUrl) {
-				act.setImage(source.thumbnailUrl);
-			}
-			act.setTitle(source?.name?.substring(0, 12) || "");
-		}
-	});
-}
+import { updateAllPreviewButtons } from "./source-preview";
 
 @action({ UUID: "com.shiro.screenshare.preview-next" })
 export class PreviewNextAction extends SingletonAction {
@@ -34,6 +23,6 @@ export class PreviewNextAction extends SingletonAction {
 		}
 
 		previewState.next();
-		updateAllButtons();
+		updateAllPreviewButtons();
 	}
 }

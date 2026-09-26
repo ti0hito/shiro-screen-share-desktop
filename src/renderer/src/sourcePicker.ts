@@ -43,11 +43,25 @@ export class SourcePicker {
 	}
 
 	public render(): void {
-		this.containerElement.innerHTML = "";
-
 		const filtered = this.sources.filter(
 			(s) => s.sourceType === this.currentFilter,
 		);
+
+		// Mesmas fontes na mesma ordem: atualiza os cards no lugar em vez de recriá-los.
+		// Recriar o DOM a cada atualização (15s) fazia cliques em andamento se perderem.
+		const renderedIds = Array.from(
+			this.containerElement.querySelectorAll<HTMLElement>(".source-card"),
+		).map((c) => c.dataset.sourceId);
+		if (
+			filtered.length > 0 &&
+			renderedIds.length === filtered.length &&
+			filtered.every((s, i) => s.id === renderedIds[i])
+		) {
+			this.updateCardsInPlace(filtered);
+			return;
+		}
+
+		this.containerElement.innerHTML = "";
 
 		if (filtered.length === 0) {
 			const emptyState = document.createElement("div");
@@ -62,6 +76,7 @@ export class SourcePicker {
 
 			const card = document.createElement("div");
 			card.className = `source-card ${isSelected ? "selected" : ""}`;
+			card.dataset.sourceId = src.id;
 
 			const thumbWrapper = document.createElement("div");
 			thumbWrapper.className = "thumbnail-wrapper";
@@ -86,12 +101,31 @@ export class SourcePicker {
 			card.appendChild(infoDiv);
 
 			card.addEventListener("click", () => {
-				this.selectedSource = src;
+				// Busca a versão atual da fonte (os dados são atualizados no lugar a cada varredura)
+				const current = this.sources.find((s) => s.id === card.dataset.sourceId) ?? src;
+				this.selectedSource = current;
 				this.render();
-				this.onSelectCallback(src);
+				this.onSelectCallback(current);
 			});
 
 			this.containerElement.appendChild(card);
 		}
+	}
+
+	private updateCardsInPlace(filtered: WindowSource[]): void {
+		const cards = this.containerElement.querySelectorAll<HTMLElement>(".source-card");
+		filtered.forEach((src, i) => {
+			const card = cards[i];
+			card.classList.toggle("selected", this.selectedSource?.id === src.id);
+
+			const img = card.querySelector<HTMLImageElement>(".source-thumbnail");
+			if (img && img.src !== src.thumbnailUrl) img.src = src.thumbnailUrl;
+
+			const title = card.querySelector<HTMLElement>(".source-title");
+			if (title && title.innerText !== src.name) {
+				title.innerText = src.name;
+				title.title = `${src.name} (${src.processName || "N/A"})`;
+			}
+		});
 	}
 }

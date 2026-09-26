@@ -55,6 +55,9 @@ class StreamDeckWsClient {
 
 		this.ws.on("open", () => {
 			streamDeck.logger.info("Connected to Shiro Screen Share");
+			this.send({ type: "get_state" });
+			this.send({ type: "get_sources" });
+			this.send({ type: "get_audio_mode" });
 		});
 
 		this.ws.on("message", (raw) => {

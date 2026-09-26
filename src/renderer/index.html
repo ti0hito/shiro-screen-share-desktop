@@ -5,58 +5,53 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Shiro Screen Share</title>
-  <meta name="description" content="Compartilhamento de tela P2P seguro e de alta performance.">
-  <link rel="icon" type="image/x-icon" href="icon.ico">
-  <link rel="stylesheet" href="index.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="index.css">
 </head>
 
 <body>
-  <div id="app" class="app-container">
+  <div class="app">
 
-    <!-- ═══════════════════════════════════════════════════════ -->
-    <!-- VIEW: LOGIN — exibida antes da autenticação            -->
-    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- ======================================================= -->
+    <!-- VIEW: LOGIN / REGISTER (exibida antes de autenticar)    -->
+    <!-- ======================================================= -->
     <div id="view-login" class="view view-login">
-      <!-- Drag bar transparente no topo -->
-      <div class="login-drag-bar">
-        <div class="login-drag-bar-controls">
+      <!-- Barra de título da janela de login -->
+      <header class="window-header login-header">
+        <div class="header-title">
+          <img src="icon.ico" class="app-header-icon" alt="Shiro Logo" width="18" height="18">
+          <span class="app-name">Shiro Screen Share</span>
+          <span class="badge badge-ts">P2P</span>
+        </div>
+        <div class="header-right">
           <button id="login-btn-minimize" class="win-btn" title="Minimizar">—</button>
           <button id="login-btn-close" class="win-btn win-close" title="Fechar">✕</button>
         </div>
-      </div>
+      </header>
 
-      <!-- Fundo animado com partículas -->
-      <div class="login-bg">
-        <div class="login-bg-orb orb-1"></div>
-        <div class="login-bg-orb orb-2"></div>
-        <div class="login-bg-orb orb-3"></div>
-      </div>
-
-      <!-- Card de Login/Registro -->
       <div class="login-card">
-        <!-- Logotipo -->
-        <div class="login-logo">
-          <img src="icon.ico" alt="Shiro Logo" width="40" height="40" class="login-logo-img">
-          <div class="login-logo-text">
-            <h1 class="login-app-name">Shiro</h1>
-            <span class="login-app-sub">Screen Share</span>
+        <!-- Logo e Título -->
+        <div class="login-brand">
+          <div class="login-logo-ring">
+            <img src="icon.ico" alt="Shiro" class="login-logo-img" width="48" height="48">
           </div>
+          <h1 class="login-title">Shiro Share</h1>
+          <p class="login-subtitle">Transmissão de tela P2P ultrarrápida</p>
         </div>
 
-        <!-- Abas Login / Registro -->
+        <!-- Abas: Entrar / Criar Conta -->
         <div class="auth-tabs">
-          <button id="tab-login" class="auth-tab active" aria-selected="true">Entrar</button>
-          <button id="tab-register" class="auth-tab" aria-selected="false">Criar Conta</button>
+          <button id="tab-login" class="auth-tab active" type="button">Entrar</button>
+          <button id="tab-register" class="auth-tab" type="button">Criar Conta</button>
           <div class="auth-tab-indicator"></div>
         </div>
 
-        <!-- Formulário de Login -->
-        <form id="form-login" class="auth-form" autocomplete="off">
+        <!-- Formulário: Login -->
+        <form id="form-login" class="auth-form" novalidate>
           <div class="input-group">
-            <label for="login-username" class="input-label">Usuário</label>
+            <label for="login-username" class="input-label">Nome de Usuário</label>
             <div class="input-wrapper">
               <i data-lucide="user" class="input-icon"></i>
               <input
@@ -64,7 +59,7 @@
                 id="login-username"
                 name="username"
                 class="auth-input"
-                placeholder="Seu nome de usuário"
+                placeholder="ex: xzechs"
                 autocomplete="username"
                 maxlength="32"
                 required
@@ -73,7 +68,9 @@
           </div>
 
           <div class="input-group">
-            <label for="login-password" class="input-label">Senha</label>
+            <div class="input-label-row">
+              <label for="login-password" class="input-label">Senha</label>
+            </div>
             <div class="input-wrapper">
               <i data-lucide="lock" class="input-icon"></i>
               <input
@@ -81,22 +78,23 @@
                 id="login-password"
                 name="password"
                 class="auth-input"
-                placeholder="Sua senha"
+                placeholder="••••••••"
                 autocomplete="current-password"
                 maxlength="128"
                 required
               >
-              <button type="button" id="toggle-login-password" class="input-eye" tabindex="-1" title="Mostrar/Ocultar senha">
+              <button type="button" class="btn-toggle-eye" id="toggle-login-password" title="Mostrar/ocultar senha">
                 <i data-lucide="eye" class="eye-icon-show"></i>
                 <i data-lucide="eye-off" class="eye-icon-hide" style="display:none"></i>
               </button>
             </div>
           </div>
 
-          <div class="remember-me-row">
-            <label class="remember-me-label" for="login-remember-me">
-              <input type="checkbox" id="login-remember-me" checked>
-              <span class="remember-me-text">Lembrar login (renova a cada 2 semanas)</span>
+          <div class="login-options-row">
+            <label class="checkbox-label" for="login-remember-me">
+              <input type="checkbox" id="login-remember-me" name="rememberMe" class="custom-checkbox">
+              <span class="checkbox-custom"></span>
+              <span class="checkbox-text">Lembrar login por 2 semanas</span>
             </label>
           </div>
 
@@ -108,10 +106,10 @@
           </button>
         </form>
 
-        <!-- Formulário de Registro -->
-        <form id="form-register" class="auth-form hidden" autocomplete="off">
+        <!-- Formulário: Registro -->
+        <form id="form-register" class="auth-form hidden" novalidate>
           <div class="input-group">
-            <label for="reg-username" class="input-label">Usuário</label>
+            <label for="reg-username" class="input-label">Nome de Usuário</label>
             <div class="input-wrapper">
               <i data-lucide="user" class="input-icon"></i>
               <input
@@ -119,12 +117,13 @@
                 id="reg-username"
                 name="username"
                 class="auth-input"
-                placeholder="Escolha um nome de usuário"
+                placeholder="Entre 3 e 32 caracteres"
                 autocomplete="username"
                 maxlength="32"
                 required
               >
             </div>
+            <span class="input-hint">Apenas letras, números, _ e -</span>
           </div>
 
           <div class="input-group">
@@ -136,12 +135,12 @@
                 id="reg-password"
                 name="password"
                 class="auth-input"
-                placeholder="Crie uma senha forte"
+                placeholder="Mínimo 6 caracteres"
                 autocomplete="new-password"
                 maxlength="128"
                 required
               >
-              <button type="button" id="toggle-reg-password" class="input-eye" tabindex="-1" title="Mostrar/Ocultar senha">
+              <button type="button" class="btn-toggle-eye" id="toggle-reg-password" title="Mostrar/ocultar senha">
                 <i data-lucide="eye" class="eye-icon-show"></i>
                 <i data-lucide="eye-off" class="eye-icon-hide" style="display:none"></i>
               </button>
@@ -177,9 +176,9 @@
       </div>
     </div>
 
-    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- ======================================================= -->
     <!-- VIEW: MAIN — exibida após autenticação                  -->
-    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- ======================================================= -->
     <div id="view-main" class="view view-main hidden">
 
       <!-- Header Principal -->
@@ -188,13 +187,51 @@
           <img src="icon.ico" class="app-header-icon" alt="Shiro Logo" width="18" height="18">
           <span class="app-name">Shiro Screen Share</span>
           <span class="badge badge-ts">P2P</span>
+          <div id="header-room-pill" class="header-room-pill hidden" title="Sala conectada atualmente">
+            <i data-lucide="lock" id="header-room-icon"></i>
+            <span id="header-room-name-text">—</span>
+          </div>
         </div>
         <div class="header-right">
-          <!-- Info do usuário logado -->
-          <div class="header-user-info">
+          <!-- Divulgação da Shiro Bot (hover abre o menu, clique abre o site) -->
+          <div class="shiro-promo" id="shiro-promo">
+            <button type="button" id="btn-shiro-promo" class="win-btn shiro-promo-btn" aria-label="Conheça a Shiro Bot" aria-haspopup="true">
+              <i data-lucide="cat"></i>
+            </button>
+            <div class="shiro-promo-menu" role="menu">
+              <div class="shiro-promo-card">
+                <div class="shiro-promo-header">
+                  <div class="shiro-promo-avatar"><img src="icon.ico" alt="Shiro" width="36" height="36"></div>
+                  <div class="shiro-promo-heading">
+                    <span class="shiro-promo-title">Conheça a Shiro</span>
+                    <span class="shiro-promo-subtitle">shirobot.xyz</span>
+                  </div>
+                </div>
+                <p class="shiro-promo-text">
+                  A Shiro é a bot que dá nome a este app. Descubra os comandos, recursos e novidades no site oficial.
+                </p>
+                <button type="button" id="btn-shiro-promo-visit" class="shiro-promo-visit" role="menuitem">
+                  <span>Visitar shirobot.xyz</span>
+                  <i data-lucide="external-link"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+          <!-- Info do usuário logado (Clicável para Configurar Perfil) -->
+          <div class="header-user-info clickable" id="header-user-info" title="Configurar Perfil (Apelido e Foto)">
             <div class="user-avatar" id="header-user-avatar">S</div>
             <span class="header-username" id="header-username">—</span>
+            <i data-lucide="settings" class="header-user-edit-icon"></i>
           </div>
+          <!-- Tutorial guiado (refazer a qualquer momento) -->
+          <button id="btn-start-tutorial" class="win-btn help-toggle-btn" title="Tutorial: como começar a transmitir">
+            <i data-lucide="circle-help"></i>
+          </button>
+          <!-- Central de Notificações com sino e badge -->
+          <button id="btn-notifications-toggle" class="win-btn notif-toggle-btn" title="Central de Notificações">
+            <i data-lucide="bell"></i>
+            <span id="header-notif-badge" class="header-notif-badge hidden">0</span>
+          </button>
           <!-- Ações do header -->
           <button id="btn-theme-toggle" class="win-btn theme-toggle-btn" title="Alternar Tema">
             <i data-lucide="sun"></i>
@@ -214,19 +251,23 @@
         <!-- ── Painel Esquerdo ── -->
         <aside class="left-panel">
 
-          <!-- Abas: Salas / Fontes / Usuários -->
+          <!-- Abas: Salas / Fontes / Amigos / Usuários -->
           <div class="panel-tabs">
             <button id="panel-tab-rooms" class="panel-tab active" title="Salas de transmissão">
               <i data-lucide="radio"></i>
               <span>Salas</span>
             </button>
-            <div class="panel-tab-wrapper">
-              <button id="panel-tab-sources" class="panel-tab disabled" disabled title="Fontes de captura">
+            <div class="panel-tab-wrapper" data-tooltip="Entre em uma sala para liberar as fontes">
+              <button id="panel-tab-sources" class="panel-tab disabled" disabled>
                 <i data-lucide="monitor"></i>
                 <span>Fontes</span>
               </button>
-              <div class="tab-tooltip">Entre em uma sala para liberar as fontes</div>
             </div>
+            <button id="panel-tab-friends" class="panel-tab" title="Amigos & Convites">
+              <i data-lucide="user-check"></i>
+              <span>Amigos</span>
+              <span id="friends-badge-dot" class="tab-badge-dot hidden"></span>
+            </button>
             <button id="panel-tab-users" class="panel-tab" title="Usuários online">
               <i data-lucide="users"></i>
               <span>Usuários</span>
@@ -238,6 +279,42 @@
 
           <!-- Sub-painel: Salas de Transmissão -->
           <div id="panel-rooms" class="panel-section">
+            <!-- Submenu / Card de Sala Ativa Conectada -->
+            <div id="current-room-banner" class="current-room-banner hidden">
+              <div class="current-room-banner-header">
+                <span id="current-room-type-badge" class="badge badge-private">
+                  <i data-lucide="lock" class="badge-icon"></i>
+                  <span id="current-room-type-text">SALA PRIVADA</span>
+                </span>
+                <div class="current-room-header-btns">
+                  <button id="btn-room-settings" class="btn btn-ghost btn-xs hidden" title="Configurações da Sala (Proprietário)">
+                    <i data-lucide="settings"></i>
+                  </button>
+                  <button id="btn-leave-current-room" class="btn btn-danger-ghost btn-xs" title="Sair desta sala">
+                    <i data-lucide="log-out"></i>
+                    <span>Sair</span>
+                  </button>
+                </div>
+              </div>
+              <div class="current-room-banner-body">
+                <div class="current-room-banner-name" id="current-room-name">—</div>
+                <div class="current-room-banner-id-row">
+                  <span class="current-room-banner-id-label">ID:</span>
+                  <code id="current-room-id-code" class="room-id-code">—</code>
+                  <button id="btn-copy-current-room-id" class="btn-copy-id" title="Copiar ID da sala">
+                    <i data-lucide="copy"></i>
+                  </button>
+                  <button id="btn-copy-invite-code" class="btn-copy-id hidden" title="Copiar Código de Convite Direto">
+                    <i data-lucide="key-round"></i>
+                  </button>
+                </div>
+                <div class="current-room-banner-stats">
+                  <span id="current-room-members-count"><i data-lucide="users"></i> 1 membro(s)</span>
+                  <span id="current-room-streams-count"><i data-lucide="radio"></i> 0 ao vivo</span>
+                </div>
+              </div>
+            </div>
+
             <div class="rooms-panel-header">
               <span class="users-panel-title">Salas públicas</span>
               <div class="rooms-header-actions">
@@ -301,10 +378,43 @@
             </button>
           </div>
 
+          <!-- Sub-painel: Amigos & Convites -->
+          <div id="panel-friends" class="panel-section hidden">
+            <div class="rooms-panel-header">
+              <span class="users-panel-title">Meus Amigos</span>
+              <button id="btn-open-add-friend" class="btn btn-primary btn-sm" title="Adicionar novo amigo">
+                <i data-lucide="user-plus"></i>
+                <span>+ Adicionar</span>
+              </button>
+            </div>
+
+            <!-- Pedidos de amizade pendentes -->
+            <div id="friend-requests-section" class="friend-requests-section hidden">
+              <div class="friend-section-title">
+                <i data-lucide="bell"></i>
+                <span>Pedidos Pendentes (<span id="friend-requests-count">0</span>)</span>
+              </div>
+              <div id="friend-requests-list" class="friend-requests-list"></div>
+            </div>
+
+            <!-- Lista de Amigos -->
+            <div id="friends-list" class="friends-list">
+              <div class="loading-spinner">
+                <i data-lucide="loader-2" class="spin"></i>
+                <span>Carregando amigos...</span>
+              </div>
+            </div>
+
+            <button id="btn-refresh-friends" class="btn btn-ghost btn-sm panel-refresh-btn" title="Atualizar">
+              <i data-lucide="refresh-cw"></i>
+              <span>Atualizar Amigos</span>
+            </button>
+          </div>
+
           <!-- Sub-painel: Usuários online -->
           <div id="panel-users" class="panel-section hidden">
             <div class="users-panel-header">
-              <span class="users-panel-title">Online agora</span>
+              <span class="users-panel-title" id="users-panel-title">Online agora</span>
               <button id="btn-refresh-users" class="btn btn-ghost btn-icon" title="Atualizar lista">
                 <i data-lucide="refresh-cw"></i>
               </button>
@@ -320,7 +430,7 @@
 
         </aside>
 
-        <!-- ── Área Direita: Grid de Transmissões ao Vivo ── -->
+        <!-- ── Área Direita: Transmissões ao Vivo ── -->
         <section class="right-section">
 
           <!-- Botão Flutuante Transparente para reabrir Sidebar em modo colapsado -->
@@ -334,7 +444,7 @@
               <!-- Placeholder padrão quando nenhuma transmissão está em andamento -->
               <div id="main-grid-placeholder" class="main-grid-placeholder">
                 <i data-lucide="radio" class="placeholder-lucide-icon"></i>
-                <h3>Grid de Transmissões ao Vivo</h3>
+                <h3>Transmissões ao Vivo</h3>
                 <p>Nenhuma transmissão ativa nesta sala. Selecione uma fonte ao lado e clique em <b>Iniciar Transmissão</b>!</p>
               </div>
             </div>
@@ -415,55 +525,70 @@
 
               <div class="popover-divider"></div>
 
-              <div class="setting-row setting-toggle-row">
-                <label for="chk-open-at-login"><i data-lucide="power"></i> Iniciar com o Windows</label>
-                <label class="toggle-switch">
-                  <input type="checkbox" id="chk-open-at-login">
-                  <span class="toggle-slider"></span>
+              <div class="setting-row setting-row-checkbox">
+                <label class="checkbox-label" for="chk-open-at-login">
+                  <input type="checkbox" id="chk-open-at-login" class="custom-checkbox">
+                  <span class="checkbox-custom"></span>
+                  <span class="checkbox-text"><i data-lucide="power"></i> Iniciar com o Windows</span>
                 </label>
               </div>
 
-              <div class="setting-row setting-toggle-row">
-                <label for="chk-auto-update"><i data-lucide="refresh-cw"></i> Atualizações Automáticas</label>
-                <label class="toggle-switch">
-                  <input type="checkbox" id="chk-auto-update" checked>
-                  <span class="toggle-slider"></span>
+              <div class="setting-row setting-row-checkbox">
+                <label class="checkbox-label" for="chk-auto-update">
+                  <input type="checkbox" id="chk-auto-update" class="custom-checkbox" checked>
+                  <span class="checkbox-custom"></span>
+                  <span class="checkbox-text"><i data-lucide="refresh-cw"></i> Atualizações Automáticas</span>
                 </label>
               </div>
             </div>
           </div>
 
-          <!-- Popover: Áudio -->
+          <!-- Popover: Modo de Áudio -->
           <div id="audio-popover" class="popover-panel hidden">
             <div class="popover-header">
-              <h4><i data-lucide="volume-2"></i> Modo de Áudio</h4>
+              <h4><i data-lucide="volume-2"></i> Captura de Áudio</h4>
               <button id="btn-close-audio" class="popover-close"><i data-lucide="x"></i></button>
             </div>
             <div class="popover-body">
-              <div class="audio-options">
-                <label class="radio-card active">
+              <div class="audio-modes">
+                <!-- Modo 1: Áudio do Processo Específico -->
+                <label class="radio-card active" data-mode="process">
                   <input type="radio" name="audioMode" value="process" checked>
-                  <div class="radio-content">
-                    <span class="radio-title"><i data-lucide="shield-check"></i> Apenas este App</span>
-                    <span class="radio-desc">Captura só o som do programa selecionado.</span>
+                  <div class="radio-card-content">
+                    <div class="radio-card-header">
+                      <i data-lucide="target" class="radio-icon"></i>
+                      <span class="radio-title">Áudio do Processo</span>
+                    </div>
+                    <p class="radio-desc">Captura exclusivamente o som da janela ou jogo selecionado.</p>
                   </div>
                 </label>
-                <label class="radio-card">
+
+                <!-- Modo 2: Áudio Completo do Sistema -->
+                <label class="radio-card" data-mode="system">
                   <input type="radio" name="audioMode" value="system">
-                  <div class="radio-content">
-                    <span class="radio-title"><i data-lucide="volume-x"></i> Som do Sistema</span>
-                    <span class="radio-desc">Captura todo o áudio de saída.</span>
+                  <div class="radio-card-content">
+                    <div class="radio-card-header">
+                      <i data-lucide="volume-2" class="radio-icon"></i>
+                      <span class="radio-title">Áudio do Sistema</span>
+                    </div>
+                    <p class="radio-desc">Captura todos os sons do Windows (jogos, música, chamadas).</p>
                   </div>
                 </label>
-                <label class="radio-card">
+
+                <!-- Modo 3: Sem Áudio -->
+                <label class="radio-card" data-mode="disabled">
                   <input type="radio" name="audioMode" value="disabled">
-                  <div class="radio-content">
-                    <span class="radio-title"><i data-lucide="mic-off"></i> Sem Áudio</span>
-                    <span class="radio-desc">Apenas vídeo, sem áudio.</span>
+                  <div class="radio-card-content">
+                    <div class="radio-card-header">
+                      <i data-lucide="volume-x" class="radio-icon"></i>
+                      <span class="radio-title">Desativado</span>
+                    </div>
+                    <p class="radio-desc">Transmite somente vídeo, sem capturar áudio.</p>
                   </div>
                 </label>
               </div>
 
+              <!-- VU Meter em tempo real -->
               <div class="vu-meter-container">
                 <div class="vu-header">
                   <span>Nível de Áudio</span>
@@ -480,9 +605,9 @@
 
   </div><!-- /app -->
 
-  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- ======================================================= -->
   <!-- MODAL: CRIAR SALA                                       -->
-  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- ======================================================= -->
   <div id="modal-create-room" class="modal-overlay hidden">
     <div class="modal-card">
       <div class="modal-header">
@@ -490,7 +615,7 @@
         <button id="btn-close-create-room" class="modal-close-btn"><i data-lucide="x"></i></button>
       </div>
 
-      <form id="form-create-room" class="modal-body">
+      <form id="form-create-room" class="modal-body" novalidate>
         <div class="input-group">
           <label for="create-room-name" class="input-label">Nome da Sala *</label>
           <div class="input-wrapper">
@@ -511,7 +636,7 @@
           <label for="create-room-password" class="input-label">Senha de 8 Dígitos (Opcional - Sala Privada)</label>
           <div class="input-wrapper input-with-action">
             <i data-lucide="lock" class="input-icon"></i>
-            <input type="text" id="create-room-password" class="auth-input" placeholder="ex: 12345678" maxlength="8" pattern="\d{8}">
+            <input type="text" id="create-room-password" class="auth-input" placeholder="ex: 12345678" maxlength="8">
             <button type="button" id="btn-generate-password" class="btn btn-ghost btn-sm btn-inline-action" title="Gerar 8 dígitos numéricos aleatórios">
               <i data-lucide="zap"></i>
               <span>Gerar Senha</span>
@@ -532,9 +657,9 @@
     </div>
   </div>
 
-  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- ======================================================= -->
   <!-- MODAL: DIGITAR SENHA DE SALA PRIVADA                   -->
-  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- ======================================================= -->
   <div id="modal-join-room-password" class="modal-overlay hidden">
     <div class="modal-card">
       <div class="modal-header">
@@ -542,14 +667,14 @@
         <button id="btn-close-join-room" class="modal-close-btn"><i data-lucide="x"></i></button>
       </div>
 
-      <form id="form-join-room-password" class="modal-body">
+      <form id="form-join-room-password" class="modal-body" novalidate>
         <p class="modal-desc">A sala <strong id="join-room-target-name">—</strong> requer a senha de 8 dígitos para acesso.</p>
 
         <div class="input-group">
           <label for="join-room-password" class="input-label">Senha da Sala (8 dígitos)</label>
           <div class="input-wrapper">
             <i data-lucide="lock" class="input-icon"></i>
-            <input type="password" id="join-room-password" class="auth-input" placeholder="Digite os 8 dígitos numéricos" maxlength="8" pattern="\d{8}" required autofocus>
+            <input type="password" id="join-room-password" class="auth-input" placeholder="Digite os 8 dígitos numéricos" maxlength="8" required autofocus>
           </div>
         </div>
 
@@ -565,18 +690,25 @@
     </div>
   </div>
 
-  <!-- ═══════════════════════════════════════════════════════ -->
-  <!-- MODAL: ENTRAR EM SALA POR ID                           -->
-  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- ======================================================= -->
+  <!-- MODAL: ENTRAR EM SALA POR ID / CÓDIGO DE CONVITE        -->
+  <!-- ======================================================= -->
   <div id="modal-join-by-id" class="modal-overlay hidden">
     <div class="modal-card">
       <div class="modal-header">
-        <h3><i data-lucide="target"></i> Buscar / Entrar em Sala por ID</h3>
+        <h3><i data-lucide="target"></i> Buscar / Entrar em Sala</h3>
         <button id="btn-close-join-by-id" class="modal-close-btn"><i data-lucide="x"></i></button>
       </div>
 
-      <form id="form-join-by-id" class="modal-body">
-        <p class="modal-desc">Insira o ID de qualquer sala (pública ou privada) para se conectar.</p>
+      <div class="auth-tabs" style="margin-bottom: 16px;">
+        <button type="button" id="tab-join-mode-id" class="auth-tab active">Por ID e Senha</button>
+        <button type="button" id="tab-join-mode-invite" class="auth-tab">Por Código de Convite</button>
+        <div id="join-tab-indicator" class="auth-tab-indicator"></div>
+      </div>
+
+      <!-- Modo 1: ID e Senha -->
+      <form id="form-join-by-id" class="modal-body" novalidate>
+        <p class="modal-desc">Insira o ID de qualquer sala para se conectar.</p>
 
         <div class="input-group">
           <label for="join-by-id-room-id" class="input-label">ID da Sala *</label>
@@ -590,7 +722,7 @@
           <label for="join-by-id-password" class="input-label">Senha de 8 Dígitos (Se for Privada)</label>
           <div class="input-wrapper">
             <i data-lucide="lock" class="input-icon"></i>
-            <input type="password" id="join-by-id-password" class="auth-input" placeholder="8 dígitos numéricos (se necessário)" maxlength="8" pattern="\d{8}">
+            <input type="password" id="join-by-id-password" class="auth-input" placeholder="8 dígitos numéricos (se necessário)" maxlength="8">
           </div>
         </div>
 
@@ -603,8 +735,624 @@
           </button>
         </div>
       </form>
+
+      <!-- Modo 2: Código de Convite Direto -->
+      <form id="form-join-by-invite-code" class="modal-body hidden" novalidate>
+        <p class="modal-desc">Insira o Código de Convite recebido de um amigo para entrar direto sem precisar digitar senha.</p>
+
+        <div class="input-group">
+          <label for="join-invite-code-input" class="input-label">Código de Convite *</label>
+          <div class="input-wrapper">
+            <i data-lucide="key-round" class="input-icon"></i>
+            <input type="text" id="join-invite-code-input" class="auth-input" placeholder="ex: INV-7X9K2M" maxlength="32" required>
+          </div>
+        </div>
+
+        <div id="join-by-invite-error" class="auth-error" role="alert"></div>
+
+        <div class="modal-actions">
+          <button type="button" id="btn-cancel-join-by-invite" class="btn btn-ghost">Cancelar</button>
+          <button type="submit" id="btn-submit-join-by-invite" class="btn btn-primary">
+            <span>Entrar com Convite</span>
+          </button>
+        </div>
+      </form>
     </div>
   </div>
+
+  <!-- ======================================================= -->
+  <!-- MODAL: CONFIRMAÇÃO DE ATUALIZAÇÕES AUTOMÁTICAS          -->
+  <!-- ======================================================= -->
+  <!-- ======================================================= -->
+  <!-- MODAL: BOAS-VINDAS DO TUTORIAL (primeiro login)         -->
+  <!-- ======================================================= -->
+  <div id="modal-tutorial-welcome" class="modal-overlay hidden">
+    <div class="modal-card tutorial-welcome-card">
+      <div class="modal-body">
+        <div class="tutorial-welcome-icon"><i data-lucide="graduation-cap"></i></div>
+        <h3 class="tutorial-welcome-title">Bem-vindo ao Shiro Screen Share!</h3>
+        <p class="modal-desc">
+          Quer um tour rápido para começar a compartilhar sua tela? Leva menos de um minuto.
+        </p>
+        <ol class="tutorial-welcome-steps">
+          <li><span>1</span> Criar ou entrar em uma sala</li>
+          <li><span>2</span> Escolher a janela ou tela</li>
+          <li><span>3</span> Ajustar qualidade e áudio</li>
+          <li><span>4</span> Começar a transmitir</li>
+        </ol>
+        <div class="modal-actions">
+          <button type="button" id="btn-tutorial-welcome-skip" class="btn btn-ghost">Agora não</button>
+          <button type="button" id="btn-tutorial-welcome-start" class="btn btn-primary">
+            <i data-lucide="play"></i>
+            <span>Fazer tutorial</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="modal-confirm-auto-update" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3><i data-lucide="refresh-cw"></i> Atualizações Automáticas</h3>
+        <button id="btn-close-auto-update-modal" class="modal-close-btn"><i data-lucide="x"></i></button>
+      </div>
+
+      <div class="modal-body">
+        <p class="modal-desc" id="auto-update-modal-desc">
+          Ao ativar as atualizações automáticas, o Shiro Screen Share verificará novos lançamentos no GitHub em segundo plano.
+          Quando um update estiver pronto, você receberá um aviso com botão para reiniciar na hora, ou o app será atualizado automaticamente ao ser fechado e reaberto.
+        </p>
+
+        <div class="modal-actions">
+          <button type="button" id="btn-cancel-auto-update-modal" class="btn btn-ghost">Cancelar</button>
+          <button type="button" id="btn-confirm-auto-update-modal" class="btn btn-primary">
+            <i data-lucide="check"></i>
+            <span id="btn-confirm-auto-update-text">Confirmar e Ativar</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================================================= -->
+  <!-- MODAL: CONFIGURAÇÕES DE PERFIL (APELIDO & FOTO)         -->
+  <!-- ======================================================= -->
+  <div id="modal-profile-settings" class="modal-overlay hidden">
+    <div class="modal-card modal-profile-card">
+      <div class="modal-header">
+        <h3><i data-lucide="user-cog"></i> Perfil do Usuário</h3>
+        <button id="btn-close-profile-modal" class="modal-close-btn" type="button"><i data-lucide="x"></i></button>
+      </div>
+
+      <form id="form-profile-settings" class="modal-body" novalidate>
+        <!-- Preview do Avatar e Nome -->
+        <div class="profile-preview-card">
+          <div id="profile-banner-preview" class="profile-preview-banner"></div>
+          <div class="profile-preview-body">
+            <div class="profile-avatar-wrapper">
+              <div class="profile-avatar-preview" id="profile-avatar-preview">
+                <span id="profile-avatar-preview-fallback">?</span>
+                <img id="profile-avatar-preview-img" src="" alt="Avatar Preview" class="profile-avatar-img hidden">
+              </div>
+              <div class="profile-avatar-badge" title="Pré-visualização">
+                <i data-lucide="camera"></i>
+              </div>
+            </div>
+            <div class="profile-preview-info">
+              <h4 id="profile-preview-display-name">—</h4>
+              <span class="profile-preview-username" id="profile-preview-username">@usuario</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Campo: Link da Imagem de Perfil -->
+        <div class="input-group">
+          <div class="input-label-row">
+            <label for="input-profile-avatar" class="input-label">Foto de Perfil (Link / URL da Imagem)</label>
+            <button type="button" id="btn-clear-profile-avatar" class="btn-link-action hidden" title="Remover link da foto">
+              <i data-lucide="trash-2"></i>
+              <span>Remover foto</span>
+            </button>
+          </div>
+          <div class="input-wrapper">
+            <i data-lucide="image" class="input-icon"></i>
+            <input
+              type="url"
+              id="input-profile-avatar"
+              class="auth-input"
+              placeholder="https://exemplo.com/minha-foto.png"
+              maxlength="500"
+            >
+          </div>
+          <span class="input-hint">Insira o link direto de uma imagem (PNG, JPG, GIF, WebP).</span>
+        </div>
+
+        <!-- Campo: Link do Banner de Perfil -->
+        <div class="input-group">
+          <div class="input-label-row">
+            <label for="input-profile-banner" class="input-label">Banner de Perfil (Link / URL da Imagem)</label>
+            <button type="button" id="btn-clear-profile-banner" class="btn-link-action hidden" title="Remover link do banner">
+              <i data-lucide="trash-2"></i>
+              <span>Remover banner</span>
+            </button>
+          </div>
+          <div class="input-wrapper">
+            <i data-lucide="image" class="input-icon"></i>
+            <input
+              type="url"
+              id="input-profile-banner"
+              class="auth-input"
+              placeholder="https://exemplo.com/meu-banner.png"
+              maxlength="500"
+            >
+          </div>
+          <span class="input-hint">Insira o link direto de uma imagem para o banner (PNG, JPG, GIF, WebP).</span>
+        </div>
+
+        <!-- Campo: Apelido Personalizado -->
+        <div class="input-group">
+          <div class="input-label-row">
+            <label for="input-profile-nickname" class="input-label">Apelido Personalizado (Display Name)</label>
+            <span id="nickname-rate-badge" class="nickname-rate-badge" title="Limite de trocas de apelido">
+              <i data-lucide="clock" class="rate-icon"></i>
+              <span id="nickname-rate-text">6/6 trocas restantes</span>
+            </span>
+          </div>
+          <div class="input-wrapper">
+            <i data-lucide="user" class="input-icon"></i>
+            <input
+              type="text"
+              id="input-profile-nickname"
+              class="auth-input"
+              placeholder="Seu apelido visível"
+              maxlength="32"
+            >
+          </div>
+          <span class="input-hint">Você pode trocar seu apelido até 6 vezes por hora.</span>
+        </div>
+
+        <div id="profile-settings-error" class="auth-error" role="alert"></div>
+        <div id="profile-settings-success" class="auth-success hidden" role="status"></div>
+
+        <div class="modal-actions">
+          <button type="button" id="btn-cancel-profile-settings" class="btn btn-ghost">Cancelar</button>
+          <button type="submit" id="btn-save-profile-settings" class="btn btn-primary">
+            <span class="btn-text">Salvar Alterações</span>
+            <i data-lucide="loader-2" class="btn-spinner spin" style="display:none"></i>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ======================================================= -->
+  <!-- MODAL: GERENCIAR SALA (PROPRIETÁRIO)                    -->
+  <!-- ======================================================= -->
+  <div id="modal-room-settings" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3><i data-lucide="shield-check"></i> Gerenciar Sala (Proprietário)</h3>
+        <button id="btn-close-room-settings" class="modal-close-btn" type="button"><i data-lucide="x"></i></button>
+      </div>
+
+      <form id="form-room-settings" class="modal-body" novalidate>
+        <div class="input-group">
+          <label for="room-settings-name" class="input-label">Nome da Sala</label>
+          <div class="input-wrapper">
+            <i data-lucide="radio" class="input-icon"></i>
+            <input type="text" id="room-settings-name" class="auth-input" maxlength="50" required>
+          </div>
+        </div>
+
+        <div class="input-group">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <label for="room-settings-password" class="input-label" style="margin-bottom: 0;">Senha de 8 Dígitos</label>
+            <span id="room-settings-privacy-badge" class="badge badge-private" style="font-size: 11px; padding: 2px 8px;">Privada</span>
+          </div>
+          <div class="input-wrapper input-with-action">
+            <i data-lucide="lock" class="input-icon"></i>
+            <input type="text" id="room-settings-password" class="auth-input" placeholder="Nova senha (8 dígitos)" maxlength="8">
+            <button type="button" id="btn-generate-room-settings-password" class="btn btn-ghost btn-sm btn-inline-action" title="Gerar 8 dígitos numéricos aleatórios">
+              <i data-lucide="zap"></i>
+              <span>Gerar</span>
+            </button>
+          </div>
+          <span class="input-hint" id="room-settings-password-hint">Deixe em branco para manter a senha atual.</span>
+          <div id="room-settings-remove-password-wrap" style="margin-top: 8px; display: flex; align-items: center; gap: 8px;">
+            <input type="checkbox" id="room-settings-remove-password" style="cursor: pointer; width: 15px; height: 15px; accent-color: var(--accent-purple, #7c3aed);">
+            <label for="room-settings-remove-password" style="cursor: pointer; font-size: 12px; color: var(--text-secondary, #94a3b8);">Remover senha e tornar a sala pública</label>
+          </div>
+        </div>
+
+        <div class="input-group">
+          <label for="room-settings-max-members" class="input-label">Limite Máximo de Participantes (2 a 50)</label>
+          <div class="input-wrapper">
+            <i data-lucide="users" class="input-icon"></i>
+            <input type="number" id="room-settings-max-members" class="auth-input" min="2" max="50" value="15">
+          </div>
+        </div>
+
+        <!-- Código de Convite Direto -->
+        <div class="invite-code-card">
+          <div class="invite-code-header">
+            <span class="invite-code-title"><i data-lucide="key-round"></i> Código de Convite Direto</span>
+            <button type="button" id="btn-regenerate-invite-code" class="btn btn-ghost btn-xs" title="Gerar novo código">
+              <i data-lucide="rotate-cw"></i> <span>Regenerar</span>
+            </button>
+          </div>
+          <p class="invite-code-desc">Quem possuir este código pode entrar direto sem precisar digitar senha.</p>
+          <div class="invite-code-box">
+            <code id="room-settings-invite-code-text">INV-XXXXXX</code>
+            <button type="button" id="btn-copy-settings-invite-code" class="btn btn-secondary btn-sm">
+              <i data-lucide="copy"></i> <span>Copiar</span>
+            </button>
+          </div>
+        </div>
+
+        <div id="room-settings-error" class="auth-error" role="alert"></div>
+        <div id="room-settings-success" class="auth-success hidden" role="status"></div>
+
+        <div class="modal-actions">
+          <button type="button" id="btn-cancel-room-settings" class="btn btn-ghost">Fechar</button>
+          <button type="submit" id="btn-save-room-settings" class="btn btn-primary">
+            <span class="btn-text">Salvar Alterações</span>
+            <i data-lucide="loader-2" class="btn-spinner spin" style="display:none"></i>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ======================================================= -->
+  <!-- MODAL: ADICIONAR AMIGO                                  -->
+  <!-- ======================================================= -->
+  <div id="modal-add-friend" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3><i data-lucide="user-plus"></i> Adicionar Amigo</h3>
+        <button id="btn-close-add-friend" class="modal-close-btn" type="button"><i data-lucide="x"></i></button>
+      </div>
+
+      <form id="form-add-friend" class="modal-body" novalidate>
+        <p class="modal-desc">Digite o <strong>Nome de Usuário</strong> ou <strong>ID</strong> da pessoa que você deseja adicionar.</p>
+
+        <div class="input-group">
+          <label for="input-add-friend-target" class="input-label">Usuário ou ID</label>
+          <div class="input-wrapper">
+            <i data-lucide="user" class="input-icon"></i>
+            <input type="text" id="input-add-friend-target" class="auth-input" placeholder="ex: xzechs ou ID de usuário" required autofocus>
+          </div>
+        </div>
+
+        <div id="add-friend-error" class="auth-error" role="alert"></div>
+        <div id="add-friend-success" class="auth-success hidden" role="status"></div>
+
+        <div class="modal-actions">
+          <button type="button" id="btn-cancel-add-friend" class="btn btn-ghost">Cancelar</button>
+          <button type="submit" id="btn-submit-add-friend" class="btn btn-primary">
+            <span class="btn-text">Enviar Pedido</span>
+            <i data-lucide="loader-2" class="btn-spinner spin" style="display:none"></i>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ======================================================= -->
+  <!-- CENTRAL DE NOTIFICAÇÕES (POPOVER)                       -->
+  <!-- ======================================================= -->
+  <div id="notifications-popover" class="notif-popover hidden" role="dialog" aria-label="Central de Notificações">
+    <div class="notif-card">
+      <div class="notif-header">
+        <div class="notif-header-title">
+          <i data-lucide="bell"></i>
+          <span>Notificações</span>
+          <span id="notif-total-badge" class="notif-counter-tag">0</span>
+        </div>
+        <div class="notif-header-actions">
+          <button type="button" id="btn-open-create-notice" class="btn-notif-create-notice hidden" title="Criar e Enviar Aviso (Dev)">
+            <i data-lucide="megaphone"></i>
+            <span>Criar Aviso</span>
+          </button>
+          <button type="button" id="btn-clear-notifs" class="btn-notif-clear" title="Limpar avisos do sistema">
+            <i data-lucide="check-check"></i>
+            <span>Limpar</span>
+          </button>
+          <button type="button" id="btn-close-notifs" class="notif-close-btn" title="Fechar">
+            <i data-lucide="x"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- Filtros por Categoria -->
+      <div class="notif-filter-tabs">
+        <button type="button" class="notif-filter-tab active" data-filter="all">
+          <span>Todas</span>
+          <span class="notif-filter-count" id="count-notif-all">0</span>
+        </button>
+        <button type="button" class="notif-filter-tab" data-filter="friends">
+          <i data-lucide="user-plus"></i>
+          <span>Amizades</span>
+          <span class="notif-filter-count" id="count-notif-friends">0</span>
+        </button>
+        <button type="button" class="notif-filter-tab" data-filter="invites">
+          <i data-lucide="radio"></i>
+          <span>Convites</span>
+          <span class="notif-filter-count" id="count-notif-invites">0</span>
+        </button>
+        <button type="button" class="notif-filter-tab" data-filter="system">
+          <i data-lucide="info"></i>
+          <span>Avisos</span>
+          <span class="notif-filter-count" id="count-notif-system">0</span>
+        </button>
+      </div>
+
+      <!-- Lista de Notificações -->
+      <div id="notifications-list" class="notif-list-container">
+        <!-- Renderizado dinamicamente via TypeScript -->
+      </div>
+
+      <!-- Estado Vazio -->
+      <div id="notifications-empty-state" class="notif-empty-state hidden">
+        <i data-lucide="bell-off"></i>
+        <span>Nenhuma notificação nesta categoria</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================================================= -->
+  <!-- TOAST FLUTUANTE: CONVITE DE SALA                        -->
+  <!-- ======================================================= -->
+  <div id="toast-room-invite" class="toast-update-notification hidden">
+    <div class="toast-update-content">
+      <div class="toast-update-icon" style="background: linear-gradient(135deg, #7c3aed, #4c1d95);">
+        <i data-lucide="radio"></i>
+      </div>
+      <div class="toast-update-text">
+        <div class="toast-update-title">
+          <span class="badge badge-update" style="background: linear-gradient(135deg, #7c3aed, #4c1d95);">CONVITE DE SALA</span>
+          <strong id="toast-invite-sender">—</strong>
+        </div>
+        <p id="toast-invite-msg">Convidou você para entrar na sala <strong id="toast-invite-room-name">—</strong>!</p>
+      </div>
+    </div>
+    <div class="toast-update-actions">
+      <button id="btn-accept-room-invite" class="btn btn-primary btn-sm">
+        <i data-lucide="log-in"></i>
+        <span>Entrar na Sala</span>
+      </button>
+      <button id="btn-dismiss-room-invite" class="btn btn-ghost btn-sm" title="Recusar">
+        <span>Recusar</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- ======================================================= -->
+  <!-- TOAST FLUTUANTE: PEDIDO DE AMIZADE                      -->
+  <!-- ======================================================= -->
+  <div id="toast-friend-request" class="toast-update-notification hidden">
+    <div class="toast-update-content" id="toast-friend-req-content" style="cursor: pointer;" title="Clique para ver o perfil do usuário">
+      <div class="toast-update-icon" style="background: linear-gradient(135deg, #10b981, #047857);">
+        <i data-lucide="user-plus"></i>
+      </div>
+      <div class="toast-update-text">
+        <div class="toast-update-title">
+          <span class="badge badge-update" style="background: linear-gradient(135deg, #10b981, #047857);">PEDIDO DE AMIZADE</span>
+          <strong id="toast-friend-req-sender">—</strong>
+        </div>
+        <p id="toast-friend-req-msg">Quer ser seu amigo! Clique para ver o perfil.</p>
+      </div>
+    </div>
+    <div class="toast-update-actions">
+      <button id="btn-accept-toast-friend" class="btn btn-primary btn-sm">
+        <i data-lucide="user-check"></i>
+        <span>Aceitar</span>
+      </button>
+      <button id="btn-dismiss-toast-friend" class="btn btn-ghost btn-sm" title="Recusar">
+        <span>Recusar</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- ======================================================= -->
+  <!-- TOAST FLUTUANTE: AVISO DO SISTEMA                       -->
+  <!-- ======================================================= -->
+  <div id="toast-system-notice" class="toast-update-notification hidden">
+    <div class="toast-update-content" id="toast-system-notice-content">
+      <div class="toast-update-icon" id="toast-system-notice-icon" style="background: linear-gradient(135deg, #3b82f6, #1d4ed8);">
+        <i data-lucide="info"></i>
+      </div>
+      <div class="toast-update-text">
+        <div class="toast-update-title">
+          <span class="badge badge-update" id="toast-system-badge" style="background: linear-gradient(135deg, #3b82f6, #1d4ed8);">COMUNICADO</span>
+          <strong id="toast-system-title">—</strong>
+        </div>
+        <p id="toast-system-msg">—</p>
+      </div>
+    </div>
+    <div class="toast-update-actions">
+      <button id="btn-dismiss-system-toast" class="btn btn-primary btn-sm">
+        <span>Entendido</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- ======================================================= -->
+  <!-- MODAL: CRIAR NOTIFICAÇÃO GLOBAL (DEV / ADMIN)           -->
+  <!-- ======================================================= -->
+  <div id="modal-create-notice" class="modal-overlay hidden" role="dialog" aria-label="Criar Aviso do Sistema">
+    <div class="modal-card modal-create-notice-card">
+      <div class="modal-header">
+        <h3><i data-lucide="megaphone"></i> Lançar Notificação Global</h3>
+        <button type="button" id="btn-close-create-notice-modal" class="modal-close-btn" title="Fechar">
+          <i data-lucide="x"></i>
+        </button>
+      </div>
+
+      <form id="form-create-notice" class="modal-body" novalidate>
+        <div class="input-group">
+          <label for="input-notice-title" class="input-label">Título da Notificação</label>
+          <div class="input-wrapper">
+            <i data-lucide="bell" class="input-icon"></i>
+            <input
+              type="text"
+              id="input-notice-title"
+              class="auth-input"
+              placeholder="Ex: Manutenção Programada, Nova Live..."
+              required
+              maxlength="60"
+            />
+          </div>
+        </div>
+
+        <div class="input-group">
+          <label for="input-notice-message" class="input-label">Mensagem do Comunicado</label>
+          <textarea
+            id="input-notice-message"
+            class="auth-textarea"
+            rows="3"
+            placeholder="Descreva o comunicado detalhadamente..."
+            required
+            maxlength="250"
+          ></textarea>
+        </div>
+
+        <div class="input-group">
+          <label class="input-label">Tipo de Notificação</label>
+          <div class="notice-type-selector">
+            <label class="notice-type-option">
+              <input type="radio" name="noticeType" value="info" checked />
+              <span class="notice-type-badge info">
+                <i data-lucide="info"></i> Informativo
+              </span>
+            </label>
+            <label class="notice-type-option">
+              <input type="radio" name="noticeType" value="warning" />
+              <span class="notice-type-badge warning">
+                <i data-lucide="alert-triangle"></i> Alerta
+              </span>
+            </label>
+            <label class="notice-type-option">
+              <input type="radio" name="noticeType" value="update" />
+              <span class="notice-type-badge update">
+                <i data-lucide="sparkles"></i> Novidade
+              </span>
+            </label>
+          </div>
+        </div>
+
+        <div class="notice-options-group">
+          <label class="notice-checkbox-row">
+            <input type="checkbox" id="check-notice-popup" checked />
+            <span>Exibir popup flutuante (Toast) na tela imediatamente</span>
+          </label>
+          <label class="notice-checkbox-row">
+            <input type="checkbox" id="check-notice-os" checked />
+            <span>Disparar notificação nativa do Windows</span>
+          </label>
+        </div>
+
+        <div class="modal-actions">
+          <button type="button" id="btn-cancel-create-notice" class="btn btn-ghost">
+            <span>Cancelar</span>
+          </button>
+          <button type="submit" id="btn-submit-create-notice" class="btn btn-primary">
+            <i data-lucide="send"></i>
+            <span>Lançar Notificação</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ======================================================= -->
+  <!-- MINI PERFIL FLUTUANTE DE USUÁRIO                       -->
+  <!-- ======================================================= -->
+  <div id="user-mini-profile-popover" class="user-mini-popover hidden" role="dialog" aria-label="Mini Perfil do Usuário">
+    <div class="user-mini-card">
+      <div id="user-mini-banner" class="user-mini-banner">
+        <button id="btn-close-mini-profile" class="user-mini-close-btn" type="button" title="Fechar">
+          <i data-lucide="x"></i>
+        </button>
+      </div>
+
+      <div class="user-mini-header-content">
+        <div class="user-mini-avatar-wrap">
+          <div id="user-mini-avatar" class="user-mini-avatar">?</div>
+          <div id="user-mini-status-dot" class="user-mini-status-dot online" title="Status"></div>
+        </div>
+        <div id="user-mini-badges" class="user-mini-badges"></div>
+      </div>
+
+      <div class="user-mini-body">
+        <div class="user-mini-title-row">
+          <h3 id="user-mini-display-name" class="user-mini-display-name">—</h3>
+          <span id="user-mini-username" class="user-mini-username">@usuario</span>
+        </div>
+
+        <div class="user-mini-divider"></div>
+
+        <div class="user-mini-fields">
+          <!-- Campo: Nick -->
+          <div class="user-mini-field">
+            <span class="user-mini-field-label"><i data-lucide="user"></i> NICK</span>
+            <div class="user-mini-field-row">
+              <span id="user-mini-nick-val" class="user-mini-field-val">—</span>
+              <button type="button" id="btn-copy-mini-nick" class="btn-mini-copy" title="Copiar Nick">
+                <i data-lucide="copy"></i>
+                <span>Copiar</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Campo: ID -->
+          <div class="user-mini-field">
+            <span class="user-mini-field-label"><i data-lucide="hash"></i> ID DE USUÁRIO</span>
+            <div class="user-mini-field-row">
+              <code id="user-mini-id-val" class="user-mini-field-code">—</code>
+              <button type="button" id="btn-copy-mini-id" class="btn-mini-copy" title="Copiar ID">
+                <i data-lucide="copy"></i>
+                <span>Copiar</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div id="user-mini-actions" class="user-mini-actions">
+          <!-- Ações dinâmicas preenchidas via TypeScript -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast de Notificação de Atualização Disponível -->
+  <div id="toast-update-notification" class="toast-update-notification hidden">
+    <div class="toast-update-content">
+      <div class="toast-update-icon">
+        <i data-lucide="sparkles"></i>
+      </div>
+      <div class="toast-update-text">
+        <div class="toast-update-title">
+          <span class="badge badge-update">NOVA VERSÃO</span>
+          <strong id="toast-update-version">v2.1.0</strong>
+        </div>
+        <p id="toast-update-desc">Atualização pronta para instalação.</p>
+      </div>
+    </div>
+    <div class="toast-update-actions">
+      <button id="btn-apply-update-now" class="btn btn-primary btn-sm">
+        <i data-lucide="rotate-cw"></i>
+        <span>Reiniciar Agora</span>
+      </button>
+      <button id="btn-dismiss-update-toast" class="btn btn-ghost btn-sm" title="Fechar aviso">
+        <span>Depois</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Tooltip Global Customizado -->
+  <div id="app-tooltip" class="app-tooltip hidden" role="tooltip" aria-hidden="true"></div>
 
   <script src="app.bundle.js"></script>
 </body>

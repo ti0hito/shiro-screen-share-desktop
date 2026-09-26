@@ -144,7 +144,7 @@ export function setStreamStatus(isLive: boolean, text?: string): void {
 	if (streamBadge) {
 		if (isLive) {
 			streamBadge.className = "badge badge-live";
-			streamBadge.innerText = text || "● AO VIVO";
+			streamBadge.innerText = text || "AO VIVO";
 		} else {
 			streamBadge.className = "badge badge-offline";
 			streamBadge.innerText = text || "Desconectado";

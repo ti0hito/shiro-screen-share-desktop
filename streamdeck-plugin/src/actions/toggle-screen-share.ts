@@ -25,13 +25,17 @@ export class ToggleScreenShareAction extends SingletonAction {
 	private updateAllInstances(): void {
 		const stateIndex = this.isSharing ? 0 : 1;
 		const title = this.isSharing ? "SHARING" : "START";
-		this.actions.forEach((act: any) => {
-			act.setState(stateIndex);
-			act.setTitle(title);
-		});
+		for (const act of (this.actions as any)) {
+			if (act.isKey()) {
+				act.setState(stateIndex);
+				act.setTitle(title);
+			}
+		}
 	}
 
 	override onWillAppear(ev: WillAppearEvent): void {
+		const client = getWsClient();
+		client.send({ type: "get_state" });
 		const stateIndex = this.isSharing ? 0 : 1;
 		const title = this.isSharing ? "SHARING" : "START";
 		if (ev.action.isKey()) {

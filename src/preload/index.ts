@@ -25,6 +25,10 @@ const api: ElectronAPI = {
 		return ipcRenderer.invoke("api-request", opts);
 	},
 
+	openExternal: (url: string): Promise<boolean> => {
+		return ipcRenderer.invoke("open-external", url);
+	},
+
 	getResourcesPath: (): Promise<string> => {
 		return ipcRenderer.invoke("get-resources-path");
 	},
@@ -39,6 +43,42 @@ const api: ElectronAPI = {
 
 	setAutoUpdate: (enabled: boolean): Promise<boolean> => {
 		return ipcRenderer.invoke("set-auto-update", enabled);
+	},
+
+	installUpdate: (): Promise<void> => {
+		return ipcRenderer.invoke("install-update");
+	},
+
+	checkForUpdates: (): Promise<unknown> => {
+		return ipcRenderer.invoke("check-for-updates");
+	},
+
+	onUpdateAvailable: (callback: (info: { version: string }) => void) => {
+		const listener = (_event: any, info: any) => callback(info);
+		ipcRenderer.on("update-available", listener);
+		return () => ipcRenderer.removeListener("update-available", listener);
+	},
+
+	onUpdateProgress: (callback: (progress: { percent: number; bytesPerSecond: number }) => void) => {
+		const listener = (_event: any, progress: any) => callback(progress);
+		ipcRenderer.on("update-progress", listener);
+		return () => ipcRenderer.removeListener("update-progress", listener);
+	},
+
+	onUpdateDownloaded: (callback: (info: { version: string }) => void) => {
+		const listener = (_event: any, info: any) => callback(info);
+		ipcRenderer.on("update-downloaded", listener);
+		return () => ipcRenderer.removeListener("update-downloaded", listener);
+	},
+
+	onAppBeforeQuit: (callback: () => void) => {
+		const listener = () => callback();
+		ipcRenderer.on("app-before-quit", listener);
+		return () => ipcRenderer.removeListener("app-before-quit", listener);
+	},
+
+	appQuitReady: (): void => {
+		ipcRenderer.send("app-quit-ready");
 	},
 
 	minimizeWindow: (): void => {

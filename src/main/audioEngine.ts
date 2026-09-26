@@ -42,14 +42,14 @@ export class AudioCaptureEngine {
 				config.targetProcessName,
 			);
 			console.log(
-				`[AudioEngine] 🎯 Candidate PIDs for isolated process audio:`,
+				`[AudioEngine] Candidate PIDs for isolated process audio:`,
 				candidatePids,
 			);
 
 			for (const targetPid of candidatePids) {
 				try {
 					console.log(
-						`[AudioEngine] 🔊 Activating WASAPI Process Loopback — PID: ${targetPid} (${config.targetProcessName}) + child processes`,
+						`[AudioEngine] Activating WASAPI Process Loopback - PID: ${targetPid} (${config.targetProcessName}) + child processes`,
 					);
 					const processSuccess = await this.tryProcessLoopback(
 						targetPid,
@@ -77,20 +77,20 @@ export class AudioCaptureEngine {
 					}
 				} catch (err: any) {
 					console.warn(
-						`[AudioEngine] ⚠️ Process loopback init failed for PID ${targetPid}:`,
+						`[AudioEngine] Process loopback init failed for PID ${targetPid}:`,
 						err.message,
 					);
 				}
 			}
 
 			console.warn(
-				"[AudioEngine] ⚠️ WASAPI Process Loopback could not bind to candidate PIDs. Falling back to system loopback...",
+				"[AudioEngine] WASAPI Process Loopback could not bind to candidate PIDs. Falling back to system loopback...",
 			);
 		}
 
 		// System loopback mode (or fallback if process capture failed completely)
 		try {
-			console.log(`[AudioEngine] 🔊 Initiating System WASAPI Loopback Capture`);
+			console.log(`[AudioEngine] Initiating System WASAPI Loopback Capture`);
 			const systemSuccess = await this.trySystemLoopback(window);
 			if (systemSuccess) {
 				this.currentStatus = {
@@ -106,7 +106,7 @@ export class AudioCaptureEngine {
 				return this.currentStatus;
 			}
 		} catch (err: any) {
-			console.error(`[AudioEngine] ❌ System loopback capture failed:`, err);
+			console.error(`[AudioEngine] System loopback capture failed:`, err);
 			this.currentStatus = {
 				active: false,
 				mode: "disabled",
@@ -142,7 +142,7 @@ export class AudioCaptureEngine {
 
 				this.activeCapture = capture;
 				console.log(
-					`[AudioEngine] ✅ WASAPI Process Loopback active for PID ${pid}`,
+					`[AudioEngine] WASAPI Process Loopback active for PID ${pid}`,
 				);
 				resolve(true);
 			} catch (err) {
@@ -167,7 +167,7 @@ export class AudioCaptureEngine {
 				});
 
 				this.activeCapture = capture;
-				console.log(`[AudioEngine] ✅ System WASAPI Loopback active`);
+				console.log(`[AudioEngine] System WASAPI Loopback active`);
 				resolve(true);
 			} catch (err) {
 				reject(err);
