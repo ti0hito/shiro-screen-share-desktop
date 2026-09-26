@@ -75,6 +75,9 @@ function optimizeSdp(sdp: string): string {
 /**
  * Configura parâmetros de codificação de vídeo nos senders WebRTC
  */
+/** Tempo de tolerância para uma conexão "disconnected" se recuperar antes de ser fechada */
+const DISCONNECT_GRACE_MS = 8000;
+
 /** Maior bitrate de vídeo oferecido nos presets (teto anunciado no SDP) */
 const MAX_VIDEO_BITRATE_KBPS = 15000;
 /** Bitrate padrão enquanto o usuário não escolhe outro */
@@ -132,6 +135,8 @@ export class P2PManager {
 	private peerQueues = new Map<string, Promise<void>>();
 	// Momento em que a tentativa de conexão atual com cada peer começou
 	private connectStartedAt = new Map<string, number>();
+	// "disconnected" costuma ser passageiro (oscilação de rede): espera antes de derrubar o vídeo
+	private disconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 	constructor(myUserId: string, callbacks: P2PCallbacks) {
 		this.myUserId = myUserId;
@@ -405,8 +410,23 @@ export class P2PManager {
 			const state = pc.connectionState;
 			console.log(`[P2P] ${peerId} connectionState: ${state}`);
 			if (state === "connected") {
+				this.clearDisconnectTimer(peerId);
 				this.callbacks.onConnected(peerId);
-			} else if (state === "disconnected" || state === "failed" || state === "closed") {
+			} else if (state === "disconnected") {
+				// O WebRTC geralmente se recupera sozinho em poucos segundos: só fecha se não voltar
+				if (!this.disconnectTimers.has(peerId)) {
+					this.disconnectTimers.set(
+						peerId,
+						setTimeout(() => {
+							this.disconnectTimers.delete(peerId);
+							if (isCurrent() && pc.connectionState !== "connected") {
+								console.warn(`[P2P] ${peerId} não se recuperou da desconexão. Encerrando para reconectar...`);
+								this.closePeer(peerId);
+							}
+						}, DISCONNECT_GRACE_MS),
+					);
+				}
+			} else if (state === "failed" || state === "closed") {
 				this.closePeer(peerId);
 			}
 		};
@@ -571,7 +591,16 @@ export class P2PManager {
 		}
 	}
 
+	private clearDisconnectTimer(peerId: string): void {
+		const timer = this.disconnectTimers.get(peerId);
+		if (timer) {
+			clearTimeout(timer);
+			this.disconnectTimers.delete(peerId);
+		}
+	}
+
 	closePeer(peerId: string): void {
+		this.clearDisconnectTimer(peerId);
 		const dc = this.dataChannels.get(peerId);
 		if (dc) {
 			try { dc.close(); } catch {}

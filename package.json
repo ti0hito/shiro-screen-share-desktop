@@ -1,6 +1,6 @@
 {
 	"name": "shiro-screen-share",
-	"version": "2.1.5",
+	"version": "2.1.6",
 	"description": "Shiro Screen Share — Desktop app with isolated process audio capture and WebRTC P2P multi-stream",
 	"main": "dist/main/main.js",
 	"author": "Hito",
@@ -15,6 +15,7 @@
 		"pack": "npm run build:all && electron-builder --dir",
 		"build": "npm run build:all && electron-builder --win --publish never",
 		"build:linux": "npm run build:all && electron-builder --linux --publish never",
+		"build:linux:appimage": "npm run build:all && electron-builder --linux AppImage --publish never",
 		"build:linux:docker": "npm run build:all && node scripts/build-linux-docker.mjs"
 	},
 	"dependencies": {

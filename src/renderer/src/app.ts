@@ -2468,6 +2468,9 @@ class ShiroApp {
 
 			this.previewStream = stream;
 			this.currentVideoTrack = stream.getVideoTracks()[0];
+			const capturedTrack = this.currentVideoTrack;
+			// "ended" só dispara quando a fonte some (janela fechada/recriada), não em track.stop()
+			capturedTrack?.addEventListener("ended", () => void this.onCaptureEnded(capturedTrack, source));
 
 			if (this.currentVideoTrack && "contentHint" in this.currentVideoTrack) {
 				(this.currentVideoTrack as any).contentHint = "detail";
@@ -2499,6 +2502,36 @@ class ShiroApp {
 		}
 	}
 
+
+	/**
+	 * A captura terminou sozinha (ex.: a janela transmitida foi fechada ou o jogo reiniciou).
+	 * Tenta recapturar a mesma fonte uma vez; se não der, encerra a transmissão em vez de
+	 * deixar quem assiste vendo uma imagem congelada.
+	 */
+	private async onCaptureEnded(track: MediaStreamTrack, source: WindowSource): Promise<void> {
+		if (track !== this.currentVideoTrack) return; // já foi substituída de propósito
+		console.warn(`[App] A captura de "${source.name}" terminou inesperadamente.`);
+		this.currentVideoTrack = null;
+		if (!this.p2pManager?.getIsStreaming()) return;
+
+		if (!this.platformInfo.isWayland) {
+			await this.onSourceSelected(source);
+			const recovered = this.currentVideoTrack as MediaStreamTrack | null;
+			if (recovered && recovered.readyState === "live") {
+				console.log("[App] Captura recuperada, transmissão continua.");
+				return;
+			}
+		}
+
+		await this.stopStreaming();
+		const notice = {
+			title: "Transmissão encerrada",
+			message: `A captura de "${source.name}" foi interrompida (a janela pode ter sido fechada). Escolha a fonte de novo para voltar a transmitir.`,
+			type: "warning" as const,
+		};
+		this.addSystemNotice(notice);
+		this.showSystemNoticeToast({ id: `capture-ended-${Date.now()}`, date: "Agora", ...notice });
+	}
 
 	private checkCanStartStream(): void {
 		const btnStart = document.getElementById("btn-start-stream") as HTMLButtonElement | null;

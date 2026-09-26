@@ -25,6 +25,18 @@ import {
 let activeSseRequest: http.ClientRequest | null = null;
 let currentSseUserToken: string | null = null;
 let sseReconnectTimer: NodeJS.Timeout | null = null;
+// Watchdog: o servidor manda ": ping" a cada 15s. Sem nenhum dado por 45s, a conexão está
+// morta mesmo sem erro/fim (socket meio-aberto após queda de rede ou suspensão do PC).
+// Sem SSE não há sinalização P2P e o vídeo não consegue voltar — por isso reconecta.
+const SSE_IDLE_TIMEOUT_MS = 45_000;
+let sseWatchdogTimer: NodeJS.Timeout | null = null;
+
+function clearSseWatchdog(): void {
+	if (sseWatchdogTimer) {
+		clearInterval(sseWatchdogTimer);
+		sseWatchdogTimer = null;
+	}
+}
 
 // Agents com keep-alive: reaproveitam a conexão TLS entre requisições em vez de
 // abrir um handshake novo a cada chamada. Sockets ociosos são fechados após 20s.
@@ -73,6 +85,8 @@ function makeSecureRequest(
 			const headers: Record<string, string | number> = {
 				"Content-Type": "application/json",
 				"X-API-Key": apiKey,
+				// Versão do app: diagnóstico e versão mínima exigida pela API
+				"X-App-Version": app.getVersion(),
 			};
 
 			if (opts.token) {
@@ -377,12 +391,26 @@ const DEFAULT_API_KEY = "c7c14f354ac71f78695a5529064e681d8588224515366760ed76815
 			}, 1500);
 		};
 
+		let lastDataAt = Date.now();
+		clearSseWatchdog();
+		sseWatchdogTimer = setInterval(() => {
+			if (Date.now() - lastDataAt < SSE_IDLE_TIMEOUT_MS) return;
+			console.warn(`[SSE] Sem dados ha ${Math.round((Date.now() - lastDataAt) / 1000)}s. Reconectando...`);
+			clearSseWatchdog();
+			try {
+				req.destroy();
+			} catch {}
+			if (activeSseRequest === req) activeSseRequest = null;
+			scheduleReconnect();
+		}, 10_000);
+
 		const req = client.request(sseUrl, {
 			method: "GET",
 			headers: {
 				"Accept": "text/event-stream",
 				"Cache-Control": "no-cache",
 				"X-API-Key": apiKey,
+				"X-App-Version": app.getVersion(),
 			},
 		}, (res) => {
 			if (!res.statusCode || res.statusCode >= 300) {
@@ -399,6 +427,7 @@ const DEFAULT_API_KEY = "c7c14f354ac71f78695a5529064e681d8588224515366760ed76815
 
 			res.setEncoding("utf8");
 			res.on("data", (chunk: string) => {
+				lastDataAt = Date.now();
 				buffer += chunk;
 				// Suporte a delimitadores \r\n\r\n ou \n\n
 				const parts = buffer.split(/\r?\n\r?\n/);
@@ -454,6 +483,8 @@ const DEFAULT_API_KEY = "c7c14f354ac71f78695a5529064e681d8588224515366760ed76815
 			scheduleReconnect();
 		});
 
+		// Keep-alive TCP ajuda o sistema a detectar a queda da conexão mais cedo
+		req.on("socket", (socket) => socket.setKeepAlive(true, 15_000));
 		req.end();
 		activeSseRequest = req;
 	}
@@ -464,6 +495,7 @@ const DEFAULT_API_KEY = "c7c14f354ac71f78695a5529064e681d8588224515366760ed76815
 	});
 
 	ipcMain.on("sse-stop", () => {
+		clearSseWatchdog();
 		currentSseUserToken = null;
 		if (sseReconnectTimer) {
 			clearTimeout(sseReconnectTimer);
