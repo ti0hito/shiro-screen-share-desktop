@@ -121,6 +121,10 @@ export class P2PManager {
 	private myUserId: string;
 	private isStreaming = false;
 	private sseCleanup: (() => void) | null = null;
+	// Fila por peer: sinais (offer/answer/ice) e renegociações do mesmo peer rodam em ordem, nunca em paralelo
+	private peerQueues = new Map<string, Promise<void>>();
+	// Momento em que a tentativa de conexão atual com cada peer começou
+	private connectStartedAt = new Map<string, number>();
 
 	constructor(myUserId: string, callbacks: P2PCallbacks) {
 		this.myUserId = myUserId;
@@ -166,16 +170,16 @@ export class P2PManager {
 			console.log(`[P2P] Evento SSE recebido: ${event}`, data);
 			switch (event) {
 				case "offer":
-					await this.handleOffer(data.fromUserId, data.sdp, data.sessionId);
+					await this.enqueue(data.fromUserId, () => this.handleOffer(data.fromUserId, data.sdp, data.sessionId));
 					break;
 				case "answer":
-					await this.handleAnswer(data.fromUserId, data.sdp);
+					await this.enqueue(data.fromUserId, () => this.handleAnswer(data.fromUserId, data.sdp));
 					break;
 				case "ice-candidate":
-					await this.handleIceCandidate(data.fromUserId, data.candidate);
+					await this.enqueue(data.fromUserId, () => this.handleIceCandidate(data.fromUserId, data.candidate));
 					break;
 				case "peer-left":
-					this.closePeer(data.userId);
+					await this.enqueue(data.userId, async () => this.closePeer(data.userId));
 					break;
 			}
 		});
@@ -193,6 +197,52 @@ export class P2PManager {
 	}
 
 	async renegotiate(targetUserId: string, forceRestart = false): Promise<void> {
+		await this.enqueue(targetUserId, () => this.doRenegotiate(targetUserId, forceRestart));
+	}
+
+	/** Executa tarefas do mesmo peer em sequência (evita ofertas/respostas concorrentes) */
+	private enqueue(peerId: string, task: () => Promise<void>): Promise<void> {
+		const previous = this.peerQueues.get(peerId) ?? Promise.resolve();
+		const run = previous.then(task);
+		const tail = run.catch((err) => console.warn(`[P2P] Erro em tarefa da fila de ${peerId}:`, err));
+		this.peerQueues.set(peerId, tail);
+		tail.then(() => {
+			if (this.peerQueues.get(peerId) === tail) this.peerQueues.delete(peerId);
+		});
+		return tail;
+	}
+
+	/** Há uma tentativa de conexão com o peer em andamento, iniciada há menos de withinMs */
+	isConnecting(peerId: string, withinMs: number): boolean {
+		const pc = this.peerConnections.get(peerId);
+		if (!pc || (pc.connectionState !== "new" && pc.connectionState !== "connecting")) return false;
+		const startedAt = this.connectStartedAt.get(peerId) ?? 0;
+		return Date.now() - startedAt < withinMs;
+	}
+
+	isConnected(peerId: string): boolean {
+		return this.peerConnections.get(peerId)?.connectionState === "connected";
+	}
+
+	private addLocalTracks(pc: RTCPeerConnection, peerId: string): void {
+		if (!this.localStream) return;
+		const senders = pc.getSenders();
+		for (const track of this.localStream.getTracks()) {
+			const sender = senders.find((s) => s.track?.kind === track.kind);
+			if (sender) {
+				sender.replaceTrack(track).catch((err) => console.warn(`[P2P] Erro replaceTrack para ${peerId}:`, err));
+			} else {
+				try {
+					pc.addTrack(track, this.localStream);
+				} catch (err) {
+					console.warn(`[P2P] Erro ao adicionar track local para ${peerId}:`, err);
+				}
+			}
+		}
+		configureSenderParameters(pc);
+	}
+
+	private async doRenegotiate(targetUserId: string, forceRestart: boolean): Promise<void> {
 		let pc = this.peerConnections.get(targetUserId);
 
 		if (pc) {
@@ -210,23 +260,7 @@ export class P2PManager {
 		}
 
 		prioritizeH264(pc);
-
-		if (this.localStream) {
-			const senders = pc.getSenders();
-			for (const track of this.localStream.getTracks()) {
-				const sender = senders.find((s) => s.track?.kind === track.kind);
-				if (sender) {
-					sender.replaceTrack(track).catch((err) => console.warn(`[P2P] Erro replaceTrack para ${targetUserId}:`, err));
-				} else {
-					try {
-						pc.addTrack(track, this.localStream);
-					} catch (err) {
-						console.warn(`[P2P] Erro ao adicionar track local para ${targetUserId}:`, err);
-					}
-				}
-			}
-			configureSenderParameters(pc);
-		}
+		this.addLocalTracks(pc, targetUserId);
 
 		try {
 			const offer = await pc.createOffer({
@@ -327,8 +361,11 @@ export class P2PManager {
 			this.setupDataChannel(peerId, e.channel);
 		};
 
+		// Eventos de uma conexão já substituída/fechada são ignorados
+		const isCurrent = () => this.peerConnections.get(peerId) === pc;
+
 		pc.onicecandidate = async (e) => {
-			if (e.candidate) {
+			if (e.candidate && isCurrent()) {
 				console.log(`[P2P] Novo ICE candidate gerado para ${peerId}:`, e.candidate.type, e.candidate.protocol);
 				await this.sendSignal("/api/signal/ice", {
 					targetUserId: peerId,
@@ -338,6 +375,7 @@ export class P2PManager {
 		};
 
 		pc.oniceconnectionstatechange = () => {
+			if (!isCurrent()) return;
 			console.log(`[P2P] ${peerId} iceConnectionState: ${pc.iceConnectionState}`);
 			if (pc.iceConnectionState === "failed") {
 				console.warn(`[P2P] ICE failed para ${peerId}. Tentando reiniciar ICE se possível...`);
@@ -348,6 +386,7 @@ export class P2PManager {
 		};
 
 		pc.onconnectionstatechange = () => {
+			if (!isCurrent()) return;
 			const state = pc.connectionState;
 			console.log(`[P2P] ${peerId} connectionState: ${state}`);
 			if (state === "connected") {
@@ -358,6 +397,7 @@ export class P2PManager {
 		};
 
 		pc.ontrack = (e) => {
+			if (!isCurrent()) return;
 			console.log(`[P2P] ontrack de ${peerId}: kind=${e.track.kind}, streams=${e.streams.length}`);
 			const stream = e.streams[0] || new MediaStream([e.track]);
 			if (this.callbacks.onRemoteStream) {
@@ -366,6 +406,7 @@ export class P2PManager {
 		};
 
 		this.peerConnections.set(peerId, pc);
+		this.connectStartedAt.set(peerId, Date.now());
 		return pc;
 	}
 
@@ -392,51 +433,75 @@ export class P2PManager {
 
 		console.log(`[P2P] Recebida oferta de ${fromUserId}`);
 		let pc = this.peerConnections.get(fromUserId);
+		let isFreshPc = false;
 		if (!pc || pc.connectionState === "closed" || pc.connectionState === "failed") {
 			if (pc) this.closePeer(fromUserId);
 			pc = this.createPeerConnection(fromUserId);
+			isFreshPc = true;
 		}
 
-		if (pc.signalingState !== "stable" && pc.signalingState !== "have-local-offer") {
+		// Glare: os dois lados ofertaram ao mesmo tempo. O lado "polite" (menor ID) desfaz a
+		// própria oferta e responde; o "impolite" ignora a oferta recebida e aguarda a resposta.
+		if (pc.signalingState === "have-local-offer") {
+			const polite = this.myUserId < fromUserId;
+			if (!polite) {
+				console.log(`[P2P] Glare com ${fromUserId}: mantendo a própria oferta (impolite).`);
+				return;
+			}
+			console.log(`[P2P] Glare com ${fromUserId}: desfazendo a própria oferta (polite).`);
+			try {
+				await pc.setLocalDescription({ type: "rollback" });
+			} catch (err) {
+				console.warn(`[P2P] Rollback falhou com ${fromUserId}. Recriando conexão...`, err);
+				this.closePeer(fromUserId);
+				pc = this.createPeerConnection(fromUserId);
+				isFreshPc = true;
+			}
+		} else if (pc.signalingState !== "stable") {
 			console.warn(`[P2P] Estado de sinalização instável (${pc.signalingState}) com ${fromUserId}. Recriando conexão limpa para responder oferta...`);
 			this.closePeer(fromUserId);
 			pc = this.createPeerConnection(fromUserId);
-		}
-
-		prioritizeH264(pc);
-
-		if (this.localStream) {
-			const senders = pc.getSenders();
-			for (const track of this.localStream.getTracks()) {
-				const existing = senders.find((s) => s.track?.kind === track.kind);
-				if (!existing) {
-					try {
-						pc.addTrack(track, this.localStream);
-					} catch (err) {
-						console.warn(`[P2P] Erro ao adicionar track local para ${fromUserId}:`, err);
-					}
-				}
-			}
-			configureSenderParameters(pc);
+			isFreshPc = true;
 		}
 
 		try {
-			await pc.setRemoteDescription({ type: "offer", sdp });
-			await this.drainPendingCandidates(fromUserId, pc);
-
-			const answer = await pc.createAnswer();
-			const optimizedAnswerSdp = optimizeSdp(answer.sdp || "");
-			await pc.setLocalDescription({ type: "answer", sdp: optimizedAnswerSdp });
-
-			await this.sendSignal("/api/signal/answer", {
-				targetUserId: fromUserId,
-				sdp: optimizedAnswerSdp,
-			});
-			console.log(`[P2P] Resposta (Answer) enviada para ${fromUserId}`);
+			await this.answerOffer(pc, fromUserId, sdp);
 		} catch (err) {
-			console.error(`[P2P] Erro ao processar oferta de ${fromUserId}:`, err);
+			if (isFreshPc) {
+				console.error(`[P2P] Erro ao processar oferta de ${fromUserId}:`, err);
+				if (this.peerConnections.get(fromUserId) === pc) this.closePeer(fromUserId);
+				return;
+			}
+			// A oferta pertence a uma sessão nova do outro lado (ex.: ele recriou a conexão).
+			// A conexão antiga não aceita as novas credenciais: recria do zero e responde de novo.
+			console.warn(`[P2P] Oferta de ${fromUserId} incompatível com a conexão atual. Recriando conexão...`, err);
 			this.closePeer(fromUserId);
+			const freshPc = this.createPeerConnection(fromUserId);
+			try {
+				await this.answerOffer(freshPc, fromUserId, sdp);
+			} catch (retryErr) {
+				console.error(`[P2P] Erro ao processar oferta de ${fromUserId}:`, retryErr);
+				if (this.peerConnections.get(fromUserId) === freshPc) this.closePeer(fromUserId);
+			}
 		}
+	}
+
+	private async answerOffer(pc: RTCPeerConnection, fromUserId: string, sdp: string): Promise<void> {
+		prioritizeH264(pc);
+		this.addLocalTracks(pc, fromUserId);
+
+		await pc.setRemoteDescription({ type: "offer", sdp });
+		await this.drainPendingCandidates(fromUserId, pc);
+
+		const answer = await pc.createAnswer();
+		const optimizedAnswerSdp = optimizeSdp(answer.sdp || "");
+		await pc.setLocalDescription({ type: "answer", sdp: optimizedAnswerSdp });
+
+		await this.sendSignal("/api/signal/answer", {
+			targetUserId: fromUserId,
+			sdp: optimizedAnswerSdp,
+		});
+		console.log(`[P2P] Resposta (Answer) enviada para ${fromUserId}`);
 	}
 
 	private async handleAnswer(fromUserId: string, sdp: string): Promise<void> {
@@ -450,6 +515,11 @@ export class P2PManager {
 		const pc = this.peerConnections.get(fromUserId);
 		if (!pc) {
 			console.warn(`[P2P] PeerConnection não encontrada para resposta de ${fromUserId}`);
+			return;
+		}
+
+		if (pc.signalingState !== "have-local-offer") {
+			console.warn(`[P2P] Resposta de ${fromUserId} ignorada: nenhuma oferta pendente (estado: ${pc.signalingState}).`);
 			return;
 		}
 
@@ -500,6 +570,7 @@ export class P2PManager {
 			} catch {}
 			this.peerConnections.delete(peerId);
 			this.pendingCandidates.delete(peerId);
+			this.connectStartedAt.delete(peerId);
 			this.callbacks.onDisconnected(peerId);
 			console.log(`[P2P] PeerConnection com ${peerId} encerrada.`);
 		}

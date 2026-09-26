@@ -188,10 +188,10 @@ export async function login(username: string, password: string): Promise<AuthRes
 	return { ok: true, user: data.user };
 }
 
-/** Busca lista de usuários online */
-export async function getOnlineUsers(): Promise<ShiroUser[]> {
+/** Busca lista de usuários online. Retorna null se a requisição falhar. */
+export async function getOnlineUsers(): Promise<ShiroUser[] | null> {
 	const token = getToken();
-	if (!token || !window.api?.apiRequest) return [];
+	if (!token || !window.api?.apiRequest) return null;
 
 	const result = await window.api.apiRequest({
 		endpoint: "/api/users/online",
@@ -199,20 +199,21 @@ export async function getOnlineUsers(): Promise<ShiroUser[]> {
 		token,
 	});
 
-	if (!result.ok) return [];
+	if (!result.ok) return null;
 	return (result.data as any).users ?? [];
 }
 
 /** Envia heartbeat para manter usuário como "online" (chama a cada 60s) */
-export async function sendHeartbeat(): Promise<void> {
+export async function sendHeartbeat(): Promise<boolean> {
 	const token = getToken();
-	if (!token || !window.api?.apiRequest) return;
+	if (!token || !window.api?.apiRequest) return false;
 
-	await window.api.apiRequest({
+	const result = await window.api.apiRequest({
 		endpoint: "/api/users/heartbeat",
 		method: "POST",
 		token,
 	});
+	return result.ok;
 }
 
 // ══════════════════════════════════════════
@@ -507,6 +508,7 @@ export interface RoomInvite {
 }
 
 export interface FriendsResponse {
+	ok: boolean;
 	friends: FriendInfo[];
 	friendRequests: FriendRequest[];
 	roomInvites: RoomInvite[];
@@ -515,7 +517,7 @@ export interface FriendsResponse {
 export async function getFriends(): Promise<FriendsResponse> {
 	const token = getToken();
 	if (!token || !window.api?.apiRequest) {
-		return { friends: [], friendRequests: [], roomInvites: [] };
+		return { ok: false, friends: [], friendRequests: [], roomInvites: [] };
 	}
 
 	const result = await window.api.apiRequest({
@@ -525,11 +527,12 @@ export async function getFriends(): Promise<FriendsResponse> {
 	});
 
 	if (!result.ok) {
-		return { friends: [], friendRequests: [], roomInvites: [] };
+		return { ok: false, friends: [], friendRequests: [], roomInvites: [] };
 	}
 
 	const data = result.data as any;
 	return {
+		ok: true,
 		friends: data.friends ?? [],
 		friendRequests: data.friendRequests ?? [],
 		roomInvites: data.roomInvites ?? [],

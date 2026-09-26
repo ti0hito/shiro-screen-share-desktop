@@ -100,6 +100,7 @@ import {
 	updateRoomSettings,
 } from "./authManager";
 import { P2PManager } from "./p2pManager";
+import { Poller } from "./poller";
 import { AudioPipeline } from "./audioPipeline";
 import { SourcePicker } from "./sourcePicker";
 import {
@@ -124,7 +125,6 @@ export interface SystemNotice {
 }
 
 class ShiroApp {
-	private friendsRefreshInterval: ReturnType<typeof setInterval> | null = null;
 	private friends: FriendInfo[] = [];
 	private friendRequests: FriendRequest[] = [];
 	private roomInvites: RoomInvite[] = [];
@@ -155,10 +155,14 @@ class ShiroApp {
 	private currentVideoTrack: MediaStreamTrack | null = null;
 	private previewStream: MediaStream | null = null;
 	private selectedTargetUserId: string | null = null;
-	private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
-	private usersRefreshInterval: ReturnType<typeof setInterval> | null = null;
-	private roomsRefreshInterval: ReturnType<typeof setInterval> | null = null;
+	private pollers: Poller[] = [];
 	private thumbnailInterval: ReturnType<typeof setInterval> | null = null;
+	private mainUiInitialized = false;
+	private autoConnectInFlight = false;
+	private authUiInitialized = false;
+	// Indicam se já houve ao menos um carregamento bem-sucedido (para não trocar dados bons por "vazio" em falhas)
+	private roomsLoaded = false;
+	private usersLoaded = false;
 
 	private rooms: RoomInfo[] = [];
 	private onlineUsers: ShiroUser[] = [];
@@ -192,8 +196,11 @@ class ShiroApp {
 		if (viewLogin) viewLogin.classList.remove("hidden");
 		if (viewMain) viewMain.classList.add("hidden");
 
-		this.setupAuthTabs();
-		this.setupAuthForms();
+		if (!this.authUiInitialized) {
+			this.authUiInitialized = true;
+			this.setupAuthTabs();
+			this.setupAuthForms();
+		}
 
 		const usernameInput = document.getElementById("login-username") as HTMLInputElement | null;
 		const rememberChk = document.getElementById("login-remember-me") as HTMLInputElement | null;
@@ -561,6 +568,24 @@ class ShiroApp {
 			this.p2pManager.startSignaling();
 		}
 
+		if (!this.mainUiInitialized) {
+			this.mainUiInitialized = true;
+			this.setupMainUi();
+		}
+
+		this.roomsLoaded = false;
+		this.usersLoaded = false;
+
+		await this.refreshRooms();
+		await this.refreshSources();
+		await this.refreshFriends();
+		await this.refreshUsersList();
+
+		this.startPolling();
+	}
+
+	/** Registra listeners da tela principal (executa uma única vez, mesmo após logout/login) */
+	private setupMainUi(): void {
 		setupWindowControls();
 		this.setupThemeToggle();
 		this.setupShiroPromo();
@@ -590,19 +615,6 @@ class ShiroApp {
 		this.audioVisualizer.mount("vu-canvas");
 		this.refreshIcons();
 
-		await this.refreshRooms();
-		await this.refreshSources();
-		await this.refreshFriends();
-		await this.refreshUsersList();
-
-		this.heartbeatInterval = setInterval(() => sendHeartbeat(), 60_000);
-		sendHeartbeat();
-
-		this.usersRefreshInterval = setInterval(() => this.refreshUsersList(), 20_000);
-		this.roomsRefreshInterval = setInterval(() => this.refreshRooms(), 15_000);
-		this.friendsRefreshInterval = setInterval(() => this.refreshFriends(), 10_000);
-		this.thumbnailInterval = setInterval(() => this.updateAllThumbnails(), 120_000); // Atualiza preview estática a cada 2 minutos
-
 		window.addEventListener("keydown", (e) => {
 			if (e.key === "Escape") this.restoreGridMode();
 		});
@@ -617,6 +629,36 @@ class ShiroApp {
 			}
 			this.p2pManager?.hangupAll();
 		});
+	}
+
+	/**
+	 * Inicia os pollings da API. Cada poller não se sobrepõe, faz backoff em falhas
+	 * e desacelera com a janela oculta (bandeja/minimizada).
+	 */
+	private startPolling(): void {
+		this.stopPolling();
+		this.pollers = [
+			// Heartbeat mantém a presença online: não desacelera com a janela oculta
+			new Poller(() => sendHeartbeat(), { intervalMs: 60_000, hiddenFactor: 1 }),
+			new Poller(() => this.refreshRooms(), { intervalMs: 15_000 }),
+			new Poller(() => this.refreshFriends(), { intervalMs: 15_000 }),
+			new Poller(() => this.refreshUsersList(), { intervalMs: 30_000 }),
+			// Fontes locais (sem API): mantidas com a janela oculta por causa do Stream Deck
+			new Poller(() => this.refreshSources(), { intervalMs: 15_000, hiddenFactor: 1 }),
+		];
+		this.pollers[0].start(true);
+		for (const poller of this.pollers.slice(1)) poller.start();
+
+		this.thumbnailInterval = setInterval(() => this.updateAllThumbnails(), 120_000); // Atualiza preview estática a cada 2 minutos
+	}
+
+	private stopPolling(): void {
+		for (const poller of this.pollers) poller.stop();
+		this.pollers = [];
+		if (this.thumbnailInterval) {
+			clearInterval(this.thumbnailInterval);
+			this.thumbnailInterval = null;
+		}
 	}
 
 	private setupPanelTabs(): void {
@@ -1089,14 +1131,30 @@ class ShiroApp {
 		this.refreshIcons();
 	}
 
-	private async refreshRooms(): Promise<void> {
+	private async refreshRooms(): Promise<boolean> {
+		let ok = false;
 		try {
 			const res = await getRooms();
 			if (res.ok) {
 				this.rooms = res.rooms;
+				this.roomsLoaded = true;
+				ok = true;
 			}
 		} catch (err) {
 			console.warn("[App] Erro ao carregar lista de salas:", err);
+		}
+		// Falha sem nenhum dado anterior: mostra erro em vez de "nenhuma sala"
+		if (!ok && !this.roomsLoaded) {
+			const listEl = document.getElementById("rooms-list");
+			if (listEl) {
+				listEl.innerHTML = `
+				<div class="users-empty">
+					<i data-lucide="wifi-off"></i>
+					<span>Não foi possível carregar as salas. Tentando novamente...</span>
+				</div>`;
+				this.refreshIcons();
+			}
+			return false;
 		}
 		const searchInput = document.getElementById("input-search-rooms") as HTMLInputElement | null;
 		const query = searchInput?.value.toLowerCase() ?? "";
@@ -1111,6 +1169,7 @@ class ShiroApp {
 			}
 		}
 		this.updateCurrentRoomBanner();
+		return ok;
 	}
 
 	private async autoConnectRoomStreams(): Promise<void> {
@@ -1134,15 +1193,24 @@ class ShiroApp {
 		}
 
 		// 2. Conecta a qualquer transmissão ativa na sala que ainda não esteja visível
-		for (const streamInfo of activeStreams) {
-			if (streamInfo.userId && streamInfo.userId !== currentUser?.id) {
-				const hasStream = this.remoteStreams.has(streamInfo.userId);
-				if (!hasStream) {
-					console.log(`[App] Detectada stream ativa de ${streamInfo.username} (${streamInfo.userId}) fora do grid. Re-negociando P2P...`);
-					const hasConn = this.p2pManager?.hasPeerConnection(streamInfo.userId);
-					await this.p2pManager?.renegotiate(streamInfo.userId, !hasConn);
-				}
+		if (this.autoConnectInFlight) return;
+		this.autoConnectInFlight = true;
+		try {
+			for (const streamInfo of activeStreams) {
+				const peerId = streamInfo.userId;
+				if (!peerId || peerId === currentUser?.id || this.remoteStreams.has(peerId)) continue;
+
+				// Tentativa recente ainda em andamento: aguarda em vez de reofertar por cima
+				if (this.p2pManager?.isConnecting(peerId, 20_000)) continue;
+
+				// Conectado mas sem mídia: renegocia na mesma conexão.
+				// Sem conexão, ou presa conectando há mais de 20s: recomeça do zero.
+				const connected = this.p2pManager?.isConnected(peerId) ?? false;
+				console.log(`[App] Detectada stream ativa de ${streamInfo.username} (${peerId}) fora do grid. ${connected ? "Renegociando" : "Iniciando nova conexão"} P2P...`);
+				await this.p2pManager?.renegotiate(peerId, !connected);
 			}
+		} finally {
+			this.autoConnectInFlight = false;
 		}
 	}
 
@@ -1622,17 +1690,29 @@ class ShiroApp {
 		}
 
 		btnRefresh?.addEventListener("click", () => this.refreshSources());
-		setInterval(() => this.refreshSources(), 15_000);
 	}
 
 	// ------------------------------------------------------------------------------------------------------------------------------
 	//  USERS PANEL (Exibe todos, inclusive VocÃª)
 	// ------------------------------------------------------------------------------------------------------------------------------
-	private async refreshUsersList(): Promise<void> {
+	private async refreshUsersList(): Promise<boolean> {
 		const listEl = document.getElementById("users-list");
-		if (!listEl) return;
+		if (!listEl) return true;
 
 		const users = await getOnlineUsers();
+		if (users === null) {
+			// Falha na API: mantém a última lista válida na tela
+			if (!this.usersLoaded) {
+				listEl.innerHTML = `
+				<div class="users-empty">
+					<i data-lucide="wifi-off"></i>
+					<span>Não foi possível carregar os usuários. Tentando novamente...</span>
+				</div>`;
+				this.refreshIcons();
+			}
+			return false;
+		}
+		this.usersLoaded = true;
 		this.onlineUsers = users;
 		const currentUser = getUser();
 
@@ -1643,7 +1723,7 @@ class ShiroApp {
 					<span>Nenhum usuário online</span>
 				</div>`;
 			this.refreshIcons();
-			return;
+			return true;
 		}
 
 		listEl.innerHTML = users
@@ -1695,6 +1775,7 @@ class ShiroApp {
 		});
 
 		this.refreshIcons();
+		return true;
 	}
 
 	private escapeHtml(str: string): string {
@@ -1963,10 +2044,7 @@ class ShiroApp {
 			this.remoteStreams.clear();
 			this.updateCurrentRoomBanner();
 			this.audioPipeline.stop();
-			if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
-			if (this.usersRefreshInterval) clearInterval(this.usersRefreshInterval);
-			if (this.roomsRefreshInterval) clearInterval(this.roomsRefreshInterval);
-			if (this.thumbnailInterval) clearInterval(this.thumbnailInterval);
+			this.stopPolling();
 
 			logout();
 			this.showLoginView(checkSavedSession());
@@ -2316,9 +2394,11 @@ class ShiroApp {
 		document.getElementById("btn-refresh-friends")?.addEventListener("click", () => this.refreshFriends());
 	}
 
-	private async refreshFriends(): Promise<void> {
+	private async refreshFriends(): Promise<boolean> {
 		try {
 			const res = await getFriends();
+			// Falha na API: mantém amigos/pedidos/convites anteriores
+			if (!res.ok) return false;
 			this.friends = res.friends;
 			this.friendRequests = res.friendRequests;
 			this.roomInvites = res.roomInvites;
@@ -2349,8 +2429,10 @@ class ShiroApp {
 
 			// Verifica se há pedidos de amizade para exibir toast
 			this.checkFriendRequestsToast();
+			return true;
 		} catch (err) {
 			console.warn("[App] Erro ao carregar amigos:", err);
+			return false;
 		}
 	}
 

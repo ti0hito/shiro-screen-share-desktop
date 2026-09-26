@@ -25,6 +25,12 @@ let activeSseRequest: http.ClientRequest | null = null;
 let currentSseUserToken: string | null = null;
 let sseReconnectTimer: NodeJS.Timeout | null = null;
 
+// Agents com keep-alive: reaproveitam a conexão TLS entre requisições em vez de
+// abrir um handshake novo a cada chamada. Sockets ociosos são fechados após 20s.
+const keepAliveOptions = { keepAlive: true, keepAliveMsecs: 10_000, maxSockets: 6, maxFreeSockets: 2, timeout: 20_000 };
+const httpsAgent = new https.Agent(keepAliveOptions);
+const httpAgent = new http.Agent(keepAliveOptions);
+
 
 type SourceEntry = {
 	id: string;
@@ -66,7 +72,6 @@ function makeSecureRequest(
 			const headers: Record<string, string | number> = {
 				"Content-Type": "application/json",
 				"X-API-Key": apiKey,
-				"Connection": "close",
 			};
 
 			if (opts.token) {
@@ -79,10 +84,11 @@ function makeSecureRequest(
 
 			const isHttps = url.protocol === "https:";
 			const client = isHttps ? https : http;
+			const agent = isHttps ? httpsAgent : httpAgent;
 
 			const req = client.request(
 				url,
-				{ method, headers, timeout: 15000, agent: false },
+				{ method, headers, timeout: 15000, agent },
 				(res) => {
 					let data = "";
 					res.on("data", (chunk) => (data += chunk));
