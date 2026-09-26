@@ -44,9 +44,9 @@ Livre de intermediários pesados ou servidores de streaming pagos, o app se cone
 ## 🏗️ Arquitetura do Sistema
 
 ```
-┌────────────────────────────────────────────────────────────────────────┐
-│                        Electron Main Process (Node)                    │
-│                                                                        │
+┌───────────────────────────────────────────────────────────────────────┐
+│                        Electron Main Process (Node)                   │
+│                                                                       │
 │  ┌─────────────────┐  ┌──────────────────┐  ┌──────────────────────┐  │
 │  │   AudioEngine   │  │   IpcHandlers    │  │    WindowScanner     │  │
 │  │ (WASAPI capture)│  │ (Safe IPC + SSE) │  │  (Win32 enumeration) │  │
@@ -55,8 +55,8 @@ Livre de intermediários pesados ou servidores de streaming pagos, o app se cone
 └───────────┼────────────────────┼───────────────────────┼──────────────┘
             │                    │                       │
 ┌───────────▼────────────────────▼───────────────────────▼──────────────┐
-│                        Electron Renderer (UI)                          │
-│                                                                        │
+│                        Electron Renderer (UI)                         │
+│                                                                       │
 │  ┌─────────────────┐  ┌──────────────────┐  ┌──────────────────────┐  │
 │  │  Auth & Rooms   │  │    P2PManager    │  │  Multi-Stream Grid   │  │
 │  │ (JWT Session)   │  │ (Native WebRTC)  │  │ (Focus / Maximized)  │  │
@@ -64,12 +64,12 @@ Livre de intermediários pesados ou servidores de streaming pagos, o app se cone
 └────────────────────────────────┼──────────────────────────────────────┘
                                  │ SDP & ICE Signals
 ┌────────────────────────────────▼──────────────────────────────────────┐
-│                    API Vercel + MongoDB Backend                        │
-│                                                                        │
+│                    API Vercel + MongoDB Backend                       │
+│                                                                       │
 │   • POST /api/auth/login & /register                                  │
-│   • POST /api/rooms/create, /join, /leave, /stream                     │
-│   • GET  /api/signal/sse (Real-Time SSE EventStream)                   │
-└────────────────────────────────────────────────────────────────────────┘
+│   • POST /api/rooms/create, /join, /leave, /stream                    │
+│   • GET  /api/signal/sse (Real-Time SSE EventStream)                  │
+└───────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -114,18 +114,29 @@ npm install
 
 ### 3. Configurar as variáveis de ambiente
 
-Crie um arquivo `.env` na raiz do projeto com as credenciais do seu ambiente:
+Copie o `.env.example` para `.env` na raiz do projeto e preencha a chave da API:
+
+```bash
+cp .env.example .env
+```
 
 ```env
-# URL da API Shiro hospedada na Vercel
-SHIRO_API_URL=https://sua-api.vercel.app
+# URL da API (opcional — padrão https://share.shirobot.xyz)
+SHIRO_API_URL=https://share.shirobot.xyz
 
-# Chave de segurança para validar chamadas na API (Header X-API-Key)
-SHIRO_API_KEY=sua-chave-secreta-compartilhada-aqui
+# Chave da API (header X-API-Key) — obrigatória para compilar
+SHIRO_API_KEY=cole-a-chave-aqui
 
 # Servidor STUN para P2P (padrão Google)
 STUN_URL=stun:stun.l.google.com:19302
 ```
+
+> 🔑 **A chave da API não fica no código** (o repositório é público). Ela é lida do `.env` e
+> embutida no app durante o build (`scripts/build-main.mjs`). Sem ela, o build para com uma
+> mensagem explicando o que fazer. Peça a chave a quem administra a API e **nunca faça commit do `.env`**.
+>
+> No **GitHub Actions**, a chave vem do secret `SHIRO_API_KEY`
+> (Settings → Secrets and variables → Actions).
 
 ### 4. Executar em modo de desenvolvimento
 

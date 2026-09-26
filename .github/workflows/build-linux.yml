@@ -22,6 +22,9 @@ jobs:
 
       - name: Compilar e empacotar (AppImage + deb)
         run: npm run build:linux
+        env:
+          # Chave da API embutida no build (secret do repositório; nunca fica no código)
+          SHIRO_API_KEY: ${{ secrets.SHIRO_API_KEY }}
 
       - uses: actions/upload-artifact@v4
         with:

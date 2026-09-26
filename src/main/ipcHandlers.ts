@@ -21,6 +21,10 @@ import {
 	hasStreamDeckClients,
 } from "./websocketServer";
 
+// Definidos pelo esbuild em scripts/build-main.mjs (SHIRO_API_KEY embaralhada)
+declare const __SHIRO_API_KEY_DATA__: string;
+declare const __SHIRO_API_KEY_SALT__: string;
+
 // SSE bridge: guarda a requisição HTTP ativa para poder cancelar e reconectar
 let activeSseRequest: http.ClientRequest | null = null;
 let currentSseUserToken: string | null = null;
@@ -218,7 +222,21 @@ export function setupIpcHandlers(
 	});
 
 const DEFAULT_API_URL = "https://share.shirobot.xyz";
-const DEFAULT_API_KEY = "c7c14f354ac71f78695a5529064e681d8588224515366760ed76815618d9afbb";
+
+	/**
+	 * Chave da API: .env (desenvolvimento) ou a embutida no build por scripts/build-main.mjs.
+	 * Não fica no código-fonte (repositório público). Embaralhada no binário, não criptografada:
+	 * a proteção real da API é o JWT.
+	 */
+	const DEFAULT_API_KEY = (() => {
+		try {
+			const data = Buffer.from(__SHIRO_API_KEY_DATA__, "base64");
+			const salt = Buffer.from(__SHIRO_API_KEY_SALT__, "base64");
+			return Buffer.from(data.map((byte, i) => byte ^ salt[i % salt.length])).toString("utf8");
+		} catch {
+			return "";
+		}
+	})();
 
 	/**
 	 * Rota de API segura: o renderer envia endpoint + body + token JWT do usuário.
