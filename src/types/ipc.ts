@@ -12,6 +12,8 @@ export interface DeepLinkParams {
 export interface AppSettings {
 	openAtLogin: boolean;
 	autoUpdate: boolean;
+	/** Versão do app (package.json), exibida no header */
+	version: string;
 }
 
 export interface ApiRequestOptions {

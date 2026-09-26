@@ -23,7 +23,7 @@
         <div class="header-title">
           <img src="icon.ico" class="app-header-icon" alt="Shiro Logo" width="18" height="18">
           <span class="app-name">Shiro Screen Share</span>
-          <span class="badge badge-ts">P2P</span>
+          <span class="badge badge-ts app-version-badge" title="Versão do app">v—</span>
         </div>
         <div class="header-right">
           <button id="login-btn-minimize" class="win-btn" title="Minimizar">—</button>
@@ -186,7 +186,7 @@
         <div class="header-title">
           <img src="icon.ico" class="app-header-icon" alt="Shiro Logo" width="18" height="18">
           <span class="app-name">Shiro Screen Share</span>
-          <span class="badge badge-ts">P2P</span>
+          <span class="badge badge-ts app-version-badge" title="Versão do app">v—</span>
           <div id="header-room-pill" class="header-room-pill hidden" title="Sala conectada atualmente">
             <i data-lucide="lock" id="header-room-icon"></i>
             <span id="header-room-name-text">—</span>
@@ -217,27 +217,37 @@
               </div>
             </div>
           </div>
-          <!-- Info do usuário logado (Clicável para Configurar Perfil) -->
-          <div class="header-user-info clickable" id="header-user-info" title="Configurar Perfil (Apelido e Foto)">
-            <div class="user-avatar" id="header-user-avatar">S</div>
-            <span class="header-username" id="header-username">—</span>
-            <i data-lucide="settings" class="header-user-edit-icon"></i>
+          <!-- Menu da conta: clicar no perfil abre o dropdown -->
+          <div class="account-menu" id="account-menu">
+            <div class="header-user-info clickable" id="header-user-info" role="button" aria-haspopup="menu" aria-expanded="false" aria-controls="account-dropdown">
+              <div class="user-avatar" id="header-user-avatar">S</div>
+              <span class="header-username" id="header-username">—</span>
+              <i data-lucide="chevron-down" class="header-user-edit-icon"></i>
+            </div>
+            <div id="account-dropdown" class="account-dropdown hidden" role="menu">
+              <button type="button" id="btn-start-tutorial" class="account-dropdown-item" role="menuitem">
+                <i data-lucide="graduation-cap"></i>
+                <span>Tutorial</span>
+              </button>
+              <button type="button" id="btn-open-profile" class="account-dropdown-item" role="menuitem">
+                <i data-lucide="user-cog"></i>
+                <span>Perfil</span>
+              </button>
+              <button type="button" id="btn-open-app-settings" class="account-dropdown-item" role="menuitem">
+                <i data-lucide="settings"></i>
+                <span>Configurações</span>
+              </button>
+              <div class="account-dropdown-divider"></div>
+              <button type="button" id="btn-logout" class="account-dropdown-item account-dropdown-item-danger" role="menuitem">
+                <i data-lucide="log-out"></i>
+                <span>Sair da Conta</span>
+              </button>
+            </div>
           </div>
-          <!-- Tutorial guiado (refazer a qualquer momento) -->
-          <button id="btn-start-tutorial" class="win-btn help-toggle-btn" title="Tutorial: como começar a transmitir">
-            <i data-lucide="circle-help"></i>
-          </button>
           <!-- Central de Notificações com sino e badge -->
           <button id="btn-notifications-toggle" class="win-btn notif-toggle-btn" title="Central de Notificações">
             <i data-lucide="bell"></i>
             <span id="header-notif-badge" class="header-notif-badge hidden">0</span>
-          </button>
-          <!-- Ações do header -->
-          <button id="btn-theme-toggle" class="win-btn theme-toggle-btn" title="Alternar Tema">
-            <i data-lucide="sun"></i>
-          </button>
-          <button id="btn-logout" class="win-btn" title="Sair da conta">
-            <i data-lucide="log-out"></i>
           </button>
           <button id="btn-minimize" class="win-btn" title="Minimizar">—</button>
           <button id="btn-maximize" class="win-btn" title="Maximizar">☐</button>
@@ -374,7 +384,7 @@
 
             <button id="btn-refresh-sources" class="btn btn-ghost btn-sm panel-refresh-btn" title="Atualizar">
               <i data-lucide="refresh-cw"></i>
-              <span>Atualizar</span>
+              <span>Atualizar Fontes</span>
             </button>
           </div>
 
@@ -415,9 +425,6 @@
           <div id="panel-users" class="panel-section hidden">
             <div class="users-panel-header">
               <span class="users-panel-title" id="users-panel-title">Online agora</span>
-              <button id="btn-refresh-users" class="btn btn-ghost btn-icon" title="Atualizar lista">
-                <i data-lucide="refresh-cw"></i>
-              </button>
             </div>
 
             <div id="users-list" class="users-list">
@@ -426,6 +433,11 @@
                 <span>Nenhum usuário online</span>
               </div>
             </div>
+
+            <button id="btn-refresh-users" class="btn btn-ghost btn-sm panel-refresh-btn" title="Atualizar">
+              <i data-lucide="refresh-cw"></i>
+              <span>Atualizar Usuários</span>
+            </button>
           </div>
 
         </aside>
@@ -486,6 +498,33 @@
             </div>
             <div class="popover-body">
               <div class="setting-row">
+                <label for="select-preset"><i data-lucide="layers"></i> Preset</label>
+                <div class="custom-select" data-select="select-preset">
+                  <select id="select-preset" class="select-input hidden-select">
+                    <option value="economia">Economia</option>
+                    <option value="equilibrado">Equilibrado</option>
+                    <option value="padrao" selected>Padrão</option>
+                    <option value="jogos">Jogos</option>
+                    <option value="alta">Alta Qualidade</option>
+                    <option value="ultra">Ultra</option>
+                    <option value="custom">Personalizado</option>
+                  </select>
+                  <button type="button" class="select-trigger">Padrão</button>
+                  <ul class="select-dropdown">
+                    <li data-value="economia">Economia<small>720p · 30 FPS · 2,5 Mbps</small></li>
+                    <li data-value="equilibrado">Equilibrado<small>1080p · 30 FPS · 4,5 Mbps</small></li>
+                    <li data-value="padrao" class="selected">Padrão<small>1080p · 60 FPS · 4,5 Mbps</small></li>
+                    <li data-value="jogos">Jogos<small>1080p · 60 FPS · 8 Mbps</small></li>
+                    <li data-value="alta">Alta Qualidade<small>1440p · 60 FPS · 10 Mbps</small></li>
+                    <li data-value="ultra">Ultra<small>4K · 60 FPS · 15 Mbps</small></li>
+                    <li data-value="custom">Personalizado<small>Ajuste manual abaixo</small></li>
+                  </ul>
+                </div>
+              </div>
+
+              <div class="popover-divider"></div>
+
+              <div class="setting-row">
                 <label for="select-resolution"><i data-lucide="monitor"></i> Resolução</label>
                 <div class="custom-select" data-select="select-resolution">
                   <select id="select-resolution" class="select-input hidden-select">
@@ -523,23 +562,29 @@
                 </div>
               </div>
 
-              <div class="popover-divider"></div>
-
-              <div class="setting-row setting-row-checkbox">
-                <label class="checkbox-label" for="chk-open-at-login">
-                  <input type="checkbox" id="chk-open-at-login" class="custom-checkbox">
-                  <span class="checkbox-custom"></span>
-                  <span class="checkbox-text"><i data-lucide="power"></i> Iniciar com o Windows</span>
-                </label>
+              <div class="setting-row">
+                <label for="select-bitrate"><i data-lucide="gauge"></i> Bitrate</label>
+                <div class="custom-select" data-select="select-bitrate">
+                  <select id="select-bitrate" class="select-input hidden-select">
+                    <option value="2500">2,5 Mbps</option>
+                    <option value="4500" selected>4,5 Mbps</option>
+                    <option value="6000">6 Mbps</option>
+                    <option value="8000">8 Mbps</option>
+                    <option value="10000">10 Mbps</option>
+                    <option value="15000">15 Mbps</option>
+                  </select>
+                  <button type="button" class="select-trigger">4,5 Mbps</button>
+                  <ul class="select-dropdown">
+                    <li data-value="2500">2,5 Mbps</li>
+                    <li data-value="4500" class="selected">4,5 Mbps</li>
+                    <li data-value="6000">6 Mbps</li>
+                    <li data-value="8000">8 Mbps</li>
+                    <li data-value="10000">10 Mbps</li>
+                    <li data-value="15000">15 Mbps</li>
+                  </ul>
+                </div>
               </div>
 
-              <div class="setting-row setting-row-checkbox">
-                <label class="checkbox-label" for="chk-auto-update">
-                  <input type="checkbox" id="chk-auto-update" class="custom-checkbox" checked>
-                  <span class="checkbox-custom"></span>
-                  <span class="checkbox-text"><i data-lucide="refresh-cw"></i> Atualizações Automáticas</span>
-                </label>
-              </div>
             </div>
           </div>
 
@@ -764,6 +809,74 @@
   <!-- MODAL: CONFIRMAÇÃO DE ATUALIZAÇÕES AUTOMÁTICAS          -->
   <!-- ======================================================= -->
   <!-- ======================================================= -->
+  <!-- MODAL: IMAGEM DO PERFIL (foto ou banner)                -->
+  <!-- ======================================================= -->
+  <div id="modal-profile-image" class="modal-overlay hidden">
+    <div class="modal-card profile-image-card">
+      <div class="modal-header">
+        <h3><i data-lucide="image"></i> <span id="profile-image-title">Foto de Perfil</span></h3>
+        <button id="btn-close-profile-image" class="modal-close-btn" type="button"><i data-lucide="x"></i></button>
+      </div>
+      <div class="modal-body">
+        <div id="profile-image-preview" class="profile-image-preview">
+          <span class="profile-image-preview-empty">Sem imagem</span>
+        </div>
+        <div class="input-wrapper">
+          <i data-lucide="link" class="input-icon"></i>
+          <input type="url" id="input-profile-image-url" class="auth-input" placeholder="Cole o link da imagem (https://...)" maxlength="500" spellcheck="false">
+        </div>
+        <span id="profile-image-status" class="input-hint">PNG, JPG, GIF ou WebP. Use o link direto da imagem.</span>
+        <div class="modal-actions">
+          <button type="button" id="btn-remove-profile-image" class="btn btn-danger-ghost">
+            <i data-lucide="trash-2"></i>
+            <span>Remover</span>
+          </button>
+          <div class="modal-actions-spacer"></div>
+          <button type="button" id="btn-cancel-profile-image" class="btn btn-ghost">Cancelar</button>
+          <button type="button" id="btn-apply-profile-image" class="btn btn-primary" disabled>Aplicar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================================================= -->
+  <!-- MODAL: CONFIGURAÇÕES DO APP (menu da conta)             -->
+  <!-- ======================================================= -->
+  <div id="modal-app-settings" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3><i data-lucide="settings"></i> Configurações</h3>
+        <button id="btn-close-app-settings" class="modal-close-btn" type="button"><i data-lucide="x"></i></button>
+      </div>
+      <div class="modal-body app-settings-body">
+        <div class="setting-row setting-row-checkbox">
+          <label class="checkbox-label" for="chk-light-theme">
+            <input type="checkbox" id="chk-light-theme" class="custom-checkbox">
+            <span class="checkbox-custom"></span>
+            <span class="checkbox-text"><i data-lucide="sun"></i> Tema Claro</span>
+          </label>
+        </div>
+
+        <div class="setting-row setting-row-checkbox">
+          <label class="checkbox-label" for="chk-open-at-login">
+            <input type="checkbox" id="chk-open-at-login" class="custom-checkbox">
+            <span class="checkbox-custom"></span>
+            <span class="checkbox-text"><i data-lucide="power"></i> Iniciar com o Windows</span>
+          </label>
+        </div>
+
+        <div class="setting-row setting-row-checkbox">
+          <label class="checkbox-label" for="chk-auto-update">
+            <input type="checkbox" id="chk-auto-update" class="custom-checkbox" checked>
+            <span class="checkbox-custom"></span>
+            <span class="checkbox-text"><i data-lucide="refresh-cw"></i> Atualizações Automáticas</span>
+          </label>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================================================= -->
   <!-- MODAL: BOAS-VINDAS DO TUTORIAL (primeiro login)         -->
   <!-- ======================================================= -->
   <div id="modal-tutorial-welcome" class="modal-overlay hidden">
@@ -791,29 +904,6 @@
     </div>
   </div>
 
-  <div id="modal-confirm-auto-update" class="modal-overlay hidden">
-    <div class="modal-card">
-      <div class="modal-header">
-        <h3><i data-lucide="refresh-cw"></i> Atualizações Automáticas</h3>
-        <button id="btn-close-auto-update-modal" class="modal-close-btn"><i data-lucide="x"></i></button>
-      </div>
-
-      <div class="modal-body">
-        <p class="modal-desc" id="auto-update-modal-desc">
-          Ao ativar as atualizações automáticas, o Shiro Screen Share verificará novos lançamentos no GitHub em segundo plano.
-          Quando um update estiver pronto, você receberá um aviso com botão para reiniciar na hora, ou o app será atualizado automaticamente ao ser fechado e reaberto.
-        </p>
-
-        <div class="modal-actions">
-          <button type="button" id="btn-cancel-auto-update-modal" class="btn btn-ghost">Cancelar</button>
-          <button type="button" id="btn-confirm-auto-update-modal" class="btn btn-primary">
-            <i data-lucide="check"></i>
-            <span id="btn-confirm-auto-update-text">Confirmar e Ativar</span>
-          </button>
-        </div>
-      </div>
-    </div>
-  </div>
 
   <!-- ======================================================= -->
   <!-- MODAL: CONFIGURAÇÕES DE PERFIL (APELIDO & FOTO)         -->
@@ -826,91 +916,48 @@
       </div>
 
       <form id="form-profile-settings" class="modal-body" novalidate>
-        <!-- Preview do Avatar e Nome -->
+        <!-- Cartão do perfil: banner, foto e nome são editáveis clicando neles -->
         <div class="profile-preview-card">
-          <div id="profile-banner-preview" class="profile-preview-banner"></div>
+          <button type="button" id="profile-banner-preview" class="profile-preview-banner profile-editable" title="Alterar banner">
+            <span class="profile-edit-overlay"><i data-lucide="image"></i> Alterar banner</span>
+          </button>
           <div class="profile-preview-body">
-            <div class="profile-avatar-wrapper">
+            <button type="button" class="profile-avatar-wrapper profile-editable" id="btn-edit-profile-avatar" title="Alterar foto de perfil">
               <div class="profile-avatar-preview" id="profile-avatar-preview">
                 <span id="profile-avatar-preview-fallback">?</span>
-                <img id="profile-avatar-preview-img" src="" alt="Avatar Preview" class="profile-avatar-img hidden">
+                <img id="profile-avatar-preview-img" src="" alt="Foto de perfil" class="profile-avatar-img hidden">
+                <span class="profile-edit-overlay profile-edit-overlay-round"><i data-lucide="image"></i></span>
               </div>
-              <div class="profile-avatar-badge" title="Pré-visualização">
-                <i data-lucide="camera"></i>
-              </div>
-            </div>
-            <div class="profile-preview-info">
-              <h4 id="profile-preview-display-name">—</h4>
-              <span class="profile-preview-username" id="profile-preview-username">@usuario</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- Campo: Link da Imagem de Perfil -->
-        <div class="input-group">
-          <div class="input-label-row">
-            <label for="input-profile-avatar" class="input-label">Foto de Perfil (Link / URL da Imagem)</label>
-            <button type="button" id="btn-clear-profile-avatar" class="btn-link-action hidden" title="Remover link da foto">
-              <i data-lucide="trash-2"></i>
-              <span>Remover foto</span>
             </button>
+            <div id="profile-preview-badges" class="profile-preview-badges"></div>
           </div>
-          <div class="input-wrapper">
-            <i data-lucide="image" class="input-icon"></i>
-            <input
-              type="url"
-              id="input-profile-avatar"
-              class="auth-input"
-              placeholder="https://exemplo.com/minha-foto.png"
-              maxlength="500"
-            >
+          <div class="profile-preview-info">
+            <div class="profile-name-edit" title="Clique para editar seu apelido">
+              <input
+                type="text"
+                id="input-profile-nickname"
+                class="profile-name-input"
+                maxlength="24"
+                spellcheck="false"
+                autocomplete="off"
+                aria-label="Apelido"
+              >
+              <i data-lucide="pencil" class="profile-name-edit-icon"></i>
+            </div>
+            <span class="profile-preview-username" id="profile-preview-username">@usuario</span>
           </div>
-          <span class="input-hint">Insira o link direto de uma imagem (PNG, JPG, GIF, WebP).</span>
-        </div>
-
-        <!-- Campo: Link do Banner de Perfil -->
-        <div class="input-group">
-          <div class="input-label-row">
-            <label for="input-profile-banner" class="input-label">Banner de Perfil (Link / URL da Imagem)</label>
-            <button type="button" id="btn-clear-profile-banner" class="btn-link-action hidden" title="Remover link do banner">
-              <i data-lucide="trash-2"></i>
-              <span>Remover banner</span>
-            </button>
-          </div>
-          <div class="input-wrapper">
-            <i data-lucide="image" class="input-icon"></i>
-            <input
-              type="url"
-              id="input-profile-banner"
-              class="auth-input"
-              placeholder="https://exemplo.com/meu-banner.png"
-              maxlength="500"
-            >
-          </div>
-          <span class="input-hint">Insira o link direto de uma imagem para o banner (PNG, JPG, GIF, WebP).</span>
-        </div>
-
-        <!-- Campo: Apelido Personalizado -->
-        <div class="input-group">
-          <div class="input-label-row">
-            <label for="input-profile-nickname" class="input-label">Apelido Personalizado (Display Name)</label>
-            <span id="nickname-rate-badge" class="nickname-rate-badge" title="Limite de trocas de apelido">
+          <div class="profile-card-footer">
+            <span class="profile-card-hint">Clique no nome, na foto ou no banner para editar</span>
+            <span id="nickname-rate-badge" class="nickname-rate-badge" title="Trocas de apelido restantes nesta hora">
               <i data-lucide="clock" class="rate-icon"></i>
-              <span id="nickname-rate-text">6/6 trocas restantes</span>
+              <span id="nickname-rate-text">6/6 trocas de apelido</span>
             </span>
           </div>
-          <div class="input-wrapper">
-            <i data-lucide="user" class="input-icon"></i>
-            <input
-              type="text"
-              id="input-profile-nickname"
-              class="auth-input"
-              placeholder="Seu apelido visível"
-              maxlength="32"
-            >
-          </div>
-          <span class="input-hint">Você pode trocar seu apelido até 6 vezes por hora.</span>
         </div>
+
+        <!-- Valores editados (preenchidos pelo modal de imagem) -->
+        <input type="hidden" id="input-profile-avatar">
+        <input type="hidden" id="input-profile-banner">
 
         <div id="profile-settings-error" class="auth-error" role="alert"></div>
         <div id="profile-settings-success" class="auth-success hidden" role="status"></div>

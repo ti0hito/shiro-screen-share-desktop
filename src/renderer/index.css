@@ -674,6 +674,108 @@ svg {
   margin-right: 2px;
 }
 
+/* ── Menu da conta (dropdown do perfil no header) ── */
+.account-menu {
+  position: relative;
+  -webkit-app-region: no-drag;
+}
+
+/* A seta do menu não gira no hover (o giro era da engrenagem antiga); só vira ao abrir */
+.header-user-info.clickable:hover .header-user-edit-icon {
+  transform: none;
+}
+
+.header-user-info.active {
+  background: rgba(128, 128, 128, 0.15);
+}
+
+.header-user-info.active .header-user-edit-icon {
+  opacity: 1;
+  color: var(--accent-purple);
+  transform: rotate(180deg);
+}
+
+.account-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 4px;
+  z-index: 1250;
+  min-width: 200px;
+  padding: 6px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  animation: accountDropdownIn 0.14s ease;
+}
+
+@keyframes accountDropdownIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.account-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-main);
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+.account-dropdown-item svg {
+  width: 15px;
+  height: 15px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  transition: color 0.12s ease;
+}
+
+.account-dropdown-item:hover {
+  background: rgba(128, 128, 128, 0.15);
+}
+
+.account-dropdown-item:hover svg {
+  color: var(--accent-purple);
+}
+
+.account-dropdown-item-danger,
+.account-dropdown-item-danger svg {
+  color: var(--danger-color);
+}
+
+.account-dropdown-item-danger:hover {
+  background: rgba(239, 68, 68, 0.12);
+}
+
+.account-dropdown-item-danger:hover svg {
+  color: var(--danger-color);
+}
+
+.account-dropdown-divider {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--border-color);
+}
+
+/* Modal de Configurações do app */
+.app-settings-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 /* ── Divulgação da Shiro Bot (ícone de gatinho no header) ── */
 .shiro-promo {
   position: relative;
@@ -3368,7 +3470,8 @@ svg {
   content: "";
   position: absolute;
   inset: 0;
-  background: linear-gradient(to bottom, transparent 35%, rgba(0, 0, 0, 0.45) 100%);
+  /* O banner se dissolve na cor do cartão (sem linha de corte na base) */
+  background: linear-gradient(to bottom, transparent 45%, color-mix(in srgb, var(--bg-card) 70%, transparent) 88%, var(--bg-card) 100%);
   pointer-events: none;
 }
 
@@ -5216,4 +5319,344 @@ svg {
   font-size: 17px;
   font-weight: 700;
   color: var(--text-heading);
+}
+
+/* ══════════════════════════════════════════════════════════
+   PERFIL DO USUÁRIO — cartão interativo (clicar para editar)
+   ══════════════════════════════════════════════════════════ */
+.modal-profile-card {
+  max-width: 520px;
+}
+
+/* Abertura: sobe suavemente com leve escala, overlay escurece junto */
+#modal-profile-settings .modal-card,
+#modal-profile-image .modal-card {
+  animation: profileModalIn 0.38s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+#modal-profile-settings .profile-preview-card {
+  animation: profileCardIn 0.5s cubic-bezier(0.16, 1, 0.3, 1) 0.06s both;
+}
+
+@keyframes profileModalIn {
+  from { opacity: 0; transform: translateY(18px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes profileCardIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.modal-profile-card .profile-preview-card {
+  margin-bottom: 4px;
+}
+
+/* Banner clicável */
+.profile-preview-banner.profile-editable {
+  display: block;
+  height: 150px;
+  padding: 0;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+}
+
+/* Overlay "Alterar" que aparece ao passar o mouse na foto/banner */
+.profile-edit-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  pointer-events: none;
+}
+
+.profile-edit-overlay svg {
+  width: 15px;
+  height: 15px;
+}
+
+.profile-editable:hover .profile-edit-overlay,
+.profile-editable:focus-visible .profile-edit-overlay {
+  opacity: 1;
+}
+
+.profile-edit-overlay-round {
+  border-radius: 50%;
+}
+
+.profile-edit-overlay-round svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* Linha da foto + insígnias */
+.modal-profile-card .profile-preview-body {
+  justify-content: space-between;
+  align-items: flex-end;
+  margin-top: -46px;
+  padding: 0 16px;
+}
+
+.profile-avatar-wrapper.profile-editable {
+  padding: 0;
+  border: none;
+  background: none;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.modal-profile-card .profile-avatar-preview {
+  width: 92px;
+  height: 92px;
+  font-size: 34px;
+  border-width: 4px;
+}
+
+.profile-preview-badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+  padding-bottom: 6px;
+  max-width: calc(100% - 110px);
+}
+
+/* Nome editável no próprio cartão */
+.modal-profile-card .profile-preview-info {
+  padding: 8px 16px 0;
+  gap: 0;
+}
+
+.profile-name-edit {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin-left: -6px;
+}
+
+.profile-name-input {
+  width: 100%;
+  padding: 2px 30px 2px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-heading);
+  font-family: inherit;
+  font-size: 20px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.profile-name-input::placeholder {
+  color: var(--text-heading);
+  opacity: 0.85;
+}
+
+.profile-name-input:hover {
+  background: rgba(128, 128, 128, 0.12);
+}
+
+.profile-name-input:focus {
+  outline: none;
+  cursor: text;
+  background: var(--bg-panel);
+  border-color: var(--accent-purple);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.profile-name-edit-icon {
+  position: absolute;
+  right: 8px;
+  width: 14px;
+  height: 14px;
+  color: var(--text-muted);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
+.profile-name-edit:hover .profile-name-edit-icon,
+.profile-name-input:focus + .profile-name-edit-icon {
+  opacity: 1;
+}
+
+.modal-profile-card .profile-preview-username {
+  padding-left: 1px;
+}
+
+/* Rodapé do cartão: dica + trocas de apelido restantes */
+.profile-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border-color);
+}
+
+.profile-card-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.profile-card-footer .nickname-rate-badge {
+  flex-shrink: 0;
+}
+
+/* ── Modal de imagem (foto/banner) ── */
+#modal-profile-image {
+  z-index: 1100;
+}
+
+.profile-image-card {
+  max-width: 420px;
+}
+
+.profile-image-card .modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.profile-image-preview {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 4px;
+  background-color: var(--bg-card);
+  background-size: cover;
+  background-position: center;
+  border: 1px dashed var(--border-color);
+  overflow: hidden;
+}
+
+.profile-image-preview.is-banner {
+  width: 100%;
+  height: 120px;
+  border-radius: var(--radius-md);
+}
+
+.profile-image-preview.is-avatar {
+  width: 112px;
+  height: 112px;
+  border-radius: 50%;
+}
+
+.profile-image-preview.has-image {
+  border-style: solid;
+}
+
+.profile-image-preview-empty {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.profile-image-preview.has-image .profile-image-preview-empty {
+  display: none;
+}
+
+.input-hint.status-ok {
+  color: var(--success-color);
+}
+
+.input-hint.status-error {
+  color: var(--danger-color);
+}
+
+.modal-actions-spacer {
+  flex: 1;
+}
+
+/* ── Saída animada dos modais (hideModalAnimated no app.ts: 200ms) ── */
+.modal-overlay.is-closing {
+  animation: modalOverlayOut 0.2s ease forwards;
+  pointer-events: none;
+}
+
+.modal-overlay.is-closing > .modal-card {
+  animation: modalCardOut 0.2s cubic-bezier(0.4, 0, 1, 1) forwards !important;
+}
+
+@keyframes modalOverlayOut {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@keyframes modalCardOut {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to { opacity: 0; transform: translateY(10px) scale(0.97); }
+}
+
+/* ── Select customizado: abre para cima quando falta espaço abaixo ── */
+.custom-select.drop-up .select-dropdown {
+  top: auto;
+  bottom: calc(100% + 4px);
+  transform: translateY(4px);
+}
+
+.custom-select.drop-up.open .select-dropdown {
+  transform: translateY(0);
+}
+
+/* Subtítulo dos itens (presets de transmissão) */
+.select-dropdown li small {
+  display: block;
+  margin-top: 1px;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  opacity: 0.8;
+}
+
+.select-dropdown li.selected small {
+  color: inherit;
+  opacity: 0.85;
+}
+
+/* ── Botões de atualizar: giram enquanto a lista atualiza ── */
+.is-refreshing svg {
+  animation: spin 0.8s linear infinite;
+}
+
+/* ── Tela cheia da transmissão ── */
+.stream-fullscreen-btn {
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(8px);
+  color: #fff;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.stream-fullscreen-btn:hover {
+  background: var(--accent-purple);
+}
+
+.stream-fullscreen-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.right-section:fullscreen {
+  background: #000;
 }
