@@ -1,6 +1,6 @@
 import path from "node:path";
 import dotenv from "dotenv";
-import { app, BrowserWindow, Menu, nativeImage, Tray } from "electron";
+import { app, BrowserWindow, ipcMain, Menu, nativeImage, Tray } from "electron";
 import { autoUpdater } from "electron-updater";
 import { AudioCaptureEngine } from "./audioEngine";
 import { setupIpcHandlers } from "./ipcHandlers";
@@ -236,7 +236,7 @@ function setupAutoUpdater(): void {
 	autoUpdater.on("update-downloaded", (info) => {
 		if (!autoUpdateEnabled) return;
 		console.log(
-			"[AutoUpdater] ✅ Update downloaded. Will install automatically on app quit.",
+			"[AutoUpdater] Update downloaded. Will install automatically on app quit.",
 		);
 		if (mainWindow && !mainWindow.isDestroyed()) {
 			mainWindow.webContents.send("update-downloaded", info);
@@ -264,6 +264,28 @@ app.on("window-all-closed", () => {
 	if (process.platform !== "darwin") {
 		app.quit();
 	}
+});
+
+// Antes de sair, dá ao renderer a chance de sair da sala / encerrar a transmissão na API.
+// Sem isso, a requisição de leave feita no beforeunload morre junto com o processo e o
+// usuário fica como membro-fantasma da sala no servidor.
+const QUIT_CLEANUP_TIMEOUT_MS = 3000;
+let quitCleanupDone = false;
+
+app.on("before-quit", (event) => {
+	if (quitCleanupDone || !mainWindow || mainWindow.isDestroyed()) return;
+	event.preventDefault();
+	appShouldQuit = true;
+
+	const finish = () => {
+		if (quitCleanupDone) return;
+		quitCleanupDone = true;
+		ipcMain.removeListener("app-quit-ready", finish);
+		app.quit();
+	};
+	ipcMain.once("app-quit-ready", finish);
+	setTimeout(finish, QUIT_CLEANUP_TIMEOUT_MS);
+	mainWindow.webContents.send("app-before-quit");
 });
 
 app.on("will-quit", () => {

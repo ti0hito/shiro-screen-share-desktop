@@ -201,7 +201,7 @@
             <div class="shiro-promo-menu" role="menu">
               <div class="shiro-promo-card">
                 <div class="shiro-promo-header">
-                  <div class="shiro-promo-avatar"><i data-lucide="cat"></i></div>
+                  <div class="shiro-promo-avatar"><img src="icon.ico" alt="Shiro" width="36" height="36"></div>
                   <div class="shiro-promo-heading">
                     <span class="shiro-promo-title">Conheça a Shiro</span>
                     <span class="shiro-promo-subtitle">shirobot.xyz</span>
@@ -223,6 +223,10 @@
             <span class="header-username" id="header-username">—</span>
             <i data-lucide="settings" class="header-user-edit-icon"></i>
           </div>
+          <!-- Tutorial guiado (refazer a qualquer momento) -->
+          <button id="btn-start-tutorial" class="win-btn help-toggle-btn" title="Tutorial: como começar a transmitir">
+            <i data-lucide="circle-help"></i>
+          </button>
           <!-- Central de Notificações com sino e badge -->
           <button id="btn-notifications-toggle" class="win-btn notif-toggle-btn" title="Central de Notificações">
             <i data-lucide="bell"></i>
@@ -410,7 +414,7 @@
           <!-- Sub-painel: Usuários online -->
           <div id="panel-users" class="panel-section hidden">
             <div class="users-panel-header">
-              <span class="users-panel-title">Online agora</span>
+              <span class="users-panel-title" id="users-panel-title">Online agora</span>
               <button id="btn-refresh-users" class="btn btn-ghost btn-icon" title="Atualizar lista">
                 <i data-lucide="refresh-cw"></i>
               </button>
@@ -426,7 +430,7 @@
 
         </aside>
 
-        <!-- ── Área Direita: Grid de Transmissões ao Vivo ── -->
+        <!-- ── Área Direita: Transmissões ao Vivo ── -->
         <section class="right-section">
 
           <!-- Botão Flutuante Transparente para reabrir Sidebar em modo colapsado -->
@@ -440,7 +444,7 @@
               <!-- Placeholder padrão quando nenhuma transmissão está em andamento -->
               <div id="main-grid-placeholder" class="main-grid-placeholder">
                 <i data-lucide="radio" class="placeholder-lucide-icon"></i>
-                <h3>Grid de Transmissões ao Vivo</h3>
+                <h3>Transmissões ao Vivo</h3>
                 <p>Nenhuma transmissão ativa nesta sala. Selecione uma fonte ao lado e clique em <b>Iniciar Transmissão</b>!</p>
               </div>
             </div>
@@ -759,6 +763,34 @@
   <!-- ======================================================= -->
   <!-- MODAL: CONFIRMAÇÃO DE ATUALIZAÇÕES AUTOMÁTICAS          -->
   <!-- ======================================================= -->
+  <!-- ======================================================= -->
+  <!-- MODAL: BOAS-VINDAS DO TUTORIAL (primeiro login)         -->
+  <!-- ======================================================= -->
+  <div id="modal-tutorial-welcome" class="modal-overlay hidden">
+    <div class="modal-card tutorial-welcome-card">
+      <div class="modal-body">
+        <div class="tutorial-welcome-icon"><i data-lucide="graduation-cap"></i></div>
+        <h3 class="tutorial-welcome-title">Bem-vindo ao Shiro Screen Share!</h3>
+        <p class="modal-desc">
+          Quer um tour rápido para começar a compartilhar sua tela? Leva menos de um minuto.
+        </p>
+        <ol class="tutorial-welcome-steps">
+          <li><span>1</span> Criar ou entrar em uma sala</li>
+          <li><span>2</span> Escolher a janela ou tela</li>
+          <li><span>3</span> Ajustar qualidade e áudio</li>
+          <li><span>4</span> Começar a transmitir</li>
+        </ol>
+        <div class="modal-actions">
+          <button type="button" id="btn-tutorial-welcome-skip" class="btn btn-ghost">Agora não</button>
+          <button type="button" id="btn-tutorial-welcome-start" class="btn btn-primary">
+            <i data-lucide="play"></i>
+            <span>Fazer tutorial</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="modal-confirm-auto-update" class="modal-overlay hidden">
     <div class="modal-card">
       <div class="modal-header">

@@ -8,16 +8,22 @@ import {
 	Cat,
 	Check,
 	CheckCircle2,
+	CircleHelp,
 	ChevronLeft,
 	ChevronRight,
 	Clock,
+	CodeXml,
 	Copy,
 	createIcons,
 	ExternalLink,
+	FlaskConical,
 	Eye,
 	EyeOff,
 	CheckCheck,
 	Globe,
+	GraduationCap,
+	Hammer,
+	House,
 	Hash,
 	Image,
 	Info,
@@ -43,6 +49,7 @@ import {
 	ShieldCheck,
 	Sparkles,
 	Square,
+	Timer,
 	Sun,
 	Target,
 	Trash2,
@@ -67,6 +74,8 @@ import type {
 } from "../../types/capture";
 import {
 	acceptFriendRequest,
+	type BadgeId,
+	type BadgeStats,
 	checkSavedSession,
 	createRoom,
 	dismissRoomInvite,
@@ -76,6 +85,7 @@ import {
 	getOnlineUsers,
 	getProfile,
 	getRooms,
+	getRoomStreams,
 	getToken,
 	getUser,
 	inviteFriendToRoom,
@@ -95,12 +105,14 @@ import {
 	saveRememberSession,
 	sendFriendRequest,
 	sendHeartbeat,
+	setUserBadge,
 	ShiroUser,
 	updateProfile,
 	updateRoomSettings,
 } from "./authManager";
 import { P2PManager } from "./p2pManager";
 import { Poller } from "./poller";
+import { GuidedTour, type TourStep } from "./tutorial";
 import { AudioPipeline } from "./audioPipeline";
 import { SourcePicker } from "./sourcePicker";
 import {
@@ -114,7 +126,74 @@ function setStreamStatus(live: boolean, text: string): void {
 	badge.textContent = text;
 	badge.className = `badge ${live ? "badge-live" : "badge-offline"}`;
 }
+interface PollIntervals {
+	heartbeat: number;
+	rooms: number;
+	friends: number;
+	users: number;
+}
+
+const POLL_INTERVALS: { fallback: PollIntervals; withServerEvents: PollIntervals } = {
+	// Servidor sem avisos em tempo real: polling é a única fonte de atualização
+	fallback: { heartbeat: 60_000, rooms: 15_000, friends: 15_000, users: 30_000 },
+	// Servidor envia avisos pelo SSE (que também mantém a presença online):
+	// polling é só rede de segurança. Heartbeat < 150s (limite de offline das salas no servidor).
+	withServerEvents: { heartbeat: 120_000, rooms: 120_000, friends: 300_000, users: 300_000 },
+};
+
 export const DEV_ADMIN_ID = "6ab1e7120ee994421cd420be";
+
+/** Desenvolvedores oficiais (a API valida; aqui só controla o que aparece na tela) */
+const DEVELOPER_IDS = ["6ab1e7120ee994421cd420be", "6ab20b7b889d5d620b52c89a"];
+
+interface BadgeDef {
+	name: string;
+	icon: string;
+	/** Texto do tooltip (recebe a última contagem das estatísticas) */
+	describe: (stats: BadgeStats | undefined, viewerIsDev: boolean) => string;
+}
+
+function formatStreamTime(seconds: number): string {
+	const totalMinutes = Math.floor(seconds / 60);
+	const hours = Math.floor(totalMinutes / 60);
+	const minutes = totalMinutes % 60;
+	return hours > 0 ? `${hours}h ${minutes}min` : `${minutes}min`;
+}
+
+/** Ordem de exibição = ordem das chaves */
+const BADGE_DEFS: Record<BadgeId, BadgeDef> = {
+	developer: {
+		name: "Desenvolvedor",
+		icon: "code-xml",
+		describe: () => "Desenvolvedor oficial do Shiro Screen Share",
+	},
+	"early-user": {
+		name: "Primeiros usuários",
+		icon: "sparkles",
+		describe: () => "Um dos 10 primeiros usuários do app",
+	},
+	"beta-tester": {
+		name: "Beta Tester",
+		icon: "flask-conical",
+		describe: () => "Ajudou a testar o app",
+	},
+	"stream-24-7": {
+		name: "24/7",
+		icon: "timer",
+		describe: (s) => `${formatStreamTime(s?.streamSeconds ?? 0)} de transmissão`,
+	},
+	builder: {
+		name: "Construtor Civil",
+		icon: "hammer",
+		describe: (s) => `${s?.roomsCreated ?? 0} salas criadas`,
+	},
+	neighbor: {
+		name: "Amigo da Vizinhança",
+		icon: "house",
+		// A contagem exata de amigos só aparece para os desenvolvedores
+		describe: (s, viewerIsDev) => (viewerIsDev ? `20+ amigos (total atual: ${s?.friendsCount ?? 0})` : "Fez 20 amigos no app"),
+	},
+};
 
 export interface SystemNotice {
 	id: string;
@@ -156,9 +235,21 @@ class ShiroApp {
 	private previewStream: MediaStream | null = null;
 	private selectedTargetUserId: string | null = null;
 	private pollers: Poller[] = [];
+	private heartbeatPoller: Poller | null = null;
+	private roomsPoller: Poller | null = null;
+	private friendsPoller: Poller | null = null;
+	private usersPoller: Poller | null = null;
+	private streamsPoller: Poller | null = null;
+	// O servidor confirmou (evento SSE "hello") que envia avisos de mudança
+	private serverSupportsEvents = false;
+	private serverEventTimers = new Map<string, ReturnType<typeof setTimeout>>();
+	private autoConnectRetryInterval: ReturnType<typeof setInterval> | null = null;
+	private serverEventsHelloCount = 0;
 	private thumbnailInterval: ReturnType<typeof setInterval> | null = null;
 	private mainUiInitialized = false;
 	private autoConnectInFlight = false;
+	private lastUsersRenderKey = "";
+	private tutorial: GuidedTour | null = null;
 	private authUiInitialized = false;
 	// Indicam se já houve ao menos um carregamento bem-sucedido (para não trocar dados bons por "vazio" em falhas)
 	private roomsLoaded = false;
@@ -179,6 +270,7 @@ class ShiroApp {
 		this.setupLoginWindowControls();
 		this.setupCustomTooltips();
 		this.setupStreamDeckBridge();
+		this.setupQuitCleanup();
 
 		const saved = checkSavedSession();
 
@@ -575,42 +667,106 @@ class ShiroApp {
 
 		this.roomsLoaded = false;
 		this.usersLoaded = false;
+		this.lastUsersRenderKey = "";
 
 		await this.refreshRooms();
+		await this.leaveStaleRooms();
 		await this.refreshSources();
 		await this.refreshFriends();
 		await this.refreshUsersList();
 
 		this.startPolling();
+		this.maybeShowTutorialWelcome();
+	}
+
+	/**
+	 * Ao abrir o app o usuário ainda não está em nenhuma sala, mas o servidor pode listá-lo
+	 * como membro de uma sala antiga (app fechado sem sair: crash, atualização, PC suspenso...).
+	 * Como ele está online, o servidor nunca o remove sozinho: sai dessas salas aqui.
+	 */
+	private async leaveStaleRooms(): Promise<void> {
+		const me = getUser();
+		if (!me) return;
+		const stale = this.rooms.filter(
+			(r) => r.roomId !== this.currentRoom?.roomId && Array.isArray(r.members) && r.members.includes(me.username),
+		);
+		if (stale.length === 0) return;
+
+		console.log(`[App] Saindo de ${stale.length} sala(s) antiga(s) onde o servidor ainda listava este usuário:`, stale.map((r) => r.roomId));
+		for (const room of stale) {
+			try {
+				await leaveRoom(room.roomId);
+			} catch (err) {
+				console.warn(`[App] Falha ao sair da sala antiga ${room.roomId}:`, err);
+			}
+		}
+		await this.refreshRooms();
+	}
+
+	/** Ao fechar o app (ex.: "Sair" na bandeja), sai da sala antes de o processo encerrar */
+	private setupQuitCleanup(): void {
+		window.api?.onAppBeforeQuit?.(async () => {
+			try {
+				if (this.currentRoom && isAuthenticated()) {
+					const roomId = this.currentRoom.roomId;
+					if (this.p2pManager?.getIsStreaming()) {
+						await notifyRoomStream(roomId, "stop").catch(() => {});
+					}
+					await leaveRoom(roomId).catch(() => {});
+					this.currentRoom = null;
+				}
+				this.p2pManager?.hangupAll();
+			} finally {
+				window.api?.appQuitReady?.();
+			}
+		});
 	}
 
 	/** Registra listeners da tela principal (executa uma única vez, mesmo após logout/login) */
 	private setupMainUi(): void {
-		setupWindowControls();
-		this.setupThemeToggle();
-		this.setupShiroPromo();
-		this.setupProfileSettings();
-		this.setupMiniProfilePopover();
-		this.setupPanelTabs();
-		this.setupFriendsSystem();
-		this.setupRoomSettingsModal();
-		this.setupJoinByInviteModal();
-		this.setupRoomInvitesToast();
-		this.setupFriendRequestToast();
-		this.setupNotificationsPopover();
-		this.setupCreateNoticeModal();
-		this.setupSystemNoticeToast();
-		this.setupRoomListeners();
-		this.setupSourcePicker();
-		this.setupSubTabs();
-		this.setupStreamButtons();
-		this.setupPopoverToggles();
-		this.setupAudioRadioListeners();
-		this.setupQualityChangeListeners();
-		this.setupCustomSelects();
-		this.setupAppSettings();
-		this.setupLogout();
-		this.setupStreamDeckBridge();
+		// Cada setup roda isolado: um erro em um deles não pode impedir o registro dos
+		// listeners dos seguintes (o que deixaria vários botões sem resposta)
+		const setups: Array<[string, () => unknown]> = [
+			["windowControls", () => setupWindowControls()],
+			["refreshUsersButton", () => document.getElementById("btn-refresh-users")?.addEventListener("click", () => this.refreshUsersList())],
+			["themeToggle", () => this.setupThemeToggle()],
+			["shiroPromo", () => this.setupShiroPromo()],
+			["profileSettings", () => this.setupProfileSettings()],
+			["miniProfilePopover", () => this.setupMiniProfilePopover()],
+			["panelTabs", () => this.setupPanelTabs()],
+			["friendsSystem", () => this.setupFriendsSystem()],
+			["roomSettingsModal", () => this.setupRoomSettingsModal()],
+			["joinByInviteModal", () => this.setupJoinByInviteModal()],
+			["roomInvitesToast", () => this.setupRoomInvitesToast()],
+			["friendRequestToast", () => this.setupFriendRequestToast()],
+			["notificationsPopover", () => this.setupNotificationsPopover()],
+			["createNoticeModal", () => this.setupCreateNoticeModal()],
+			["systemNoticeToast", () => this.setupSystemNoticeToast()],
+			["roomListeners", () => this.setupRoomListeners()],
+			["sourcePicker", () => this.setupSourcePicker()],
+			["subTabs", () => this.setupSubTabs()],
+			["streamButtons", () => this.setupStreamButtons()],
+			["popoverToggles", () => this.setupPopoverToggles()],
+			["audioRadioListeners", () => this.setupAudioRadioListeners()],
+			["qualityChangeListeners", () => this.setupQualityChangeListeners()],
+			["customSelects", () => this.setupCustomSelects()],
+			["appSettings", () => this.setupAppSettings()],
+			["logout", () => this.setupLogout()],
+			["streamDeckBridge", () => this.setupStreamDeckBridge()],
+			["serverEvents", () => this.subscribeServerEvents()],
+			["tutorial", () => this.setupTutorial()],
+			["controlsAutoHide", () => this.setupControlsAutoHide()],
+		];
+		for (const [name, setup] of setups) {
+			try {
+				const result = setup();
+				if (result instanceof Promise) {
+					result.catch((err) => console.error(`[App] Erro no setup "${name}":`, err));
+				}
+			} catch (err) {
+				console.error(`[App] Erro no setup "${name}":`, err);
+			}
+		}
 
 		this.audioVisualizer.mount("vu-canvas");
 		this.refreshIcons();
@@ -634,20 +790,36 @@ class ShiroApp {
 	/**
 	 * Inicia os pollings da API. Cada poller não se sobrepõe, faz backoff em falhas
 	 * e desacelera com a janela oculta (bandeja/minimizada).
+	 *
+	 * Os intervalos abaixo são o modo "sem avisos". Quando o servidor confirma pelo SSE
+	 * que envia avisos de mudança (evento "hello"), os pollings viram só uma rede de
+	 * segurança lenta e os dados são buscados quando chega um aviso (rooms/users/friends-changed).
 	 */
 	private startPolling(): void {
 		this.stopPolling();
+		this.heartbeatPoller = new Poller(() => sendHeartbeat(), { intervalMs: POLL_INTERVALS.fallback.heartbeat, hiddenFactor: 1 });
+		this.roomsPoller = new Poller(() => this.refreshRooms(), { intervalMs: POLL_INTERVALS.fallback.rooms });
+		this.friendsPoller = new Poller(() => this.refreshFriends(), { intervalMs: POLL_INTERVALS.fallback.friends });
+		this.usersPoller = new Poller(() => this.refreshUsersList(), { intervalMs: POLL_INTERVALS.fallback.users });
+		// Consulta leve de quem está transmitindo na sala atual: frequente, para a transmissão aparecer rápido
+		this.streamsPoller = new Poller(() => this.refreshRoomStreams(), { intervalMs: 5_000 });
 		this.pollers = [
-			// Heartbeat mantém a presença online: não desacelera com a janela oculta
-			new Poller(() => sendHeartbeat(), { intervalMs: 60_000, hiddenFactor: 1 }),
-			new Poller(() => this.refreshRooms(), { intervalMs: 15_000 }),
-			new Poller(() => this.refreshFriends(), { intervalMs: 15_000 }),
-			new Poller(() => this.refreshUsersList(), { intervalMs: 30_000 }),
+			this.streamsPoller,
+			this.heartbeatPoller,
+			this.roomsPoller,
+			this.friendsPoller,
+			this.usersPoller,
 			// Fontes locais (sem API): mantidas com a janela oculta por causa do Stream Deck
 			new Poller(() => this.refreshSources(), { intervalMs: 15_000, hiddenFactor: 1 }),
 		];
-		this.pollers[0].start(true);
+		if (this.serverSupportsEvents) this.applyPollIntervals(POLL_INTERVALS.withServerEvents);
+		this.heartbeatPoller.start(true);
 		for (const poller of this.pollers.slice(1)) poller.start();
+
+		// Re-tenta conexões P2P pendentes usando os dados já carregados (sem chamar a API)
+		this.autoConnectRetryInterval = setInterval(() => {
+			if (this.currentRoom?.activeStreams?.length) this.autoConnectRoomStreams();
+		}, 10_000);
 
 		this.thumbnailInterval = setInterval(() => this.updateAllThumbnails(), 120_000); // Atualiza preview estática a cada 2 minutos
 	}
@@ -655,10 +827,278 @@ class ShiroApp {
 	private stopPolling(): void {
 		for (const poller of this.pollers) poller.stop();
 		this.pollers = [];
+		this.heartbeatPoller = this.roomsPoller = this.friendsPoller = this.usersPoller = this.streamsPoller = null;
+
+		for (const timer of this.serverEventTimers.values()) clearTimeout(timer);
+		this.serverEventTimers.clear();
+
+		if (this.autoConnectRetryInterval) {
+			clearInterval(this.autoConnectRetryInterval);
+			this.autoConnectRetryInterval = null;
+		}
 		if (this.thumbnailInterval) {
 			clearInterval(this.thumbnailInterval);
 			this.thumbnailInterval = null;
 		}
+	}
+
+	/**
+	 * Reage aos avisos de mudança enviados pelo servidor via SSE.
+	 * Registrado uma única vez, logo no setup da UI: o SSE abre no login e o "hello"
+	 * costuma chegar antes de os pollers existirem, por isso o estado fica em serverSupportsEvents.
+	 */
+	private subscribeServerEvents(): void {
+		if (!window.api?.onSseSignal) return;
+		window.api.onSseSignal((event, data) => {
+			switch (event) {
+				case "hello": {
+					if ((data as { events?: boolean } | null)?.events) {
+						this.serverSupportsEvents = true;
+						this.applyPollIntervals(POLL_INTERVALS.withServerEvents);
+					}
+					// Reconexão do SSE: avisos podem ter sido perdidos enquanto estava fora
+					if (this.serverEventsHelloCount++ > 0) {
+						this.roomsPoller?.trigger();
+						this.friendsPoller?.trigger();
+						this.usersPoller?.trigger();
+					}
+					break;
+				}
+				case "rooms-changed":
+					this.scheduleServerRefresh(event, this.roomsPoller);
+					break;
+				case "friends-changed":
+					this.scheduleServerRefresh(event, this.friendsPoller);
+					break;
+				case "users-changed":
+					this.scheduleServerRefresh(event, this.usersPoller);
+					break;
+			}
+		});
+	}
+
+	/**
+	 * Agrupa avisos em sequência e espalha os clientes no tempo (jitter), para que um aviso
+	 * enviado a todos não faça todo mundo chamar a API no mesmo milissegundo.
+	 */
+	private scheduleServerRefresh(key: string, poller: Poller | null): void {
+		if (!poller || this.serverEventTimers.has(key)) return;
+		const delay = 250 + Math.random() * 1000;
+		this.serverEventTimers.set(
+			key,
+			setTimeout(() => {
+				this.serverEventTimers.delete(key);
+				poller.trigger();
+			}, delay),
+		);
+	}
+
+	private applyPollIntervals(intervals: PollIntervals): void {
+		this.heartbeatPoller?.setIntervalMs(intervals.heartbeat);
+		this.roomsPoller?.setIntervalMs(intervals.rooms);
+		this.friendsPoller?.setIntervalMs(intervals.friends);
+		this.usersPoller?.setIntervalMs(intervals.users);
+	}
+
+	// ------------------------------------------------------------------------------------------------------------------------------
+	//  TUTORIAL GUIADO
+	// ------------------------------------------------------------------------------------------------------------------------------
+	private tutorialSeenKey(): string | null {
+		const user = getUser();
+		return user ? `shiro_tutorial_seen_${user.id}` : null;
+	}
+
+	private markTutorialSeen(): void {
+		const key = this.tutorialSeenKey();
+		if (!key) return;
+		try {
+			localStorage.setItem(key, "1");
+		} catch {}
+	}
+
+	/** No primeiro login desta conta neste PC, pergunta se o usuário quer fazer o tutorial */
+	private maybeShowTutorialWelcome(): void {
+		const key = this.tutorialSeenKey();
+		if (!key) return;
+		let seen = false;
+		try {
+			seen = localStorage.getItem(key) === "1";
+		} catch {}
+		if (seen || this.tutorial?.isActive()) return;
+		document.getElementById("modal-tutorial-welcome")?.classList.remove("hidden");
+	}
+
+	private setupTutorial(): void {
+		const modal = document.getElementById("modal-tutorial-welcome");
+		const close = () => {
+			modal?.classList.add("hidden");
+			this.markTutorialSeen();
+		};
+
+		document.getElementById("btn-tutorial-welcome-skip")?.addEventListener("click", close);
+		document.getElementById("btn-tutorial-welcome-start")?.addEventListener("click", () => {
+			close();
+			this.startTutorial();
+		});
+		// (startTutorial já leva o usuário para a aba Salas antes da primeira etapa)
+		modal?.addEventListener("click", (e) => {
+			if (e.target === modal) close();
+		});
+		document.getElementById("btn-start-tutorial")?.addEventListener("click", (e) => {
+			e.stopPropagation();
+			this.startTutorial();
+		});
+	}
+
+	private startTutorial(): void {
+		this.tutorial?.stop(false);
+		this.markTutorialSeen();
+
+		const click = (id: string) => (document.getElementById(id) as HTMLElement | null)?.click();
+
+		// O tour começa no lugar certo: sai da transmissão maximizada, fecha popovers e abre a aba Salas
+		if (this.maximizedStreamId) this.restoreGridMode();
+		document.getElementById("settings-popover")?.classList.add("hidden");
+		document.getElementById("audio-popover")?.classList.add("hidden");
+		const expandSidebar = () => {
+			if (document.querySelector(".main-content.sidebar-collapsed")) click("btn-toggle-sidebar");
+		};
+		const isHidden = (id: string) => document.getElementById(id)?.classList.contains("hidden") ?? true;
+		const openPopover = (popoverId: string, toggleId: string) => {
+			if (isHidden(popoverId)) click(toggleId);
+		};
+		const closePopover = (popoverId: string, closeId: string) => {
+			if (!isHidden(popoverId)) click(closeId);
+		};
+		const selectedSource = () =>
+			this.leftSourcePicker?.getSelectedSource() ?? this.mainSourcePicker?.getSelectedSource() ?? null;
+
+		const steps: TourStep[] = [
+			{
+				title: "Entre em uma sala",
+				text: `Toda transmissão acontece dentro de uma sala. Clique em <b>Criar</b> para criar a sua:
+					<b>sem senha</b> ela fica <b>pública</b>; com uma <b>senha de 8 dígitos</b> ela fica <b>privada</b>.
+					Já tem o ID de uma sala? Use <b>Entrar por ID</b>, ou clique em uma sala da lista.`,
+				target: () => document.querySelector(".rooms-header-actions"),
+				onEnter: () => {
+					expandSidebar();
+					click("panel-tab-rooms");
+				},
+				completeWhen: () => !!this.currentRoom,
+				waitingHint: "Crie ou entre em uma sala para continuar",
+			},
+			{
+				title: "Escolha o que transmitir",
+				text: `Selecione a <b>janela</b> (um jogo, o navegador…) ou a <b>tela inteira</b> que você quer compartilhar.
+					Use as abas <b>Janelas</b> e <b>Telas</b> para alternar.`,
+				target: () => document.getElementById("panel-sources"),
+				onEnter: () => {
+					expandSidebar();
+					click("panel-tab-sources");
+				},
+				completeWhen: () => !!selectedSource(),
+				waitingHint: "Clique em uma janela ou tela para continuar",
+			},
+			{
+				title: "Ajuste a qualidade",
+				text: `Escolha a <b>resolução</b> e o <b>FPS</b> da transmissão. <b>1080p a 60 FPS</b> é o ideal para a maioria;
+					se a internet de quem assiste for mais fraca, use <b>720p</b>.`,
+				target: () => document.getElementById("settings-popover"),
+				onEnter: () => openPopover("settings-popover", "btn-toggle-settings"),
+				onExit: () => closePopover("settings-popover", "btn-close-settings"),
+			},
+			{
+				title: "Escolha o áudio",
+				text: `<b>Áudio do Processo</b>: só o som da janela escolhida (ideal para jogos).<br>
+					<b>Áudio do Sistema</b>: todo o som do PC.<br>
+					<b>Desativado</b>: transmite só o vídeo.`,
+				target: () => document.getElementById("audio-popover"),
+				onEnter: () => openPopover("audio-popover", "btn-toggle-audio"),
+				onExit: () => closePopover("audio-popover", "btn-close-audio"),
+			},
+			{
+				title: "Comece a transmitir",
+				text: `Tudo pronto! Clique em <b>Iniciar transmissão</b> e quem estiver na sala já vai ver sua tela.`,
+				target: () => document.getElementById("btn-start-stream"),
+				completeWhen: () => !!this.p2pManager?.getIsStreaming(),
+				waitingHint: "Clique em Iniciar transmissão",
+			},
+			{
+				title: "Você está ao vivo! 🎉",
+				text: `Para parar, clique em <b>Encerrar transmissão</b>. Chame seus amigos pela aba <b>Amigos</b>
+					ou compartilhe o ID da sala. Quer rever este tour? É só clicar no <b>?</b> no topo da tela.`,
+				target: () => document.getElementById("btn-stop-stream"),
+				nextLabel: "Concluir",
+			},
+		];
+
+		this.tutorial = new GuidedTour(steps, {
+			onFinish: () => {
+				this.tutorial = null;
+			},
+		});
+		this.tutorial.start();
+	}
+
+	/**
+	 * Na transmissão maximizada, a pílula de controles some (desliza para baixo) quando o
+	 * mouse está longe dela ou a janela perde o foco, e volta ao aproximar o mouse do rodapé.
+	 */
+	private setupControlsAutoHide(): void {
+		const section = document.querySelector<HTMLElement>(".right-section");
+		const bar = document.querySelector<HTMLElement>(".bottom-controls-bar");
+		if (!section || !bar) return;
+
+		const REVEAL_DISTANCE_PX = 160; // distância do rodapé que revela a pílula
+		const HIDE_DELAY_MS = 700;
+		let hideTimer: ReturnType<typeof setTimeout> | null = null;
+
+		const isMaximized = () => section.classList.contains("maximized-active");
+		const popoverOpen = () =>
+			["settings-popover", "audio-popover"].some((id) => !document.getElementById(id)?.classList.contains("hidden"));
+
+		const show = () => {
+			if (hideTimer) clearTimeout(hideTimer);
+			hideTimer = null;
+			bar.classList.remove("controls-hidden");
+		};
+		const scheduleHide = (delay = HIDE_DELAY_MS) => {
+			if (hideTimer) clearTimeout(hideTimer);
+			hideTimer = setTimeout(() => {
+				hideTimer = null;
+				// Não esconde com um popover aberto nem com o mouse em cima da pílula
+				if (isMaximized() && !popoverOpen() && !bar.matches(":hover")) {
+					bar.classList.add("controls-hidden");
+				}
+			}, delay);
+		};
+
+		section.addEventListener("mousemove", (e) => {
+			if (!isMaximized()) return;
+			const nearBottom = section.getBoundingClientRect().bottom - e.clientY <= REVEAL_DISTANCE_PX;
+			if (nearBottom) show();
+			else if (!hideTimer) scheduleHide();
+		});
+		section.addEventListener("mouseleave", () => {
+			if (isMaximized()) scheduleHide(300);
+		});
+		window.addEventListener("blur", () => {
+			if (isMaximized()) scheduleHide(0);
+		});
+		document.addEventListener("visibilitychange", () => {
+			if (document.hidden && isMaximized()) scheduleHide(0);
+		});
+
+		// Ao maximizar, mostra a pílula por um instante e depois recolhe; ao restaurar, volta ao normal.
+		// Só reage à transição: o grid reaplica a mesma classe várias vezes ao re-renderizar.
+		let wasMaximized = isMaximized();
+		new MutationObserver(() => {
+			const maximized = isMaximized();
+			if (maximized === wasMaximized) return;
+			wasMaximized = maximized;
+			show();
+			if (maximized) scheduleHide(2500);
+		}).observe(section, { attributes: true, attributeFilter: ["class"] });
 	}
 
 	private setupPanelTabs(): void {
@@ -1006,15 +1446,19 @@ class ShiroApp {
 		if (!room) return 1;
 
 		if (Array.isArray(room.members)) {
+			// O servidor pode ter membros duplicados (entradas simultâneas antigas): conta cada um uma vez
+			const uniqueMembers = Array.from(
+				new Map((room.members as any[]).map((m) => [typeof m === "string" ? m : m?.id || m?.userId || m?.username, m])).values(),
+			);
 			if (this.onlineUsers && this.onlineUsers.length > 0) {
-				const activeMembers = room.members.filter((m: any) => {
+				const activeMembers = uniqueMembers.filter((m: any) => {
 					const id = typeof m === "string" ? m : m?.id || m?.userId;
 					const name = typeof m === "string" ? m : m?.username || m?.name;
 					return this.onlineUsers.some((u) => u.id === id || u.username === name);
 				});
 				if (activeMembers.length > 0) return activeMembers.length;
 			}
-			return room.members.length;
+			return uniqueMembers.length;
 		}
 
 		if (Array.isArray(room.users)) {
@@ -1036,6 +1480,9 @@ class ShiroApp {
 	}
 
 	private updateCurrentRoomBanner(): void {
+		// Toda troca de sala passa por aqui: mantém o painel de usuários filtrado pela sala atual
+		this.renderUsersList();
+
 		const banner = document.getElementById("current-room-banner");
 		const headerPill = document.getElementById("header-room-pill");
 		const headerRoomName = document.getElementById("header-room-name-text");
@@ -1170,6 +1617,32 @@ class ShiroApp {
 		}
 		this.updateCurrentRoomBanner();
 		return ok;
+	}
+
+	/**
+	 * Atualiza só as transmissões ativas da sala atual (endpoint leve /api/rooms/streams).
+	 * Se mudou algo, atualiza o banner e conecta nas transmissões novas na hora.
+	 */
+	private async refreshRoomStreams(): Promise<boolean> {
+		const room = this.currentRoom;
+		if (!room) return true;
+
+		const streams = await getRoomStreams(room.roomId);
+		if (streams === null) return false;
+		// O usuário pode ter trocado de sala enquanto a requisição estava em andamento
+		if (this.currentRoom?.roomId !== room.roomId) return true;
+
+		const key = (list: { userId: string }[] | undefined) => (list ?? []).map((s) => s.userId).sort().join(",");
+		if (key(streams) !== key(this.currentRoom.activeStreams)) {
+			this.currentRoom.activeStreams = streams;
+			const listed = this.rooms.find((r) => r.roomId === room.roomId);
+			if (listed) listed.activeStreams = streams;
+			this.updateCurrentRoomBanner();
+			this.renderRoomsList((document.getElementById("input-search-rooms") as HTMLInputElement | null)?.value.toLowerCase() ?? "");
+		}
+		// Conecta em transmissões ainda fora do grid (sem custo de API: usa os dados acima)
+		await this.autoConnectRoomStreams();
+		return true;
 	}
 
 	private async autoConnectRoomStreams(): Promise<void> {
@@ -1336,6 +1809,8 @@ class ShiroApp {
 
 		// Auto-conecta as transmissões ativas já em andamento na sala
 		await this.autoConnectRoomStreams();
+		// Confere na hora quem está transmitindo (a sala recebida no join pode estar desatualizada)
+		this.streamsPoller?.trigger();
 		await this.refreshRooms();
 	}
 
@@ -1352,7 +1827,7 @@ class ShiroApp {
 			gridEl.innerHTML = `
 				<div id="main-grid-placeholder" class="main-grid-placeholder">
 					<i data-lucide="radio" class="placeholder-lucide-icon"></i>
-					<h3>Grid de Transmissões ao Vivo</h3>
+					<h3>Transmissões ao Vivo</h3>
 					<p>Nenhuma transmissão ativa nesta sala. Selecione uma fonte ao lado e clique em <b>Iniciar Transmissão</b>!</p>
 				</div>`;
 			this.refreshIcons();
@@ -1693,7 +2168,7 @@ class ShiroApp {
 	}
 
 	// ------------------------------------------------------------------------------------------------------------------------------
-	//  USERS PANEL (Exibe todos, inclusive VocÃª)
+	//  USERS PANEL (Exibe todos, inclusive Você)
 	// ------------------------------------------------------------------------------------------------------------------------------
 	private async refreshUsersList(): Promise<boolean> {
 		const listEl = document.getElementById("users-list");
@@ -1714,16 +2189,58 @@ class ShiroApp {
 		}
 		this.usersLoaded = true;
 		this.onlineUsers = users;
+		this.renderUsersList();
+		return true;
+	}
+
+	/**
+	 * Usuários exibidos no painel: dentro de uma sala, só os membros online dela;
+	 * fora de sala, todos os online.
+	 */
+	private getVisibleUsers(): ShiroUser[] {
+		const room = this.currentRoom;
+		if (!room || !Array.isArray(room.members)) return this.onlineUsers;
+
+		const memberKeys = new Set<string>();
+		for (const m of room.members as any[]) {
+			if (typeof m === "string") memberKeys.add(m);
+			else {
+				const id = m?.id || m?.userId;
+				const name = m?.username || m?.name;
+				if (id) memberKeys.add(id);
+				if (name) memberKeys.add(name);
+			}
+		}
+		const selfId = getUser()?.id;
+		return this.onlineUsers.filter((u) => u.id === selfId || memberKeys.has(u.id) || memberKeys.has(u.username));
+	}
+
+	private renderUsersList(): void {
+		const listEl = document.getElementById("users-list");
+		if (!listEl || !this.usersLoaded) return;
+
+		const titleEl = document.getElementById("users-panel-title");
+		if (titleEl) titleEl.textContent = this.currentRoom ? "Online na sala" : "Online agora";
+
+		const users = this.getVisibleUsers();
 		const currentUser = getUser();
+
+		// Evita re-renderizar (e fechar o mini perfil) quando nada visível mudou
+		const renderKey = JSON.stringify([
+			this.currentRoom?.roomId ?? null,
+			users.map((u) => [u.id, u.username, u.nickname, u.avatar]),
+		]);
+		if (renderKey === this.lastUsersRenderKey) return;
+		this.lastUsersRenderKey = renderKey;
 
 		if (users.length === 0) {
 			listEl.innerHTML = `
 				<div class="users-empty">
 					<i data-lucide="wifi-off"></i>
-					<span>Nenhum usuário online</span>
+					<span>${this.currentRoom ? "Ninguém online nesta sala" : "Nenhum usuário online"}</span>
 				</div>`;
 			this.refreshIcons();
-			return true;
+			return;
 		}
 
 		listEl.innerHTML = users
@@ -1770,12 +2287,7 @@ class ShiroApp {
 			});
 		});
 
-		document.getElementById("btn-refresh-users")?.addEventListener("click", () => {
-			this.refreshUsersList();
-		});
-
 		this.refreshIcons();
-		return true;
 	}
 
 	private escapeHtml(str: string): string {
@@ -1856,12 +2368,13 @@ class ShiroApp {
 
 		if (!btnStart) return;
 
-		if (selectedSource) {
+		// Sem fonte selecionada, startStreaming usa a primeira disponível: só bloqueia se não houver nenhuma
+		if (selectedSource || this.allSources.length > 0) {
 			btnStart.disabled = false;
-			btnStart.title = "Iniciar transmissão P2P";
+			btnStart.title = selectedSource ? "Iniciar transmissão P2P" : "Iniciar transmissão P2P (usa a primeira fonte disponível)";
 		} else {
 			btnStart.disabled = true;
-			btnStart.title = "Selecione uma fonte antes de transmitir";
+			btnStart.title = "Nenhuma fonte de captura encontrada";
 		}
 	}
 
@@ -1877,6 +2390,7 @@ class ShiroApp {
 			this.selectedSourceIndex = sources.findIndex((s) => s.id === selected.id);
 		}
 
+		this.checkCanStartStream();
 		this.refreshIcons();
 
 		if (window.api.reportSources) {
@@ -2045,7 +2559,11 @@ class ShiroApp {
 			this.updateCurrentRoomBanner();
 			this.audioPipeline.stop();
 			this.stopPolling();
+			this.serverSupportsEvents = false;
+			this.serverEventsHelloCount = 0;
 
+			this.tutorial?.stop(false);
+			document.getElementById("modal-tutorial-welcome")?.classList.add("hidden");
 			logout();
 			this.showLoginView(checkSavedSession());
 		});
@@ -2114,12 +2632,48 @@ class ShiroApp {
 		const btnCloseAudio = document.getElementById("btn-close-audio");
 		const audioPopover = document.getElementById("audio-popover");
 
+		/**
+		 * Posiciona o popover logo acima do botão que o abriu, alinhado pela direita.
+		 * A barra de controles muda de lugar (rodapé normal × pílula flutuante na tela
+		 * maximizada), então a posição fixa no CSS deixava o popover longe do botão.
+		 */
+		const positionPopover = (popover: HTMLElement | null, button: HTMLElement | null) => {
+			if (!popover || !button || popover.classList.contains("hidden")) return;
+			const container = popover.offsetParent as HTMLElement | null;
+			if (!container) return;
+			const cr = container.getBoundingClientRect();
+			const br = button.getBoundingClientRect();
+			// A distância vertical conta a partir da barra (a pílula tem padding em volta dos botões)
+			const barTop = (button.closest(".bottom-controls-bar") ?? button).getBoundingClientRect().top;
+			const GAP = 10;
+			const MARGIN = 8;
+			const maxRight = Math.max(MARGIN, cr.width - popover.offsetWidth - MARGIN);
+			const right = Math.min(Math.max(MARGIN, cr.right - br.right), maxRight);
+			popover.style.right = `${Math.round(right)}px`;
+			popover.style.bottom = `${Math.round(cr.bottom - barTop + GAP)}px`;
+		};
+		const repositionOpenPopovers = () => {
+			positionPopover(settingsPopover, btnSettings);
+			positionPopover(audioPopover, btnAudio);
+		};
+		window.addEventListener("resize", repositionOpenPopovers);
+		// Maximizar/restaurar a transmissão move a barra de controles
+		const rightSection = document.querySelector(".right-section");
+		if (rightSection) {
+			new MutationObserver(() => {
+				repositionOpenPopovers();
+				// A pílula flutuante anima (transition 0.25s): reposiciona de novo ao fim
+				setTimeout(repositionOpenPopovers, 300);
+			}).observe(rightSection, { attributes: true, attributeFilter: ["class"] });
+		}
+
 		btnSettings?.addEventListener("click", (e) => {
 			e.stopPropagation();
 			audioPopover?.classList.add("hidden");
 			btnAudio?.classList.remove("active");
 			const hidden = settingsPopover?.classList.toggle("hidden");
 			btnSettings.classList.toggle("active", !hidden);
+			positionPopover(settingsPopover, btnSettings);
 		});
 
 		btnCloseSettings?.addEventListener("click", () => {
@@ -2133,6 +2687,7 @@ class ShiroApp {
 			btnSettings?.classList.remove("active");
 			const hidden = audioPopover?.classList.toggle("hidden");
 			btnAudio.classList.toggle("active", !hidden);
+			positionPopover(audioPopover, btnAudio);
 		});
 
 		btnCloseAudio?.addEventListener("click", () => {
@@ -2256,7 +2811,7 @@ class ShiroApp {
 		btnCancel?.addEventListener("click", closeModal);
 		btnClose?.addEventListener("click", closeModal);
 
-		// Toast de notificaÃ§Ã£o de atualizaÃ§Ã£o baixada
+		// Toast de notificação de atualização baixada
 		const toast = document.getElementById("toast-update-notification");
 		const toastVersion = document.getElementById("toast-update-version");
 		const btnApply = document.getElementById("btn-apply-update-now");
@@ -2537,7 +3092,7 @@ class ShiroApp {
 					: initial;
 
 				const roomStatus = f.currentRoom
-					? `<span class="friend-room-badge"><i data-lucide="radio"></i> ${this.escapeHtml(f.currentRoom.name)}</span>`
+					? `<span class="friend-card-room-badge"><i data-lucide="radio"></i>${this.escapeHtml(f.currentRoom.name)}</span>`
 					: (f.isOnline ? '<span class="friend-online-text">Disponível</span>' : '<span class="friend-offline-text">Offline</span>');
 
 				return `
@@ -2548,18 +3103,18 @@ class ShiroApp {
 					</div>
 					<div class="friend-card-info">
 						<span class="friend-card-name">${displayName}</span>
-						<div class="friend-card-sub">@${this.escapeHtml(f.username)} â€¢ ${roomStatus}</div>
+						<div class="friend-card-sub">@${this.escapeHtml(f.username)} • ${roomStatus}</div>
 					</div>
 					<div class="friend-card-actions">
 						${
 							inCurrentRoom && f.isOnline
-								? `<button class="btn btn-secondary btn-xs btn-invite-friend-room" data-friend-id="${f.id}" title="Convidar para sua sala ativa">
+								? `<button class="btn-friend-invite btn-invite-friend-room" data-friend-id="${f.id}" title="Convidar para sua sala ativa">
 									<i data-lucide="radio"></i>
 									<span>Convidar</span>
 								</button>`
 								: ""
 						}
-						<button class="btn btn-ghost btn-xs btn-remove-friend" data-friend-id="${f.id}" title="Desfazer amizade">
+						<button class="btn-friend-remove btn-remove-friend" data-friend-id="${f.id}" title="Desfazer amizade">
 							<i data-lucide="trash-2"></i>
 						</button>
 					</div>
@@ -2940,7 +3495,7 @@ class ShiroApp {
 
 		if (!toast || !senderEl || !roomNameEl) return;
 
-		// Se jÃ¡ estiver na sala do convite, nÃ£o exibe
+		// Se já estiver na sala do convite, não exibe
 		const validInvites = this.roomInvites.filter(
 			(inv: RoomInvite) => !this.currentRoom || this.currentRoom.roomId !== inv.roomId,
 		);
@@ -3372,7 +3927,7 @@ class ShiroApp {
 		if (!window.api || this.streamDeckBridgeInitialized) return;
 		this.streamDeckBridgeInitialized = true;
 
-		// 1. Toggle stream (iniciar / parar transmissÃ£o)
+		// 1. Toggle stream (iniciar / parar transmissão)
 		window.api.onStreamDeckToggle(() => {
 			if (this.p2pManager?.getIsStreaming()) {
 				this.stopStreaming();
@@ -3748,7 +4303,16 @@ class ShiroApp {
 	}
 
 	private showUserMiniProfile(
-		userData: { id: string; username: string; nickname?: string; avatar?: string; banner?: string; isOnline?: boolean },
+		userData: {
+			id: string;
+			username: string;
+			nickname?: string;
+			avatar?: string;
+			banner?: string;
+			isOnline?: boolean;
+			badges?: BadgeId[];
+			badgeStats?: BadgeStats;
+		},
 		targetEl: HTMLElement,
 	): void {
 		const popover = document.getElementById("user-mini-profile-popover");
@@ -3792,9 +4356,9 @@ class ShiroApp {
 
 		const badgesEl = document.getElementById("user-mini-badges");
 		if (badgesEl) {
-			badgesEl.innerHTML = isSelf
-				? `<span class="badge badge-purple" style="font-size: 10px; padding: 2px 7px;">Você</span>`
-				: "";
+			badgesEl.innerHTML =
+				this.renderProfileBadges(userData.badges, userData.badgeStats) +
+				(isSelf ? `<span class="badge badge-purple" style="font-size: 10px; padding: 2px 7px;">Você</span>` : "");
 		}
 
 		const nameEl = document.getElementById("user-mini-display-name");
@@ -3997,6 +4561,8 @@ class ShiroApp {
 			}
 		}
 
+		this.appendDevBadgeActions(userData, targetEl);
+
 		popover.classList.remove("hidden");
 		this.refreshIcons();
 
@@ -4019,6 +4585,68 @@ class ShiroApp {
 
 		popover.style.left = `${left}px`;
 		popover.style.top = `${top}px`;
+	}
+
+	private isViewerDeveloper(): boolean {
+		const me = getUser();
+		return !!me && DEVELOPER_IDS.includes(me.id);
+	}
+
+	/** HTML das insígnias de um perfil (tooltip mostra a última contagem das estatísticas) */
+	private renderProfileBadges(badges: BadgeId[] | undefined, stats: BadgeStats | undefined): string {
+		if (!badges?.length) return "";
+		const viewerIsDev = this.isViewerDeveloper();
+		return (Object.keys(BADGE_DEFS) as BadgeId[])
+			.filter((id) => badges.includes(id))
+			.map((id) => {
+				const def = BADGE_DEFS[id];
+				const tooltip = this.escapeHtml(`${def.name} — ${def.describe(stats, viewerIsDev)}`);
+				return `<span class="profile-badge profile-badge-${id}" data-tooltip="${tooltip}" data-tooltip-pos="bottom" aria-label="${tooltip}">
+					<i data-lucide="${def.icon}"></i>
+				</span>`;
+			})
+			.join("");
+	}
+
+	/** Desenvolvedores veem no mini perfil o botão para dar/remover a insígnia Beta Tester */
+	private appendDevBadgeActions(
+		userData: { id: string; username: string; badges?: BadgeId[]; badgeStats?: BadgeStats },
+		targetEl: HTMLElement,
+	): void {
+		const actionsEl = document.getElementById("user-mini-actions");
+		if (!actionsEl || !this.isViewerDeveloper()) return;
+
+		const hasBeta = userData.badges?.includes("beta-tester") ?? false;
+		const row = document.createElement("div");
+		row.className = "user-mini-dev-actions";
+		row.innerHTML = `
+			<button type="button" class="btn btn-ghost btn-sm btn-dev-badge">
+				<i data-lucide="flask-conical"></i>
+				<span>${hasBeta ? "Remover Beta Tester" : "Dar insígnia Beta Tester"}</span>
+			</button>`;
+		actionsEl.appendChild(row);
+
+		const btn = row.querySelector<HTMLButtonElement>(".btn-dev-badge")!;
+		btn.addEventListener("click", async () => {
+			btn.disabled = true;
+			const res = await setUserBadge(userData.id, "beta-tester", !hasBeta);
+			if (!res.ok) {
+				btn.disabled = false;
+				alert(res.error || "Erro ao atualizar insígnia.");
+				return;
+			}
+
+			// Atualiza as cópias locais do usuário e reabre o mini perfil com as insígnias novas
+			const apply = (u: { id: string; badges?: BadgeId[]; badgeStats?: BadgeStats }) => {
+				if (u.id !== userData.id) return;
+				u.badges = res.badges;
+				u.badgeStats = res.badgeStats ?? u.badgeStats;
+			};
+			this.onlineUsers.forEach(apply);
+			this.friends.forEach(apply);
+			const updated = { ...userData, badges: res.badges, badgeStats: res.badgeStats ?? userData.badgeStats };
+			if (targetEl.isConnected) this.showUserMiniProfile(updated, targetEl);
+		});
 	}
 
 	private hideUserMiniProfile(): void {
@@ -4205,9 +4833,30 @@ class ShiroApp {
 		});
 	}
 
+	/**
+	 * Renderiza os ícones lucide pendentes. O createIcons padrão recria TODOS os ícones
+	 * do documento a cada chamada (os SVGs mantêm data-lucide), o que trocava elementos
+	 * no meio de cliques e fazia botões "não responderem". Aqui só são processados os
+	 * <i data-lucide> novos e os SVGs cujo data-lucide mudou (ex.: ícone da sala no header).
+	 */
 	private refreshIcons(): void {
+		const PENDING = "data-lucide-pending";
+		const RENDERED = "data-lucide-rendered";
+		let pendingCount = 0;
+		document.querySelectorAll<Element>("[data-lucide]").forEach((el) => {
+			const name = el.getAttribute("data-lucide");
+			if (!name) return;
+			const isSvg = el.tagName.toLowerCase() === "svg";
+			if (!isSvg || el.getAttribute(RENDERED) !== name) {
+				el.setAttribute(PENDING, name);
+				pendingCount++;
+			}
+		});
+		if (pendingCount === 0) return;
+
 		try {
 			createIcons({
+				nameAttr: PENDING,
 				icons: {
 					Sun, Moon, Monitor, Zap, Wifi, WifiOff, Target, RefreshCw,
 					AppWindow, ScreenShare, Video, PlayCircle, Volume1, Volume2, ShieldCheck,
@@ -4216,12 +4865,20 @@ class ShiroApp {
 					ChevronLeft, ChevronRight, Check, Copy, RotateCw, Sparkles, Globe,
 					UserCog, BadgeCheck, Camera, Image, Trash2, Clock,
 					UserCheck, UserPlus, Bell, BellOff, LogIn, KeyRound, Hash, CheckCheck,
-					Megaphone, AlertTriangle, Send, Info, Cat, ExternalLink,
+					Megaphone, AlertTriangle, Send, Info, Cat, ExternalLink, CircleHelp, GraduationCap,
+					CodeXml, FlaskConical, Hammer, House, Timer,
 				},
 			});
 		} catch (err) {
 			console.warn("[App] Icon creation warning:", err);
 		}
+
+		// Marca os SVGs gerados como renderizados (e limpa pendências de ícones desconhecidos)
+		document.querySelectorAll<Element>(`[${PENDING}]`).forEach((el) => {
+			const name = el.getAttribute(PENDING);
+			el.removeAttribute(PENDING);
+			if (el.tagName.toLowerCase() === "svg" && name) el.setAttribute(RENDERED, name);
+		});
 	}
 }
 

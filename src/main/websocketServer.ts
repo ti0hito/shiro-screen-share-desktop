@@ -43,7 +43,8 @@ export function startWebSocketServer(win: BrowserWindow): void {
 		return;
 	}
 
-	wss = new WebSocketServer({ port: WS_PORT });
+	// Somente localhost: evita o prompt do Firewall do Windows e acesso de outras máquinas da rede
+	wss = new WebSocketServer({ host: "127.0.0.1", port: WS_PORT });
 
 	wss.on("listening", () => {
 		console.log(`[WS] Stream Deck bridge listening on ws://127.0.0.1:${WS_PORT}`);
@@ -140,6 +141,11 @@ function queryAudioMode(ws: WebSocket): void {
 	if (!mainWindow || mainWindow.isDestroyed()) return;
 	mainWindow.webContents.send("streamdeck-get-audio-mode");
 	pendingAudioRequests.add(ws);
+}
+
+/** Há algum plugin do Stream Deck conectado? */
+export function hasStreamDeckClients(): boolean {
+	return !!wss && wss.clients.size > 0;
 }
 
 export const pendingStateRequests = new Set<WebSocket>();

@@ -744,18 +744,16 @@ svg {
 .shiro-promo-avatar {
   width: 36px;
   height: 36px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, var(--accent-purple), #4c1d95);
-  color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
 }
 
-.shiro-promo-avatar svg {
-  width: 20px;
-  height: 20px;
+.shiro-promo-avatar img {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
 }
 
 .shiro-promo-heading {
@@ -1305,6 +1303,11 @@ svg {
   z-index: 3;
   box-shadow: 0 0 6px rgba(16, 185, 129, 0.6);
   transition: border-color 0.15s ease;
+}
+
+.user-card-status-dot.offline {
+  background: #71717a;
+  box-shadow: none;
 }
 
 .user-card:hover .user-card-status-dot {
@@ -2418,14 +2421,7 @@ svg {
   flex-direction: column;
   aspect-ratio: 16 / 9;
   cursor: pointer;
-  transition: all 0.2s ease;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-}
-
-.stream-card:hover {
-  border-color: var(--accent-purple);
-  transform: translateY(-2px);
-  box-shadow: 0 8px 24px rgba(124, 58, 237, 0.2);
 }
 
 .stream-card-header {
@@ -2558,6 +2554,13 @@ svg {
   height: 52px;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.8);
   transition: all 0.25s ease;
+}
+
+/* Pílula de controles recolhida (mouse longe ou janela sem foco): desliza para baixo da tela */
+.right-section.maximized-active .bottom-controls-bar.controls-hidden {
+  transform: translate(-50%, calc(100% + 40px));
+  opacity: 0;
+  pointer-events: none;
 }
 
 .right-section.maximized-active .popover-panel {
@@ -3781,6 +3784,8 @@ svg {
   gap: 1px;
   min-width: 0;
   overflow: hidden;
+  /* Ocupa o espaço livre: mantém o texto colado ao avatar e os botões à direita */
+  flex: 1;
 }
 
 .friend-card-name {
@@ -3800,6 +3805,20 @@ svg {
   text-overflow: ellipsis;
 }
 
+.friend-card-room-badge svg {
+  width: 10px;
+  height: 10px;
+  flex-shrink: 0;
+}
+
+.friend-online-text {
+  color: #10b981;
+}
+
+.friend-offline-text {
+  color: var(--text-muted);
+}
+
 .friend-card-room-badge {
   display: inline-flex;
   align-items: center;
@@ -3810,7 +3829,8 @@ svg {
   border-radius: 8px;
   background: rgba(124, 58, 237, 0.2);
   color: var(--accent-purple);
-  margin-top: 2px;
+  vertical-align: middle;
+  max-width: 100%;
 }
 
 .friend-card-actions {
@@ -3835,9 +3855,20 @@ svg {
   transition: all 0.15s ease;
 }
 
-.btn-friend-invite:hover {
+.btn-friend-invite:hover:not(:disabled) {
   background: var(--accent-purple);
   color: #fff;
+}
+
+.btn-friend-invite:disabled {
+  opacity: 0.7;
+  cursor: default;
+}
+
+.btn-friend-invite svg {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
 }
 
 .btn-friend-remove {
@@ -4067,8 +4098,59 @@ svg {
 
 .user-mini-badges {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
   gap: 4px;
   margin-bottom: 4px;
+  /* Ocupa todo o espaço ao lado do avatar */
+  max-width: calc(100% - 84px);
+}
+
+/* ── Insígnias de perfil ── */
+.profile-badge {
+  --badge-color: #a78bfa;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--badge-color);
+  background: color-mix(in srgb, var(--badge-color) 16%, var(--bg-panel));
+  border: 1px solid color-mix(in srgb, var(--badge-color) 45%, transparent);
+  cursor: default;
+}
+
+.profile-badge svg {
+  width: 14px;
+  height: 14px;
+}
+
+.profile-badge-developer { --badge-color: #a78bfa; }
+.profile-badge-early-user { --badge-color: #fbbf24; }
+.profile-badge-beta-tester { --badge-color: #22d3ee; }
+.profile-badge-stream-24-7 { --badge-color: #f87171; }
+.profile-badge-builder { --badge-color: #fb923c; }
+.profile-badge-neighbor { --badge-color: #4ade80; }
+
+.user-mini-dev-actions {
+  display: flex;
+  justify-content: center;
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border-color);
+}
+
+.user-mini-dev-actions .btn {
+  font-size: 11px;
+  color: #22d3ee;
+}
+
+.user-mini-dev-actions .btn svg {
+  width: 13px;
+  height: 13px;
 }
 
 .user-mini-body {
@@ -4911,4 +4993,227 @@ svg {
   height: 15px;
   cursor: pointer;
   margin: 0;
+}
+/* ══════════════════════════════════════════════════════════
+   TUTORIAL GUIADO (tutorial.ts)
+   Holofote + balão. Fica abaixo dos modais (z-index 1000) para
+   não cobrir o modal de criar sala durante o tour.
+   ══════════════════════════════════════════════════════════ */
+.tour-spotlight {
+  position: fixed;
+  z-index: 900;
+  border-radius: 10px;
+  pointer-events: none;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.62);
+  outline: 2px solid var(--accent-purple);
+  outline-offset: 0;
+  transition: left 0.25s ease, top 0.25s ease, width 0.25s ease, height 0.25s ease;
+  animation: tourPulse 2s ease-in-out infinite;
+}
+
+/* Sem alvo visível: escurece a tela inteira */
+.tour-spotlight.tour-spotlight-full {
+  left: 50% !important;
+  top: 50% !important;
+  width: 0 !important;
+  height: 0 !important;
+  outline: none;
+  animation: none;
+}
+
+@keyframes tourPulse {
+  0%, 100% { outline-color: var(--accent-purple); }
+  50% { outline-color: #a78bfa; }
+}
+
+.tour-tooltip {
+  position: fixed;
+  z-index: 950;
+  width: 320px;
+  max-width: calc(100vw - 24px);
+  background: var(--bg-panel);
+  border: 1px solid rgba(124, 58, 237, 0.45);
+  border-radius: var(--radius-lg);
+  padding: 14px 16px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5), 0 0 24px rgba(124, 58, 237, 0.2);
+  color: var(--text-main);
+  transition: left 0.25s ease, top 0.25s ease;
+  animation: tourTooltipIn 0.2s ease;
+}
+
+@keyframes tourTooltipIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.tour-hidden {
+  display: none !important;
+}
+
+.tour-tooltip-progress {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent-purple);
+  margin-bottom: 4px;
+}
+
+.tour-tooltip-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-heading);
+  margin-bottom: 6px;
+}
+
+.tour-tooltip-text {
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+
+.tour-tooltip-text b {
+  color: var(--text-main);
+  font-weight: 600;
+}
+
+.tour-tooltip-waiting {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  background: rgba(124, 58, 237, 0.1);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.tour-waiting-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-purple);
+  flex-shrink: 0;
+  animation: tourDot 1.2s ease-in-out infinite;
+}
+
+@keyframes tourDot {
+  0%, 100% { opacity: 0.35; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
+.tour-tooltip-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.tour-tooltip-actions-right {
+  display: flex;
+  gap: 6px;
+}
+
+.tour-btn {
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease, filter 0.15s ease;
+}
+
+.tour-btn-ghost {
+  background: none;
+  color: var(--text-muted);
+}
+
+.tour-btn-ghost:hover {
+  background: rgba(128, 128, 128, 0.15);
+  color: var(--text-main);
+}
+
+.tour-btn-primary {
+  background: var(--accent-purple);
+  color: #fff;
+  box-shadow: 0 2px 8px var(--accent-glow);
+}
+
+.tour-btn-primary:hover {
+  filter: brightness(1.12);
+}
+
+/* Modal de boas-vindas do tutorial */
+.tutorial-welcome-card {
+  text-align: center;
+}
+
+.tutorial-welcome-icon {
+  width: 56px;
+  height: 56px;
+  margin: 4px auto 12px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(124, 58, 237, 0.15);
+  color: var(--accent-purple);
+}
+
+.tutorial-welcome-icon svg {
+  width: 28px;
+  height: 28px;
+}
+
+.tutorial-welcome-steps {
+  list-style: none;
+  margin: 12px 0 4px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.tutorial-welcome-steps li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tutorial-welcome-steps li span {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  background: rgba(124, 58, 237, 0.15);
+  color: var(--accent-purple);
+}
+
+/* Botão de ajuda (tutorial) no header */
+.help-toggle-btn svg {
+  transition: transform 0.15s ease, color 0.15s ease;
+}
+
+.help-toggle-btn:hover svg {
+  color: #a78bfa;
+  transform: scale(1.1);
+}
+
+.tutorial-welcome-title {
+  margin: 0 0 6px;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text-heading);
 }

@@ -154,7 +154,8 @@ export async function scanSources(): Promise<WindowSource[]> {
 			pid,
 			hwnd,
 			processName,
-			thumbnailUrl: src.thumbnail.toDataURL(),
+			// JPEG: codifica bem mais rápido que PNG (toDataURL) e reduz o payload do IPC
+			thumbnailUrl: `data:image/jpeg;base64,${src.thumbnail.toJPEG(75).toString("base64")}`,
 			appIconUrl: src.appIcon ? src.appIcon.toDataURL() : undefined,
 		});
 	}

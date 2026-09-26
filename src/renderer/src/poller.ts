@@ -22,6 +22,8 @@ export class Poller {
 	private timer: ReturnType<typeof setTimeout> | null = null;
 	private running = false;
 	private inFlight = false;
+	// Um trigger chegou durante uma execução: roda de novo assim que ela terminar
+	private rerunRequested = false;
 	private failures = 0;
 	private lastRunAt = 0;
 	private readonly onVisibilityChange = () => {
@@ -33,8 +35,19 @@ export class Poller {
 
 	constructor(
 		private readonly task: PollTask,
-		private readonly opts: PollerOptions,
+		private opts: PollerOptions,
 	) {}
+
+	/** Altera o intervalo base (ex.: servidor passou a enviar avisos em tempo real) */
+	setIntervalMs(intervalMs: number): void {
+		if (intervalMs === this.opts.intervalMs) return;
+		this.opts = { ...this.opts, intervalMs };
+		if (this.running && !this.inFlight) {
+			if (this.timer) clearTimeout(this.timer);
+			this.timer = null;
+			this.schedule();
+		}
+	}
 
 	/** Inicia o polling. Com runNow, executa imediatamente. */
 	start(runNow = false): void {
@@ -56,7 +69,12 @@ export class Poller {
 
 	/** Executa agora (ignorado se já houver uma execução em andamento) */
 	async trigger(): Promise<void> {
-		if (!this.running || this.inFlight) return;
+		if (!this.running) return;
+		if (this.inFlight) {
+			// A execução atual pode ter começado antes da mudança avisada: repete ao terminar
+			this.rerunRequested = true;
+			return;
+		}
 		if (this.timer) {
 			clearTimeout(this.timer);
 			this.timer = null;
@@ -72,7 +90,12 @@ export class Poller {
 		} finally {
 			this.inFlight = false;
 			this.lastRunAt = Date.now();
-			this.schedule();
+			if (this.rerunRequested && this.running) {
+				this.rerunRequested = false;
+				void this.trigger();
+			} else {
+				this.schedule();
+			}
 		}
 	}
 

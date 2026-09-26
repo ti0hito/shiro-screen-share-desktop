@@ -42,14 +42,14 @@ export class AudioCaptureEngine {
 				config.targetProcessName,
 			);
 			console.log(
-				`[AudioEngine] 🎯 Candidate PIDs for isolated process audio:`,
+				`[AudioEngine] Candidate PIDs for isolated process audio:`,
 				candidatePids,
 			);
 
 			for (const targetPid of candidatePids) {
 				try {
 					console.log(
-						`[AudioEngine] 🔊 Activating WASAPI Process Loopback — PID: ${targetPid} (${config.targetProcessName}) + child processes`,
+						`[AudioEngine] Activating WASAPI Process Loopback - PID: ${targetPid} (${config.targetProcessName}) + child processes`,
 					);
 					const processSuccess = await this.tryProcessLoopback(
 						targetPid,
@@ -77,7 +77,7 @@ export class AudioCaptureEngine {
 					}
 				} catch (err: any) {
 					console.warn(
-						`[AudioEngine] ⚠️ Process loopback init failed for PID ${targetPid}:`,
+						`[AudioEngine] Process loopback init failed for PID ${targetPid}:`,
 						err.message,
 					);
 				}
@@ -142,7 +142,7 @@ export class AudioCaptureEngine {
 
 				this.activeCapture = capture;
 				console.log(
-					`[AudioEngine] ✅ WASAPI Process Loopback active for PID ${pid}`,
+					`[AudioEngine] WASAPI Process Loopback active for PID ${pid}`,
 				);
 				resolve(true);
 			} catch (err) {
@@ -167,7 +167,7 @@ export class AudioCaptureEngine {
 				});
 
 				this.activeCapture = capture;
-				console.log(`[AudioEngine] ✅ System WASAPI Loopback active`);
+				console.log(`[AudioEngine] System WASAPI Loopback active`);
 				resolve(true);
 			} catch (err) {
 				reject(err);

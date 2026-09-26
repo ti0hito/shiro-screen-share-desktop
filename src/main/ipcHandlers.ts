@@ -18,6 +18,7 @@ import {
 	respondToSourceRequest,
 	broadcastAudioMode,
 	respondToAudioRequest,
+	hasStreamDeckClients,
 } from "./websocketServer";
 
 // SSE bridge: guarda a requisição HTTP ativa para poder cancelar e reconectar
@@ -278,6 +279,7 @@ const DEFAULT_API_KEY = "c7c14f354ac71f78695a5529064e681d8588224515366760ed76815
 			}>,
 			selectedIndex: number,
 		) => {
+			if (!hasStreamDeckClients()) return;
 			const resized = resizeThumbnails(sources);
 			broadcastSources(resized, selectedIndex);
 			respondToSourceRequest(resized, selectedIndex);
@@ -298,6 +300,7 @@ const DEFAULT_API_KEY = "c7c14f354ac71f78695a5529064e681d8588224515366760ed76815
 			}>,
 			selectedIndex: number,
 		) => {
+			if (!hasStreamDeckClients()) return;
 			const resized = resizeThumbnails(sources);
 			broadcastSources(resized, selectedIndex);
 			respondToSourceRequest(resized, selectedIndex);

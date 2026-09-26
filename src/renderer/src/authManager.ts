@@ -15,6 +15,16 @@ const REMEMBER_TIME = "shiro_remember_time";
 const REMEMBER_USERNAME = "shiro_remember_username";
 const FOURTEEN_DAYS_MS = 14 * 24 * 60 * 60 * 1000; // 14 dias
 
+/** Insígnias de perfil (definidas e concedidas pela API — ver lib/badges.ts no servidor) */
+export type BadgeId = "developer" | "early-user" | "beta-tester" | "stream-24-7" | "builder" | "neighbor";
+
+/** Última contagem das estatísticas das insígnias (não é em tempo real) */
+export interface BadgeStats {
+	streamSeconds: number;
+	roomsCreated: number;
+	friendsCount: number;
+}
+
 export interface ShiroUser {
 	id: string;
 	username: string;
@@ -22,6 +32,8 @@ export interface ShiroUser {
 	avatar?: string;
 	banner?: string;
 	createdAt: string;
+	badges?: BadgeId[];
+	badgeStats?: BadgeStats;
 }
 
 export interface AuthResult {
@@ -329,6 +341,24 @@ export async function getRooms(): Promise<{ ok: boolean; rooms: RoomInfo[] }> {
 	return { ok: true, rooms: (result.data as any).rooms ?? [] };
 }
 
+/**
+ * Transmissões ativas de uma sala (consulta leve, feita com frequência enquanto o usuário está na sala).
+ * Retorna null se a requisição falhar.
+ */
+export async function getRoomStreams(roomId: string): Promise<ActiveStreamInfo[] | null> {
+	const token = getToken();
+	if (!token || !window.api?.apiRequest) return null;
+
+	const result = await window.api.apiRequest({
+		endpoint: `/api/rooms/streams/${encodeURIComponent(roomId)}`,
+		method: "GET",
+		token,
+	});
+
+	if (!result.ok) return null;
+	return (result.data as any).activeStreams ?? [];
+}
+
 export async function createRoom(data: {
 	name: string;
 	roomId?: string;
@@ -446,6 +476,31 @@ export async function kickUserFromRoom(
 	return { ok: true };
 }
 
+/** Concede ou remove uma insígnia manual (ex.: Beta Tester). Somente desenvolvedores (validado na API). */
+export async function setUserBadge(
+	targetUserId: string,
+	badge: BadgeId,
+	grant: boolean,
+): Promise<{ ok: boolean; error?: string; badges?: BadgeId[]; badgeStats?: BadgeStats }> {
+	const token = getToken();
+	if (!token || !window.api?.apiRequest) return { ok: false, error: "Não autenticado." };
+
+	const result = await window.api.apiRequest({
+		endpoint: "/api/users/badges",
+		method: "POST",
+		token,
+		body: { targetUserId, badge, grant },
+	});
+
+	const data = result.data as any;
+	if (result.status === 404) {
+		// Servidor ainda sem a rota de insígnias (API desatualizada)
+		return { ok: false, error: "O servidor ainda não suporta insígnias. Atualize a API e tente novamente." };
+	}
+	if (!result.ok) return { ok: false, error: data?.error ?? `Erro ${result.status}` };
+	return { ok: true, badges: data.badges ?? [], badgeStats: data.badgeStats };
+}
+
 export async function leaveRoom(roomId: string): Promise<void> {
 	const token = getToken();
 	if (!token || !window.api?.apiRequest) return;
@@ -484,6 +539,8 @@ export interface FriendInfo {
 	nickname?: string;
 	avatar?: string;
 	banner?: string;
+	badges?: BadgeId[];
+	badgeStats?: BadgeStats;
 	isOnline: boolean;
 	lastSeen?: string;
 	currentRoom?: { roomId: string; name: string } | null;

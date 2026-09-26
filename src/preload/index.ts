@@ -71,6 +71,16 @@ const api: ElectronAPI = {
 		return () => ipcRenderer.removeListener("update-downloaded", listener);
 	},
 
+	onAppBeforeQuit: (callback: () => void) => {
+		const listener = () => callback();
+		ipcRenderer.on("app-before-quit", listener);
+		return () => ipcRenderer.removeListener("app-before-quit", listener);
+	},
+
+	appQuitReady: (): void => {
+		ipcRenderer.send("app-quit-ready");
+	},
+
 	minimizeWindow: (): void => {
 		ipcRenderer.send("window-minimize");
 	},

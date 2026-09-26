@@ -46,6 +46,9 @@ export interface ElectronAPI {
 	onUpdateAvailable: (callback: (info: { version: string }) => void) => () => void;
 	onUpdateProgress: (callback: (progress: { percent: number; bytesPerSecond: number }) => void) => () => void;
 	onUpdateDownloaded: (callback: (info: { version: string }) => void) => () => void;
+	/** O app vai fechar: o renderer deve sair da sala e então chamar appQuitReady() */
+	onAppBeforeQuit: (callback: () => void) => () => void;
+	appQuitReady: () => void;
 	minimizeWindow: () => void;
 	maximizeWindow: () => void;
 	closeWindow: () => void;
