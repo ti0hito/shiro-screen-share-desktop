@@ -58,13 +58,14 @@ function optimizeSdp(sdp: string): string {
 		return line;
 	});
 
-	// 2. Limite de largura de banda de vídeo para evitar picos brutos (4500kbps)
+	// 2. Teto de banda de vídeo que ESTE lado aceita receber. Fica no maior preset do app
+	//    (15 Mbps): quem transmite controla o bitrate real via maxBitrate do sender.
 	const resultLines: string[] = [];
 	for (const line of lines) {
 		resultLines.push(line);
 		if (line.startsWith("m=video")) {
-			resultLines.push("b=AS:4500");
-			resultLines.push("b=TIAS:4500000");
+			resultLines.push(`b=AS:${MAX_VIDEO_BITRATE_KBPS}`);
+			resultLines.push(`b=TIAS:${MAX_VIDEO_BITRATE_KBPS * 1000}`);
 		}
 	}
 
@@ -74,13 +75,18 @@ function optimizeSdp(sdp: string): string {
 /**
  * Configura parâmetros de codificação de vídeo nos senders WebRTC
  */
-function configureSenderParameters(pc: RTCPeerConnection): void {
+/** Maior bitrate de vídeo oferecido nos presets (teto anunciado no SDP) */
+const MAX_VIDEO_BITRATE_KBPS = 15000;
+/** Bitrate padrão enquanto o usuário não escolhe outro */
+const DEFAULT_VIDEO_BITRATE_KBPS = 4500;
+
+function configureSenderParameters(pc: RTCPeerConnection, bitrateKbps: number): void {
 	try {
 		for (const sender of pc.getSenders()) {
 			if (sender.track?.kind === "video") {
 				const params = sender.getParameters();
 				if (params.encodings && params.encodings.length > 0) {
-					params.encodings[0].maxBitrate = 4500000; // 4.5 Mbps
+					params.encodings[0].maxBitrate = bitrateKbps * 1000;
 					params.encodings[0].networkPriority = "high";
 					params.encodings[0].priority = "high";
 					params.degradationPreference = "maintain-framerate";
@@ -120,6 +126,7 @@ export class P2PManager {
 	private callbacks: P2PCallbacks;
 	private myUserId: string;
 	private isStreaming = false;
+	private videoBitrateKbps = DEFAULT_VIDEO_BITRATE_KBPS;
 	private sseCleanup: (() => void) | null = null;
 	// Fila por peer: sinais (offer/answer/ice) e renegociações do mesmo peer rodam em ordem, nunca em paralelo
 	private peerQueues = new Map<string, Promise<void>>();
@@ -129,6 +136,14 @@ export class P2PManager {
 	constructor(myUserId: string, callbacks: P2PCallbacks) {
 		this.myUserId = myUserId;
 		this.callbacks = callbacks;
+	}
+
+	/** Define o bitrate máximo do vídeo transmitido e aplica na hora às conexões abertas */
+	setVideoBitrate(kbps: number): void {
+		this.videoBitrateKbps = Math.min(Math.max(500, kbps), MAX_VIDEO_BITRATE_KBPS);
+		for (const pc of this.peerConnections.values()) {
+			if (pc.connectionState !== "closed") configureSenderParameters(pc, this.videoBitrateKbps);
+		}
 	}
 
 	setLocalStream(stream: MediaStream): void {
@@ -142,13 +157,13 @@ export class P2PManager {
 				if (sender) {
 					sender.replaceTrack(track).then(() => {
 						console.log(`[P2P] Faixa ${track.kind} substituída em tempo real para ${peerId}`);
-						configureSenderParameters(pc);
+						configureSenderParameters(pc, this.videoBitrateKbps);
 					}).catch((err) => console.warn(`[P2P] Erro replaceTrack para ${peerId}:`, err));
 				} else {
 					try {
 						pc.addTrack(track, stream);
 						console.log(`[P2P] Nova faixa ${track.kind} adicionada para ${peerId}`);
-						configureSenderParameters(pc);
+						configureSenderParameters(pc, this.videoBitrateKbps);
 					} catch (err) {
 						console.warn(`[P2P] Erro addTrack para ${peerId}:`, err);
 					}
@@ -239,7 +254,7 @@ export class P2PManager {
 				}
 			}
 		}
-		configureSenderParameters(pc);
+		configureSenderParameters(pc, this.videoBitrateKbps);
 	}
 
 	private async doRenegotiate(targetUserId: string, forceRestart: boolean): Promise<void> {
@@ -526,7 +541,7 @@ export class P2PManager {
 		try {
 			await pc.setRemoteDescription({ type: "answer", sdp });
 			await this.drainPendingCandidates(fromUserId, pc);
-			configureSenderParameters(pc);
+			configureSenderParameters(pc, this.videoBitrateKbps);
 			console.log(`[P2P] Remote description configurada com sucesso para ${fromUserId}`);
 		} catch (err) {
 			console.error(`[P2P] Erro ao definir remoteDescription de ${fromUserId}:`, err);

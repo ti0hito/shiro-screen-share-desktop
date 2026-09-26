@@ -136,6 +136,7 @@ export function setupIpcHandlers(
 		return {
 			openAtLogin: loginSettings.openAtLogin,
 			autoUpdate: isAutoUpdateEnabled(),
+			version: app.getVersion(),
 		};
 	});
 

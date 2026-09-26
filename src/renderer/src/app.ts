@@ -8,6 +8,7 @@ import {
 	Cat,
 	Check,
 	CheckCircle2,
+	ChevronDown,
 	CircleHelp,
 	ChevronLeft,
 	ChevronRight,
@@ -20,6 +21,7 @@ import {
 	Eye,
 	EyeOff,
 	CheckCheck,
+	Gauge,
 	Globe,
 	GraduationCap,
 	Hammer,
@@ -28,14 +30,19 @@ import {
 	Image,
 	Info,
 	KeyRound,
+	Layers,
+	Link,
 	Loader2,
 	Lock,
 	LogIn,
 	LogOut,
+	Maximize,
 	Megaphone,
+	Minimize,
 	MicOff,
 	Monitor,
 	Moon,
+	Pencil,
 	Play,
 	PlayCircle,
 	Power,
@@ -142,6 +149,17 @@ const POLL_INTERVALS: { fallback: PollIntervals; withServerEvents: PollIntervals
 };
 
 export const DEV_ADMIN_ID = "6ab1e7120ee994421cd420be";
+
+/** Presets de transmissão: resolução · FPS · bitrate (kbps) */
+const STREAM_PRESETS: Record<string, { resolution: string; fps: string; bitrate: string }> = {
+	economia: { resolution: "720p", fps: "30", bitrate: "2500" },
+	equilibrado: { resolution: "1080p", fps: "30", bitrate: "4500" },
+	padrao: { resolution: "1080p", fps: "60", bitrate: "4500" },
+	jogos: { resolution: "1080p", fps: "60", bitrate: "8000" },
+	alta: { resolution: "1440p", fps: "60", bitrate: "10000" },
+	ultra: { resolution: "4k", fps: "60", bitrate: "15000" },
+};
+const STREAM_QUALITY_STORAGE_KEY = "shiro-stream-quality";
 
 /** Desenvolvedores oficiais (a API valida; aqui só controla o que aparece na tela) */
 const DEVELOPER_IDS = ["6ab1e7120ee994421cd420be", "6ab20b7b889d5d620b52c89a"];
@@ -250,6 +268,8 @@ class ShiroApp {
 	private autoConnectInFlight = false;
 	private lastUsersRenderKey = "";
 	private tutorial: GuidedTour | null = null;
+	private modalCloseTimers = new Map<HTMLElement, ReturnType<typeof setTimeout>>();
+	private refreshSpinnerCounts = new Map<string, number>();
 	private authUiInitialized = false;
 	// Indicam se já houve ao menos um carregamento bem-sucedido (para não trocar dados bons por "vazio" em falhas)
 	private roomsLoaded = false;
@@ -271,6 +291,7 @@ class ShiroApp {
 		this.setupCustomTooltips();
 		this.setupStreamDeckBridge();
 		this.setupQuitCleanup();
+		this.showAppVersion();
 
 		const saved = checkSavedSession();
 
@@ -703,6 +724,19 @@ class ShiroApp {
 		await this.refreshRooms();
 	}
 
+	/** Mostra a versão do app nos badges do header (login e tela principal) */
+	private showAppVersion(): void {
+		window.api
+			?.getAppSettings?.()
+			.then((settings) => {
+				if (!settings?.version) return;
+				document.querySelectorAll<HTMLElement>(".app-version-badge").forEach((badge) => {
+					badge.textContent = `v${settings.version}`;
+				});
+			})
+			.catch(() => {});
+	}
+
 	/** Ao fechar o app (ex.: "Sair" na bandeja), sai da sala antes de o processo encerrar */
 	private setupQuitCleanup(): void {
 		window.api?.onAppBeforeQuit?.(async () => {
@@ -754,8 +788,10 @@ class ShiroApp {
 			["logout", () => this.setupLogout()],
 			["streamDeckBridge", () => this.setupStreamDeckBridge()],
 			["serverEvents", () => this.subscribeServerEvents()],
+			["accountMenu", () => this.setupAccountMenu()],
 			["tutorial", () => this.setupTutorial()],
 			["controlsAutoHide", () => this.setupControlsAutoHide()],
+			["fullscreenSync", () => this.setupFullscreenSync()],
 		];
 		for (const [name, setup] of setups) {
 			try {
@@ -944,10 +980,7 @@ class ShiroApp {
 		modal?.addEventListener("click", (e) => {
 			if (e.target === modal) close();
 		});
-		document.getElementById("btn-start-tutorial")?.addEventListener("click", (e) => {
-			e.stopPropagation();
-			this.startTutorial();
-		});
+		document.getElementById("btn-start-tutorial")?.addEventListener("click", () => this.startTutorial());
 	}
 
 	private startTutorial(): void {
@@ -1001,8 +1034,9 @@ class ShiroApp {
 			},
 			{
 				title: "Ajuste a qualidade",
-				text: `Escolha a <b>resolução</b> e o <b>FPS</b> da transmissão. <b>1080p a 60 FPS</b> é o ideal para a maioria;
-					se a internet de quem assiste for mais fraca, use <b>720p</b>.`,
+				text: `Escolha um <b>preset</b> pronto ou ajuste <b>resolução</b>, <b>FPS</b> e <b>bitrate</b> à mão.
+					O <b>Padrão</b> (1080p a 60 FPS) serve para a maioria; para jogos rápidos use <b>Jogos</b>,
+					e se a internet de quem assiste for fraca, use <b>Economia</b>.`,
 				target: () => document.getElementById("settings-popover"),
 				onEnter: () => openPopover("settings-popover", "btn-toggle-settings"),
 				onExit: () => closePopover("settings-popover", "btn-close-settings"),
@@ -1579,6 +1613,10 @@ class ShiroApp {
 	}
 
 	private async refreshRooms(): Promise<boolean> {
+		return this.withRefreshSpinner("btn-refresh-rooms", () => this.refreshRoomsNow());
+	}
+
+	private async refreshRoomsNow(): Promise<boolean> {
 		let ok = false;
 		try {
 			const res = await getRooms();
@@ -1849,7 +1887,10 @@ class ShiroApp {
 						<i data-lucide="user"></i>
 						<span>${this.escapeHtml(user?.username ?? "Você")} (Você Transmitindo)</span>
 					</div>
-					<span class="badge badge-live">AO VIVO</span>
+					<div class="stream-card-actions">
+						${this.fullscreenButtonHtml()}
+						<span class="badge badge-live">AO VIVO</span>
+					</div>
 				</div>
 				<canvas class="stream-card-canvas ${isMax ? "hidden" : ""}"></canvas>
 				<video class="stream-card-video ${isMax ? "" : "hidden"}" autoplay playsinline muted></video>
@@ -1866,6 +1907,7 @@ class ShiroApp {
 			this.captureInitialThumbnail(videoEl, canvasEl);
 
 			localCard.addEventListener("click", () => this.toggleMaximizeStreamCard("local-preview", localCard));
+			this.bindFullscreenButton(localCard, "local-preview");
 			gridEl.appendChild(localCard);
 		}
 
@@ -1893,6 +1935,7 @@ class ShiroApp {
 							<input type="range" class="stream-vol-slider" min="0" max="100" value="${savedVol}">
 							<span class="stream-vol-percent">${savedVol}%</span>
 						</div>
+						${this.fullscreenButtonHtml()}
 						<span class="badge badge-live">AO VIVO</span>
 					</div>
 				</div>
@@ -1950,6 +1993,7 @@ class ShiroApp {
 			this.captureInitialThumbnail(videoEl, canvasEl);
 
 			remoteCard.addEventListener("click", () => this.toggleMaximizeStreamCard(cardId, remoteCard));
+			this.bindFullscreenButton(remoteCard, cardId);
 			gridEl.appendChild(remoteCard);
 		}
 
@@ -2060,6 +2104,47 @@ class ShiroApp {
 		}
 	}
 
+	private fullscreenButtonHtml(): string {
+		const isFs = !!document.fullscreenElement;
+		return `<button type="button" class="stream-fullscreen-btn" title="${isFs ? "Sair da tela cheia" : "Tela cheia"}">
+			<i data-lucide="${isFs ? "minimize" : "maximize"}"></i>
+		</button>`;
+	}
+
+	private bindFullscreenButton(cardEl: HTMLElement, cardId: string): void {
+		cardEl.querySelector(".stream-fullscreen-btn")?.addEventListener("click", (e) => {
+			e.stopPropagation();
+			this.toggleStreamFullscreen(cardId, cardEl);
+		});
+	}
+
+	/**
+	 * Tela cheia de verdade (monitor inteiro): maximiza a transmissão e coloca a área de
+	 * transmissões em fullscreen, mantendo a pílula de controles (que se esconde sozinha).
+	 */
+	private toggleStreamFullscreen(cardId: string, cardEl: HTMLElement): void {
+		if (document.fullscreenElement) {
+			document.exitFullscreen().catch(() => {});
+			return;
+		}
+		if (this.maximizedStreamId !== cardId) this.maximizeStreamCard(cardId, cardEl);
+		document.querySelector<HTMLElement>(".right-section")?.requestFullscreen().catch((err) => {
+			console.warn("[App] Não foi possível entrar em tela cheia:", err);
+		});
+	}
+
+	/** Atualiza o ícone dos botões de tela cheia quando o estado muda (inclusive via Esc) */
+	private setupFullscreenSync(): void {
+		document.addEventListener("fullscreenchange", () => {
+			const isFs = !!document.fullscreenElement;
+			document.querySelectorAll<HTMLElement>(".stream-fullscreen-btn").forEach((btn) => {
+				btn.title = isFs ? "Sair da tela cheia" : "Tela cheia";
+				btn.innerHTML = `<i data-lucide="${isFs ? "minimize" : "maximize"}"></i>`;
+			});
+			this.refreshIcons();
+		});
+	}
+
 	private maximizeStreamCard(cardId: string, cardEl: HTMLElement): void {
 		this.maximizedStreamId = cardId;
 
@@ -2099,6 +2184,7 @@ class ShiroApp {
 
 	private restoreGridMode(): void {
 		this.maximizedStreamId = null;
+		if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
 
 		const gridEl = document.getElementById("live-streams-grid");
 		const rightSectionEl = document.querySelector(".right-section");
@@ -2171,6 +2257,10 @@ class ShiroApp {
 	//  USERS PANEL (Exibe todos, inclusive Você)
 	// ------------------------------------------------------------------------------------------------------------------------------
 	private async refreshUsersList(): Promise<boolean> {
+		return this.withRefreshSpinner("btn-refresh-users", () => this.refreshUsersListNow());
+	}
+
+	private async refreshUsersListNow(): Promise<boolean> {
 		const listEl = document.getElementById("users-list");
 		if (!listEl) return true;
 
@@ -2379,6 +2469,10 @@ class ShiroApp {
 	}
 
 	private async refreshSources(): Promise<void> {
+		return this.withRefreshSpinner("btn-refresh-sources", () => this.refreshSourcesNow());
+	}
+
+	private async refreshSourcesNow(): Promise<void> {
 		if (!window.api?.getAvailableSources) return;
 		const sources = await window.api.getAvailableSources();
 		this.allSources = sources;
@@ -2463,6 +2557,7 @@ class ShiroApp {
 		const tracks: MediaStreamTrack[] = [this.currentVideoTrack];
 		if (audioTrack) tracks.push(audioTrack);
 		const stream = new MediaStream(tracks);
+		this.p2pManager?.setVideoBitrate(this.getQualityOptions().bitrateKbps);
 		this.p2pManager?.setLocalStream(stream);
 		this.p2pManager?.setIsStreaming(true);
 
@@ -2588,7 +2683,7 @@ class ShiroApp {
 			width: dim.width,
 			height: dim.height,
 			fps: selectFps,
-			bitrateKbps: 4500,
+			bitrateKbps: parseInt((document.getElementById("select-bitrate") as HTMLSelectElement)?.value || "4500", 10),
 			degradationPreference: "maintain-framerate",
 		};
 	}
@@ -2614,13 +2709,70 @@ class ShiroApp {
 	}
 
 	private setupQualityChangeListeners(): void {
-		const onTrackConfigChanged = async () => {
+		const value = (id: string) => (document.getElementById(id) as HTMLSelectElement | null)?.value ?? "";
+
+		// Resolução/FPS exigem recapturar a fonte; bitrate é aplicado direto nas conexões
+		const recaptureSource = async () => {
 			const selected = this.leftSourcePicker?.getSelectedSource() ?? this.mainSourcePicker?.getSelectedSource();
 			if (selected) await this.onSourceSelected(selected);
 		};
+		const applyBitrate = () => this.p2pManager?.setVideoBitrate(this.getQualityOptions().bitrateKbps);
 
-		document.getElementById("select-resolution")?.addEventListener("change", onTrackConfigChanged);
-		document.getElementById("select-fps")?.addEventListener("change", onTrackConfigChanged);
+		const save = () => {
+			try {
+				localStorage.setItem(
+					STREAM_QUALITY_STORAGE_KEY,
+					JSON.stringify({ preset: value("select-preset"), resolution: value("select-resolution"), fps: value("select-fps"), bitrate: value("select-bitrate") }),
+				);
+			} catch {}
+		};
+
+		// Marca o preset que corresponde à combinação atual, ou "Personalizado"
+		const syncPresetFromFields = () => {
+			const match = Object.entries(STREAM_PRESETS).find(
+				([, p]) => p.resolution === value("select-resolution") && p.fps === value("select-fps") && p.bitrate === value("select-bitrate"),
+			);
+			this.setCustomSelectValue("select-preset", match ? match[0] : "custom");
+		};
+
+		// Restaura a última escolha
+		try {
+			const saved = JSON.parse(localStorage.getItem(STREAM_QUALITY_STORAGE_KEY) || "null");
+			if (saved) {
+				if (saved.resolution) this.setCustomSelectValue("select-resolution", saved.resolution);
+				if (saved.fps) this.setCustomSelectValue("select-fps", saved.fps);
+				if (saved.bitrate) this.setCustomSelectValue("select-bitrate", saved.bitrate);
+				syncPresetFromFields();
+			}
+		} catch {}
+
+		document.getElementById("select-preset")?.addEventListener("change", async () => {
+			const preset = STREAM_PRESETS[value("select-preset")];
+			if (!preset) {
+				save(); // "Personalizado": mantém os campos como estão
+				return;
+			}
+			const trackChanged = preset.resolution !== value("select-resolution") || preset.fps !== value("select-fps");
+			this.setCustomSelectValue("select-resolution", preset.resolution);
+			this.setCustomSelectValue("select-fps", preset.fps);
+			this.setCustomSelectValue("select-bitrate", preset.bitrate);
+			save();
+			applyBitrate();
+			if (trackChanged) await recaptureSource();
+		});
+
+		for (const id of ["select-resolution", "select-fps"]) {
+			document.getElementById(id)?.addEventListener("change", async () => {
+				syncPresetFromFields();
+				save();
+				await recaptureSource();
+			});
+		}
+		document.getElementById("select-bitrate")?.addEventListener("change", () => {
+			syncPresetFromFields();
+			save();
+			applyBitrate();
+		});
 	}
 
 	private setupPopoverToggles(): void {
@@ -2706,6 +2858,25 @@ class ShiroApp {
 		audioPopover?.addEventListener("click", (e) => e.stopPropagation());
 	}
 
+	/**
+	 * Altera o valor de um select customizado (select nativo + botão + item marcado).
+	 * Com emitChange, dispara "change" no select nativo como se o usuário tivesse escolhido.
+	 */
+	private setCustomSelectValue(selectId: string, value: string, emitChange = false): void {
+		const nativeSelect = document.getElementById(selectId) as HTMLSelectElement | null;
+		const container = nativeSelect?.closest<HTMLElement>(".custom-select");
+		if (!nativeSelect || !container) return;
+		const option = container.querySelector<HTMLElement>(`.select-dropdown li[data-value="${CSS.escape(value)}"]`);
+		if (!option) return;
+
+		nativeSelect.value = value;
+		// Rótulo = só o texto principal do item (sem o subtítulo <small> dos presets)
+		const trigger = container.querySelector<HTMLElement>(".select-trigger");
+		if (trigger) trigger.textContent = (option.childNodes[0]?.textContent ?? option.textContent ?? "").trim();
+		container.querySelectorAll(".select-dropdown li").forEach((li) => li.classList.toggle("selected", li === option));
+		if (emitChange) nativeSelect.dispatchEvent(new Event("change", { bubbles: true }));
+	}
+
 	private setupCustomSelects(): void {
 		document.querySelectorAll<HTMLElement>(".custom-select").forEach((container) => {
 			const nativeSelect = container.querySelector("select") as HTMLSelectElement;
@@ -2714,22 +2885,29 @@ class ShiroApp {
 
 			if (!nativeSelect || !trigger || !options.length) return;
 
+			const dropdown = container.querySelector<HTMLElement>(".select-dropdown");
+
 			trigger.addEventListener("click", (e) => {
 				e.stopPropagation();
 				const wasOpen = container.classList.contains("open");
 				document.querySelectorAll(".custom-select.open").forEach((el) => el.classList.remove("open"));
-				if (!wasOpen) container.classList.add("open");
+				if (wasOpen) return;
+
+				// Abre para cima quando não há espaço abaixo (evita a lista sair da tela)
+				if (dropdown) {
+					const triggerRect = trigger.getBoundingClientRect();
+					const listHeight = dropdown.scrollHeight + 8;
+					const spaceBelow = window.innerHeight - triggerRect.bottom;
+					const spaceAbove = triggerRect.top;
+					container.classList.toggle("drop-up", spaceBelow < listHeight && spaceAbove > spaceBelow);
+				}
+				container.classList.add("open");
 			});
 
 			options.forEach((option) => {
 				option.addEventListener("click", () => {
-					const value = option.getAttribute("data-value")!;
-					nativeSelect.value = value;
-					trigger.textContent = option.textContent;
-					container.querySelectorAll(".select-dropdown li").forEach((li) => li.classList.remove("selected"));
-					option.classList.add("selected");
+					this.setCustomSelectValue(nativeSelect.id, option.getAttribute("data-value")!, true);
 					container.classList.remove("open");
-					nativeSelect.dispatchEvent(new Event("change", { bubbles: true }));
 				});
 			});
 		});
@@ -2764,52 +2942,13 @@ class ShiroApp {
 	}
 
 	private setupAutoUpdateSystem(chkAutoUpdate: HTMLInputElement | null): void {
-		const modal = document.getElementById("modal-confirm-auto-update");
-		const btnConfirm = document.getElementById("btn-confirm-auto-update-modal");
-		const btnCancel = document.getElementById("btn-cancel-auto-update-modal");
-		const btnClose = document.getElementById("btn-close-auto-update-modal");
-		const modalDesc = document.getElementById("auto-update-modal-desc");
-		const btnConfirmText = document.getElementById("btn-confirm-auto-update-text");
-
-		let targetState = true;
-
-		const closeModal = () => {
-			if (modal) modal.classList.add("hidden");
-		};
-
-		const openModal = (enabling: boolean) => {
-			targetState = enabling;
-			if (modalDesc) {
-				modalDesc.textContent = enabling
-					? "Ao ativar as atualizações automáticas, o Shiro Screen Share baixará novas versões do GitHub em segundo plano. Quando um update estiver pronto, você receberá um aviso para reiniciar agora ou o app atualizará automaticamente ao ser fechado e reaberto."
-					: "Deseja desativar as atualizações automáticas? O app não baixará novos recursos e melhorias automaticamente.";
-			}
-			if (btnConfirmText) {
-				btnConfirmText.textContent = enabling ? "Confirmar e Ativar" : "Desativar Atualizações";
-			}
-			// Fecha o popover de configurações para focar no modal de confirmação
-			document.getElementById("settings-popover")?.classList.add("hidden");
-			modal?.classList.remove("hidden");
-			this.refreshIcons();
-		};
-
-		chkAutoUpdate?.addEventListener("change", () => {
-			const desiredState = chkAutoUpdate.checked;
-			// Mantém o estado anterior visualmente até o usuário confirmar no modal
-			chkAutoUpdate.checked = !desiredState;
-			openModal(desiredState);
-		});
-
-		btnConfirm?.addEventListener("click", async () => {
-			closeModal();
+		// Aplica na hora ao alternar (sem modal de confirmação)
+		chkAutoUpdate?.addEventListener("change", async () => {
 			if (window.api?.setAutoUpdate) {
-				const val = await window.api.setAutoUpdate(targetState);
-				if (chkAutoUpdate) chkAutoUpdate.checked = val;
+				const val = await window.api.setAutoUpdate(chkAutoUpdate.checked);
+				chkAutoUpdate.checked = val;
 			}
 		});
-
-		btnCancel?.addEventListener("click", closeModal);
-		btnClose?.addEventListener("click", closeModal);
 
 		// Toast de notificação de atualização baixada
 		const toast = document.getElementById("toast-update-notification");
@@ -2852,14 +2991,100 @@ class ShiroApp {
 		document.getElementById("btn-shiro-promo-visit")?.addEventListener("click", openSite);
 	}
 
+	/**
+	 * Gira o ícone do botão de atualizar enquanto a tarefa roda (clique ou atualização
+	 * automática). Fica no mínimo 600ms para a animação ser perceptível.
+	 */
+	private async withRefreshSpinner<T>(buttonId: string, task: () => Promise<T>): Promise<T> {
+		const button = document.getElementById(buttonId);
+		const startedAt = Date.now();
+		this.refreshSpinnerCounts.set(buttonId, (this.refreshSpinnerCounts.get(buttonId) ?? 0) + 1);
+		button?.classList.add("is-refreshing");
+		try {
+			return await task();
+		} finally {
+			setTimeout(() => {
+				const pending = (this.refreshSpinnerCounts.get(buttonId) ?? 1) - 1;
+				this.refreshSpinnerCounts.set(buttonId, pending);
+				if (pending <= 0) button?.classList.remove("is-refreshing");
+			}, Math.max(0, 600 - (Date.now() - startedAt)));
+		}
+	}
+
+	/** Abre um modal (cancela um fechamento animado em andamento, se houver) */
+	private showModal(modal: HTMLElement | null): void {
+		if (!modal) return;
+		const pending = this.modalCloseTimers.get(modal);
+		if (pending) {
+			clearTimeout(pending);
+			this.modalCloseTimers.delete(modal);
+		}
+		modal.classList.remove("is-closing", "hidden");
+	}
+
+	/** Fecha um modal com animação de saída (em vez de sumir de uma vez) */
+	private hideModalAnimated(modal: HTMLElement | null): void {
+		if (!modal || modal.classList.contains("hidden") || this.modalCloseTimers.has(modal)) return;
+		modal.classList.add("is-closing");
+		// Duração igual à animação .is-closing no CSS; timer em vez de animationend para
+		// funcionar também quando a animação não roda (janela oculta)
+		const timer = setTimeout(() => {
+			this.modalCloseTimers.delete(modal);
+			modal.classList.remove("is-closing");
+			modal.classList.add("hidden");
+		}, 200);
+		this.modalCloseTimers.set(modal, timer);
+	}
+
+	/**
+	 * Menu da conta: clicar no perfil do header abre o dropdown com
+	 * Tutorial, Perfil, Configurações e Sair da Conta.
+	 */
+	private setupAccountMenu(): void {
+		const trigger = document.getElementById("header-user-info");
+		const dropdown = document.getElementById("account-dropdown");
+		const menu = document.getElementById("account-menu");
+		const settingsModal = document.getElementById("modal-app-settings");
+		if (!trigger || !dropdown || !menu) return;
+
+		const setOpen = (open: boolean) => {
+			dropdown.classList.toggle("hidden", !open);
+			trigger.classList.toggle("active", open);
+			trigger.setAttribute("aria-expanded", String(open));
+		};
+
+		trigger.addEventListener("click", (e) => {
+			e.stopPropagation();
+			setOpen(dropdown.classList.contains("hidden"));
+		});
+		// Escolher qualquer item fecha o menu (as ações de cada item são registradas nos setups próprios)
+		dropdown.addEventListener("click", (e) => {
+			if ((e.target as HTMLElement).closest(".account-dropdown-item")) setOpen(false);
+		});
+		document.addEventListener("click", (e) => {
+			if (!menu.contains(e.target as Node)) setOpen(false);
+		});
+		document.addEventListener("keydown", (e) => {
+			if (e.key === "Escape") setOpen(false);
+		});
+
+		const closeSettings = () => this.hideModalAnimated(settingsModal);
+		document.getElementById("btn-open-app-settings")?.addEventListener("click", () => {
+			this.showModal(settingsModal);
+		});
+		document.getElementById("btn-close-app-settings")?.addEventListener("click", closeSettings);
+		settingsModal?.addEventListener("click", (e) => {
+			if (e.target === settingsModal) closeSettings();
+		});
+	}
+
 	private setupThemeToggle(): void {
-		const btnToggle = document.getElementById("btn-theme-toggle");
+		const chkLight = document.getElementById("chk-light-theme") as HTMLInputElement | null;
 		const savedTheme = localStorage.getItem("shiro-theme") || "dark";
 		this.applyTheme(savedTheme);
 
-		btnToggle?.addEventListener("click", () => {
-			const current = document.documentElement.getAttribute("data-theme") || "dark";
-			const next = current === "dark" ? "light" : "dark";
+		chkLight?.addEventListener("change", () => {
+			const next = chkLight.checked ? "light" : "dark";
 			this.applyTheme(next);
 			localStorage.setItem("shiro-theme", next);
 		});
@@ -2867,14 +3092,8 @@ class ShiroApp {
 
 	private applyTheme(theme: string): void {
 		document.documentElement.setAttribute("data-theme", theme);
-		const btnToggle = document.getElementById("btn-theme-toggle");
-		if (btnToggle) {
-			btnToggle.innerHTML = theme === "dark"
-				? '<i data-lucide="sun"></i>'
-				: '<i data-lucide="moon"></i>';
-			btnToggle.title = theme === "dark" ? "Alternar para Claro" : "Alternar para Escuro";
-			this.refreshIcons();
-		}
+		const chkLight = document.getElementById("chk-light-theme") as HTMLInputElement | null;
+		if (chkLight) chkLight.checked = theme === "light";
 	}
 
 
@@ -2950,6 +3169,10 @@ class ShiroApp {
 	}
 
 	private async refreshFriends(): Promise<boolean> {
+		return this.withRefreshSpinner("btn-refresh-friends", () => this.refreshFriendsNow());
+	}
+
+	private async refreshFriendsNow(): Promise<boolean> {
 		try {
 			const res = await getFriends();
 			// Falha na API: mantém amigos/pedidos/convites anteriores
@@ -4046,8 +4269,8 @@ class ShiroApp {
 		if (headerUsername) {
 			headerUsername.textContent = displayName;
 			headerUsername.title = user.nickname
-				? `${user.nickname} (@${user.username}) ・ Clique para editar perfil`
-				: `@${user.username} ・ Clique para editar perfil`;
+				? `${user.nickname} (@${user.username}) ・ Menu da conta`
+				: `@${user.username} ・ Menu da conta`;
 		}
 		if (headerAvatar) {
 			this.renderUserAvatar(headerAvatar, user);
@@ -4078,7 +4301,6 @@ class ShiroApp {
 
 
 	private setupProfileSettings(): void {
-		const headerInfo = document.getElementById("header-user-info");
 		const modal = document.getElementById("modal-profile-settings");
 		const btnClose = document.getElementById("btn-close-profile-modal");
 		const btnCancel = document.getElementById("btn-cancel-profile-settings");
@@ -4086,35 +4308,29 @@ class ShiroApp {
 		const inputNick = document.getElementById("input-profile-nickname") as HTMLInputElement | null;
 		const inputAvatar = document.getElementById("input-profile-avatar") as HTMLInputElement | null;
 		const inputBanner = document.getElementById("input-profile-banner") as HTMLInputElement | null;
-		const btnClearAvatar = document.getElementById("btn-clear-profile-avatar");
-		const btnClearBanner = document.getElementById("btn-clear-profile-banner");
-		const previewDisplayName = document.getElementById("profile-preview-display-name");
 		const previewUsername = document.getElementById("profile-preview-username");
 		const previewFallback = document.getElementById("profile-avatar-preview-fallback");
 		const previewImg = document.getElementById("profile-avatar-preview-img") as HTMLImageElement | null;
 		const previewBanner = document.getElementById("profile-banner-preview");
+		const previewBadges = document.getElementById("profile-preview-badges");
 		const rateBadge = document.getElementById("nickname-rate-badge");
 		const rateText = document.getElementById("nickname-rate-text");
 		const errorEl = document.getElementById("profile-settings-error");
 		const successEl = document.getElementById("profile-settings-success");
 
-		let remainingChanges = 6;
-		let maxChanges = 6;
-
 		const updateRateBadge = (remaining: number, max = 6) => {
-			remainingChanges = remaining;
-			maxChanges = max;
-			if (rateText) {
-				rateText.textContent = `${remaining}/${max} trocas restantes`;
-			}
+			if (rateText) rateText.textContent = `${remaining}/${max} trocas de apelido`;
 			if (rateBadge) {
 				rateBadge.classList.remove("warning", "danger");
-				if (remaining === 0) {
-					rateBadge.classList.add("danger");
-				} else if (remaining <= 2) {
-					rateBadge.classList.add("warning");
-				}
+				if (remaining === 0) rateBadge.classList.add("danger");
+				else if (remaining <= 2) rateBadge.classList.add("warning");
 			}
+		};
+
+		const renderBadges = () => {
+			const user = getUser();
+			if (previewBadges) previewBadges.innerHTML = this.renderProfileBadges(user?.badges, user?.badgeStats);
+			this.refreshIcons();
 		};
 
 		const updateLivePreview = () => {
@@ -4126,50 +4342,170 @@ class ShiroApp {
 			const bannerVal = inputBanner?.value.trim() || "";
 
 			const displayName = nickVal.length > 0 ? nickVal : user.username;
-			if (previewDisplayName) previewDisplayName.textContent = displayName;
+			if (inputNick) inputNick.placeholder = user.username;
 			if (previewUsername) previewUsername.textContent = `@${user.username}`;
+			if (previewFallback) previewFallback.textContent = displayName[0]?.toUpperCase() || "?";
 
-			if (previewFallback) {
-				previewFallback.textContent = displayName[0]?.toUpperCase() || "?";
-			}
-
-			if (avatarVal.startsWith("http")) {
-				if (previewImg) {
-					previewImg.src = avatarVal;
-					previewImg.classList.remove("hidden");
-					if (previewFallback) previewFallback.classList.add("hidden");
-					previewImg.onerror = () => {
-						previewImg.classList.add("hidden");
-						if (previewFallback) previewFallback.classList.remove("hidden");
-					};
-					previewImg.onload = () => {
-						previewImg.classList.remove("hidden");
-						if (previewFallback) previewFallback.classList.add("hidden");
-					};
-				}
-				if (btnClearAvatar) btnClearAvatar.classList.remove("hidden");
-			} else {
-				if (previewImg) {
+			if (avatarVal.startsWith("http") && previewImg) {
+				previewImg.onerror = () => {
 					previewImg.classList.add("hidden");
-					previewImg.src = "";
-				}
-				if (previewFallback) previewFallback.classList.remove("hidden");
-				if (btnClearAvatar) btnClearAvatar.classList.add("hidden");
+					previewFallback?.classList.remove("hidden");
+				};
+				previewImg.onload = () => {
+					previewImg.classList.remove("hidden");
+					previewFallback?.classList.add("hidden");
+				};
+				previewImg.src = avatarVal;
+			} else {
+				previewImg?.classList.add("hidden");
+				if (previewImg) previewImg.src = "";
+				previewFallback?.classList.remove("hidden");
 			}
 
-			if (bannerVal.startsWith("http")) {
-				if (previewBanner) {
-					previewBanner.style.backgroundImage = `url("${bannerVal}")`;
-				}
-				if (btnClearBanner) btnClearBanner.classList.remove("hidden");
-			} else {
-				if (previewBanner) {
-					previewBanner.style.backgroundImage = "";
-				}
-				if (btnClearBanner) btnClearBanner.classList.add("hidden");
+			if (previewBanner) {
+				previewBanner.style.backgroundImage = bannerVal.startsWith("http") ? `url("${bannerVal.replace(/"/g, "%22")}")` : "";
 			}
 		};
 
+		// ── Apelido editável no próprio cartão ──
+		// Mesmas regras da API: letras (com acentos), números, espaço, _ - . ; sem espaços repetidos
+		const NICK_MAX = 24;
+		const sanitizeNickname = (value: string): string =>
+			value
+				.replace(/[\u0000-\u001F\u007F-\u009F​-‍﻿]/g, "")
+				.replace(/[^a-zA-Z0-9_\-.À-ÿĀ-ſЀ-ӿ぀-ヿ一-龯 ]/g, "")
+				.replace(/ {2,}/g, " ")
+				.replace(/^ +/, "")
+				.slice(0, NICK_MAX);
+
+		let nickBeforeEdit = "";
+		inputNick?.addEventListener("focus", () => {
+			nickBeforeEdit = inputNick.value;
+		});
+		inputNick?.addEventListener("input", () => {
+			const pos = inputNick.selectionStart ?? inputNick.value.length;
+			const clean = sanitizeNickname(inputNick.value);
+			if (clean !== inputNick.value) {
+				const removed = inputNick.value.length - clean.length;
+				inputNick.value = clean;
+				const caret = Math.max(0, pos - removed);
+				inputNick.setSelectionRange(caret, caret);
+			}
+			updateLivePreview();
+		});
+		inputNick?.addEventListener("keydown", (e) => {
+			if (e.key === "Enter") {
+				e.preventDefault();
+				inputNick.blur();
+			} else if (e.key === "Escape") {
+				e.preventDefault();
+				e.stopPropagation();
+				inputNick.value = nickBeforeEdit;
+				updateLivePreview();
+				inputNick.blur();
+			}
+		});
+		inputNick?.addEventListener("blur", () => {
+			inputNick.value = inputNick.value.trim();
+			updateLivePreview();
+		});
+
+		// ── Modal de imagem (foto ou banner) ──
+		const imgModal = document.getElementById("modal-profile-image");
+		const imgTitle = document.getElementById("profile-image-title");
+		const imgPreview = document.getElementById("profile-image-preview");
+		const imgUrl = document.getElementById("input-profile-image-url") as HTMLInputElement | null;
+		const imgStatus = document.getElementById("profile-image-status");
+		const btnImgApply = document.getElementById("btn-apply-profile-image") as HTMLButtonElement | null;
+		const btnImgRemove = document.getElementById("btn-remove-profile-image");
+		const IMG_HINT = "PNG, JPG, GIF ou WebP. Use o link direto da imagem.";
+		let imgTarget: HTMLInputElement | null = null;
+		let imgCheckToken = 0;
+
+		const setImgStatus = (text: string, kind: "hint" | "ok" | "error" = "hint") => {
+			if (!imgStatus) return;
+			imgStatus.textContent = text;
+			imgStatus.classList.toggle("status-ok", kind === "ok");
+			imgStatus.classList.toggle("status-error", kind === "error");
+		};
+
+		// Só libera "Aplicar" depois que a imagem carrega de fato
+		const checkImageUrl = () => {
+			const url = imgUrl?.value.trim() ?? "";
+			const token = ++imgCheckToken;
+			if (btnImgApply) btnImgApply.disabled = true;
+			if (imgPreview) {
+				imgPreview.style.backgroundImage = "";
+				imgPreview.classList.remove("has-image");
+			}
+			if (!url) {
+				setImgStatus(IMG_HINT);
+				return;
+			}
+			let parsed: URL | null = null;
+			try {
+				parsed = new URL(url);
+			} catch {}
+			if (!parsed || (parsed.protocol !== "https:" && parsed.protocol !== "http:")) {
+				setImgStatus("Link inválido. Ele deve começar com https://", "error");
+				return;
+			}
+			setImgStatus("Carregando imagem...");
+			const probe = document.createElement("img");
+			probe.onload = () => {
+				if (token !== imgCheckToken) return;
+				if (imgPreview) {
+					imgPreview.style.backgroundImage = `url("${url.replace(/"/g, "%22")}")`;
+					imgPreview.classList.add("has-image");
+				}
+				setImgStatus("Imagem carregada.", "ok");
+				if (btnImgApply) btnImgApply.disabled = false;
+			};
+			probe.onerror = () => {
+				if (token !== imgCheckToken) return;
+				setImgStatus("Não foi possível carregar essa imagem. Verifique se é um link direto.", "error");
+			};
+			probe.src = url;
+		};
+
+		const openImageModal = (kind: "avatar" | "banner") => {
+			imgTarget = kind === "avatar" ? inputAvatar : inputBanner;
+			if (imgTitle) imgTitle.textContent = kind === "avatar" ? "Foto de Perfil" : "Banner do Perfil";
+			imgPreview?.classList.toggle("is-avatar", kind === "avatar");
+			imgPreview?.classList.toggle("is-banner", kind === "banner");
+			const current = imgTarget?.value.trim() ?? "";
+			if (imgUrl) imgUrl.value = current;
+			btnImgRemove?.classList.toggle("hidden", !current);
+			checkImageUrl();
+			this.showModal(imgModal);
+			this.refreshIcons();
+			setTimeout(() => imgUrl?.focus(), 50);
+		};
+		const closeImageModal = () => this.hideModalAnimated(imgModal);
+		const applyImage = (value: string) => {
+			if (imgTarget) imgTarget.value = value;
+			updateLivePreview();
+			closeImageModal();
+		};
+
+		previewBanner?.addEventListener("click", () => openImageModal("banner"));
+		document.getElementById("btn-edit-profile-avatar")?.addEventListener("click", () => openImageModal("avatar"));
+		imgUrl?.addEventListener("input", checkImageUrl);
+		imgUrl?.addEventListener("keydown", (e) => {
+			if (e.key === "Enter" && btnImgApply && !btnImgApply.disabled) {
+				e.preventDefault();
+				btnImgApply.click();
+			}
+		});
+		btnImgApply?.addEventListener("click", () => applyImage(imgUrl?.value.trim() ?? ""));
+		btnImgRemove?.addEventListener("click", () => applyImage(""));
+		document.getElementById("btn-cancel-profile-image")?.addEventListener("click", closeImageModal);
+		document.getElementById("btn-close-profile-image")?.addEventListener("click", closeImageModal);
+		imgModal?.addEventListener("click", (e) => {
+			if (e.target === imgModal) closeImageModal();
+		});
+
+		// ── Abrir / fechar / salvar ──
 		const openModal = async () => {
 			const user = getUser();
 			if (!user) return;
@@ -4185,13 +4521,14 @@ class ShiroApp {
 			if (inputBanner) inputBanner.value = user.banner || "";
 
 			updateLivePreview();
-			modal?.classList.remove("hidden");
-			this.refreshIcons();
+			renderBadges();
+			this.showModal(modal);
 
-			// Carrega limites reais do backend
+			// Limites de troca de apelido e insígnias atualizadas vêm do backend
 			try {
 				const profileData = await getProfile();
 				if (profileData.ok && profileData.user) {
+					renderBadges();
 					if (profileData.remainingNicknameChanges !== undefined) {
 						updateRateBadge(profileData.remainingNicknameChanges, profileData.maxNicknameChangesPerHour || 6);
 					}
@@ -4199,12 +4536,11 @@ class ShiroApp {
 			} catch (err) {
 				console.warn("[App] Erro ao obter perfil atualizado:", err);
 			}
-
-			inputNick?.focus();
 		};
 
 		const closeModal = () => {
-			modal?.classList.add("hidden");
+			this.hideModalAnimated(modal);
+			closeImageModal();
 			if (errorEl) errorEl.textContent = "";
 			if (successEl) {
 				successEl.textContent = "";
@@ -4212,23 +4548,9 @@ class ShiroApp {
 			}
 		};
 
-		headerInfo?.addEventListener("click", openModal);
+		document.getElementById("btn-open-profile")?.addEventListener("click", openModal);
 		btnClose?.addEventListener("click", closeModal);
 		btnCancel?.addEventListener("click", closeModal);
-
-		inputNick?.addEventListener("input", updateLivePreview);
-		inputAvatar?.addEventListener("input", updateLivePreview);
-		inputBanner?.addEventListener("input", updateLivePreview);
-
-		btnClearAvatar?.addEventListener("click", () => {
-			if (inputAvatar) inputAvatar.value = "";
-			updateLivePreview();
-		});
-
-		btnClearBanner?.addEventListener("click", () => {
-			if (inputBanner) inputBanner.value = "";
-			updateLivePreview();
-		});
 
 		form?.addEventListener("submit", async (e) => {
 			e.preventDefault();
@@ -4240,6 +4562,11 @@ class ShiroApp {
 			if (successEl) {
 				successEl.textContent = "";
 				successEl.classList.add("hidden");
+			}
+
+			if (nickname && nickname.length < 2) {
+				if (errorEl) errorEl.textContent = "O apelido precisa ter pelo menos 2 caracteres.";
+				return;
 			}
 
 			this.setAuthLoading("btn-save-profile-settings", true);
@@ -4356,9 +4683,10 @@ class ShiroApp {
 
 		const badgesEl = document.getElementById("user-mini-badges");
 		if (badgesEl) {
-			badgesEl.innerHTML =
-				this.renderProfileBadges(userData.badges, userData.badgeStats) +
-				(isSelf ? `<span class="badge badge-purple" style="font-size: 10px; padding: 2px 7px;">Você</span>` : "");
+			// No próprio perfil, usa as insígnias da sessão se esta cópia do usuário vier sem elas
+			const badges = userData.badges ?? (isSelf ? currentUser?.badges : undefined);
+			const badgeStats = userData.badgeStats ?? (isSelf ? currentUser?.badgeStats : undefined);
+			badgesEl.innerHTML = this.renderProfileBadges(badges, badgeStats);
 		}
 
 		const nameEl = document.getElementById("user-mini-display-name");
@@ -4414,7 +4742,7 @@ class ShiroApp {
 				`;
 				document.getElementById("btn-mini-edit-profile")?.addEventListener("click", () => {
 					this.hideUserMiniProfile();
-					document.getElementById("header-user-info")?.click();
+					document.getElementById("btn-open-profile")?.click();
 				});
 			} else {
 				const isFriend = this.friends.some((f) => f.id === userData.id || f.username === userData.username);
@@ -4865,7 +5193,8 @@ class ShiroApp {
 					ChevronLeft, ChevronRight, Check, Copy, RotateCw, Sparkles, Globe,
 					UserCog, BadgeCheck, Camera, Image, Trash2, Clock,
 					UserCheck, UserPlus, Bell, BellOff, LogIn, KeyRound, Hash, CheckCheck,
-					Megaphone, AlertTriangle, Send, Info, Cat, ExternalLink, CircleHelp, GraduationCap,
+					Megaphone, AlertTriangle, Send, Info, Cat, ExternalLink, CircleHelp, GraduationCap, ChevronDown, Pencil, Link,
+					Maximize, Minimize, Gauge, Layers,
 					CodeXml, FlaskConical, Hammer, House, Timer,
 				},
 			});
