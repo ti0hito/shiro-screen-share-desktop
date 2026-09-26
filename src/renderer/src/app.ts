@@ -270,6 +270,8 @@ class ShiroApp {
 	private tutorial: GuidedTour | null = null;
 	private modalCloseTimers = new Map<HTMLElement, ReturnType<typeof setTimeout>>();
 	private refreshSpinnerCounts = new Map<string, number>();
+	/** Plataforma do app (carregada no initialize). No Wayland a captura passa pelo seletor do sistema. */
+	private platformInfo: { platform: string; isWayland: boolean } = { platform: "win32", isWayland: false };
 	private authUiInitialized = false;
 	// Indicam se já houve ao menos um carregamento bem-sucedido (para não trocar dados bons por "vazio" em falhas)
 	private roomsLoaded = false;
@@ -291,7 +293,7 @@ class ShiroApp {
 		this.setupCustomTooltips();
 		this.setupStreamDeckBridge();
 		this.setupQuitCleanup();
-		this.showAppVersion();
+		await this.loadAppInfo();
 
 		const saved = checkSavedSession();
 
@@ -724,17 +726,52 @@ class ShiroApp {
 		await this.refreshRooms();
 	}
 
-	/** Mostra a versão do app nos badges do header (login e tela principal) */
-	private showAppVersion(): void {
-		window.api
-			?.getAppSettings?.()
-			.then((settings) => {
-				if (!settings?.version) return;
+	/** Carrega versão e plataforma do app (badges do header e modo de captura do Linux) */
+	private async loadAppInfo(): Promise<void> {
+		try {
+			const settings = await window.api?.getAppSettings?.();
+			if (!settings) return;
+			if (settings.version) {
 				document.querySelectorAll<HTMLElement>(".app-version-badge").forEach((badge) => {
 					badge.textContent = `v${settings.version}`;
 				});
-			})
-			.catch(() => {});
+			}
+			this.platformInfo = { platform: settings.platform ?? "win32", isWayland: !!settings.isWayland };
+			document.documentElement.classList.toggle("platform-linux", settings.platform === "linux");
+			document.documentElement.classList.toggle("is-wayland", !!settings.isWayland);
+		} catch (err) {
+			console.warn("[App] Não foi possível carregar as informações do app:", err);
+		}
+	}
+
+	/**
+	 * Linux Wayland: abre o seletor de tela/janela do sistema (portal) e captura a escolha.
+	 * Cada chamada ao desktopCapturer abre esse seletor, por isso só acontece por ação do usuário.
+	 * Retorna null se o usuário cancelar.
+	 */
+	private async pickSourceWithSystemPicker(): Promise<WindowSource | null> {
+		if (!window.api?.getAvailableSources) return null;
+		let sources: WindowSource[] = [];
+		try {
+			sources = await window.api.getAvailableSources();
+		} catch (err) {
+			console.warn("[App] Seletor de tela do sistema falhou:", err);
+		}
+		if (!sources.length) return null;
+
+		const chosen = sources[0];
+		const source: WindowSource = {
+			...chosen,
+			name: chosen.name || (chosen.sourceType === "screen" ? "Tela inteira" : "Janela escolhida"),
+		};
+		this.allSources = [source];
+		this.leftSourcePicker?.setSources(this.allSources);
+		this.mainSourcePicker?.setSources(this.allSources);
+		this.leftSourcePicker?.setSelectedSource(source);
+		this.mainSourcePicker?.setSelectedSource(source);
+		await this.onSourceSelected(source);
+		this.refreshIcons();
+		return source;
 	}
 
 	/** Ao fechar o app (ex.: "Sair" na bandeja), sai da sala antes de o processo encerrar */
@@ -2212,6 +2249,11 @@ class ShiroApp {
 		const tabWindows = document.getElementById("tab-windows");
 		const tabScreens = document.getElementById("tab-screens");
 
+		if (this.platformInfo.isWayland) {
+			tabWindows?.closest<HTMLElement>(".sub-tabs-container")?.classList.add("hidden");
+			return;
+		}
+
 		if (tabWindows && tabScreens) {
 			tabWindows.addEventListener("click", () => {
 				tabWindows.classList.add("active");
@@ -2251,6 +2293,12 @@ class ShiroApp {
 		}
 
 		btnRefresh?.addEventListener("click", () => this.refreshSources());
+
+		if (this.platformInfo.isWayland) {
+			const pick = () => void this.pickSourceWithSystemPicker();
+			this.leftSourcePicker?.setSystemPickerAction(pick);
+			this.mainSourcePicker?.setSystemPickerAction(pick);
+		}
 	}
 
 	// ------------------------------------------------------------------------------------------------------------------------------
@@ -2420,6 +2468,9 @@ class ShiroApp {
 
 			this.previewStream = stream;
 			this.currentVideoTrack = stream.getVideoTracks()[0];
+			const capturedTrack = this.currentVideoTrack;
+			// "ended" só dispara quando a fonte some (janela fechada/recriada), não em track.stop()
+			capturedTrack?.addEventListener("ended", () => void this.onCaptureEnded(capturedTrack, source));
 
 			if (this.currentVideoTrack && "contentHint" in this.currentVideoTrack) {
 				(this.currentVideoTrack as any).contentHint = "detail";
@@ -2452,6 +2503,36 @@ class ShiroApp {
 	}
 
 
+	/**
+	 * A captura terminou sozinha (ex.: a janela transmitida foi fechada ou o jogo reiniciou).
+	 * Tenta recapturar a mesma fonte uma vez; se não der, encerra a transmissão em vez de
+	 * deixar quem assiste vendo uma imagem congelada.
+	 */
+	private async onCaptureEnded(track: MediaStreamTrack, source: WindowSource): Promise<void> {
+		if (track !== this.currentVideoTrack) return; // já foi substituída de propósito
+		console.warn(`[App] A captura de "${source.name}" terminou inesperadamente.`);
+		this.currentVideoTrack = null;
+		if (!this.p2pManager?.getIsStreaming()) return;
+
+		if (!this.platformInfo.isWayland) {
+			await this.onSourceSelected(source);
+			const recovered = this.currentVideoTrack as MediaStreamTrack | null;
+			if (recovered && recovered.readyState === "live") {
+				console.log("[App] Captura recuperada, transmissão continua.");
+				return;
+			}
+		}
+
+		await this.stopStreaming();
+		const notice = {
+			title: "Transmissão encerrada",
+			message: `A captura de "${source.name}" foi interrompida (a janela pode ter sido fechada). Escolha a fonte de novo para voltar a transmitir.`,
+			type: "warning" as const,
+		};
+		this.addSystemNotice(notice);
+		this.showSystemNoticeToast({ id: `capture-ended-${Date.now()}`, date: "Agora", ...notice });
+	}
+
 	private checkCanStartStream(): void {
 		const btnStart = document.getElementById("btn-start-stream") as HTMLButtonElement | null;
 		const selectedSource = this.leftSourcePicker?.getSelectedSource() ?? this.mainSourcePicker?.getSelectedSource();
@@ -2459,7 +2540,7 @@ class ShiroApp {
 		if (!btnStart) return;
 
 		// Sem fonte selecionada, startStreaming usa a primeira disponível: só bloqueia se não houver nenhuma
-		if (selectedSource || this.allSources.length > 0) {
+		if (selectedSource || this.allSources.length > 0 || this.platformInfo.isWayland) {
 			btnStart.disabled = false;
 			btnStart.title = selectedSource ? "Iniciar transmissão P2P" : "Iniciar transmissão P2P (usa a primeira fonte disponível)";
 		} else {
@@ -2474,6 +2555,13 @@ class ShiroApp {
 
 	private async refreshSourcesNow(): Promise<void> {
 		if (!window.api?.getAvailableSources) return;
+		if (this.platformInfo.isWayland) {
+			// Só re-renderiza a fonte já escolhida; escolher outra é pelo card "Trocar tela ou janela"
+			this.leftSourcePicker?.setSources(this.allSources);
+			this.mainSourcePicker?.setSources(this.allSources);
+			this.checkCanStartStream();
+			return;
+		}
 		const sources = await window.api.getAvailableSources();
 		this.allSources = sources;
 		this.leftSourcePicker?.setSources(sources);
@@ -2507,6 +2595,12 @@ class ShiroApp {
 	}
 
 	private async startStreaming(): Promise<void> {
+		if (this.platformInfo.isWayland && (!this.currentVideoTrack || this.currentVideoTrack.readyState === "ended")) {
+			// A captura anterior (se houver) terminou junto com a sessão do portal: escolhe de novo
+			this.currentVideoTrack = null;
+			const picked = await this.pickSourceWithSystemPicker();
+			if (!picked) return; // usuário cancelou o seletor
+		}
 		let selectedSource = this.leftSourcePicker?.getSelectedSource() ?? this.mainSourcePicker?.getSelectedSource();
 		if (!selectedSource && this.allSources.length > 0) {
 			selectedSource = this.allSources[0];
@@ -2713,6 +2807,16 @@ class ShiroApp {
 
 		// Resolução/FPS exigem recapturar a fonte; bitrate é aplicado direto nas conexões
 		const recaptureSource = async () => {
+			if (this.platformInfo.isWayland) {
+				const track = this.currentVideoTrack;
+				if (track && track.readyState === "live") {
+					const q = this.getQualityOptions();
+					await track
+						.applyConstraints({ width: { ideal: q.width }, height: { ideal: q.height }, frameRate: { ideal: q.fps } })
+						.catch((err) => console.warn("[App] Não foi possível ajustar a qualidade da captura:", err));
+				}
+				return;
+			}
 			const selected = this.leftSourcePicker?.getSelectedSource() ?? this.mainSourcePicker?.getSelectedSource();
 			if (selected) await this.onSourceSelected(selected);
 		};

@@ -2,15 +2,39 @@ import { desktopCapturer } from "electron";
 import koffi from "koffi";
 import type { WindowSource } from "../types/capture";
 
-// Load User32.dll via Koffi FFI to extract PID from Window Handle (HWND)
+const IS_WINDOWS = process.platform === "win32";
+const IS_LINUX = process.platform === "linux";
+
+// Load User32.dll via Koffi FFI to extract PID from Window Handle (HWND) — somente Windows
 let GetWindowThreadProcessId: any = null;
-try {
-	const user32 = koffi.load("user32.dll");
-	GetWindowThreadProcessId = user32.func(
-		"uint32 __stdcall GetWindowThreadProcessId(uintptr_t hWnd, _Out_ uint32 *lpdwProcessId)",
-	);
-} catch (err) {
-	console.error("[WindowScanner] Failed to load user32.dll via Koffi:", err);
+if (IS_WINDOWS) {
+	try {
+		const user32 = koffi.load("user32.dll");
+		GetWindowThreadProcessId = user32.func(
+			"uint32 __stdcall GetWindowThreadProcessId(uintptr_t hWnd, _Out_ uint32 *lpdwProcessId)",
+		);
+	} catch (err) {
+		console.error("[WindowScanner] Failed to load user32.dll via Koffi:", err);
+	}
+}
+
+/**
+ * Linux (X11): PID de uma janela via propriedade _NET_WM_PID (xprop).
+ * No Wayland não há como obter o PID — o áudio cai para o do sistema.
+ */
+let xpropAvailable: boolean | null = null;
+async function getLinuxWindowPid(xid: number): Promise<number> {
+	if (!xid || xpropAvailable === false) return 0;
+	try {
+		const { stdout } = await execAsync(`xprop -id ${xid} _NET_WM_PID`, { timeout: 800 });
+		xpropAvailable = true;
+		const match = stdout.match(/=\s*(\d+)/);
+		return match ? parseInt(match[1], 10) : 0;
+	} catch (err: any) {
+		// xprop não instalado: não tenta de novo a cada varredura
+		if (err?.code === 127 || /not found|ENOENT/i.test(String(err?.message))) xpropAvailable = false;
+		return 0;
+	}
 }
 
 /**
@@ -46,6 +70,31 @@ export async function getProcessMap(): Promise<Map<number, string>> {
 	}
 
 	const map = new Map<number, string>();
+
+	if (IS_LINUX) {
+		try {
+			const fs = await import("node:fs/promises");
+			const entries = await fs.readdir("/proc");
+			await Promise.all(
+				entries
+					.filter((name) => /^\d+$/.test(name))
+					.map(async (name) => {
+						try {
+							const comm = (await fs.readFile(`/proc/${name}/comm`, "utf8")).trim();
+							if (comm) map.set(parseInt(name, 10), comm);
+						} catch {}
+					}),
+			);
+			cachedProcessMap = map;
+			lastCacheTime = now;
+		} catch (err) {
+			console.warn("[WindowScanner] Could not read /proc for process names:", err);
+		}
+		return cachedProcessMap;
+	}
+
+	if (!IS_WINDOWS) return cachedProcessMap;
+
 	try {
 		const { stdout } = await execAsync("tasklist /FO CSV /NH", {
 			encoding: "utf8",
@@ -139,7 +188,7 @@ export async function scanSources(): Promise<WindowSource[]> {
 			if (parts.length >= 2) {
 				hwnd = parseInt(parts[1], 10);
 				if (hwnd > 0) {
-					pid = getPidFromHwnd(hwnd);
+					pid = IS_LINUX ? await getLinuxWindowPid(hwnd) : getPidFromHwnd(hwnd);
 					if (pid > 0 && processMap.has(pid)) {
 						processName = processMap.get(pid)!;
 					}

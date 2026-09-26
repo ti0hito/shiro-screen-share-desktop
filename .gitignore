@@ -32,3 +32,6 @@ ehthumbs.db
 *.swp
 *.swo
 *.tmp
+
+# Guia local de troca da chave da API (contém segredos)
+TROCA-CHAVE-API.txt

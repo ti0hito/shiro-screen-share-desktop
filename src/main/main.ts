@@ -29,6 +29,12 @@ app.commandLine.appendSwitch(
 	"WindowsGraphicsCapture,WGCWindowCapturer,WGCDisplayCapturer",
 );
 
+// Linux: captura de tela via PipeWire (necessária no Wayland, onde a captura passa pelo
+// portal do sistema — xdg-desktop-portal — que mostra o seletor de tela/janela)
+if (process.platform === "linux") {
+	app.commandLine.appendSwitch("enable-features", "WebRTCPipeWireCapturer");
+}
+
 // Load .env
 dotenv.config({ path: path.join(__dirname, "..", "..", ".env") });
 
@@ -77,18 +83,20 @@ function handleArgvDeepLink(argv: string[]): void {
 }
 
 function getIconPath(): string {
+	// .ico é formato do Windows; Linux (janela, bandeja, dock) usa PNG
+	const file = process.platform === "win32" ? "icon.ico" : "icon.png";
 	const candidates = [
-		path.join(process.resourcesPath, "icon.ico"),
-		path.join(__dirname, "..", "renderer", "icon.ico"),
-		path.join(__dirname, "..", "..", "icon.ico"),
-		path.join(process.cwd(), "icon.ico"),
+		path.join(process.resourcesPath, file),
+		path.join(__dirname, "..", "renderer", file),
+		path.join(__dirname, "..", "..", file),
+		path.join(process.cwd(), file),
 	];
 	for (const candidate of candidates) {
 		if (require("node:fs").existsSync(candidate)) {
 			return candidate;
 		}
 	}
-	return path.join(__dirname, "..", "..", "icon.ico");
+	return path.join(__dirname, "..", "..", file);
 }
 
 function createWindow(): void {
@@ -127,9 +135,17 @@ function createWindow(): void {
 	startWebSocketServer(mainWindow);
 
 	mainWindow.on("close", (event) => {
-		if (!appShouldQuit) {
-			event.preventDefault();
+		if (appShouldQuit) return;
+		event.preventDefault();
+		if (process.platform === "win32" && tray) {
+			// Windows: fechar minimiza para a bandeja
 			mainWindow?.hide();
+		} else {
+			// Linux: vários ambientes (ex.: GNOME) não exibem ícone de bandeja, e a janela
+			// escondida ficaria rodando sem forma de reabrir ou fechar. Fechar encerra o app
+			// (passando pelo before-quit, que sai da sala e encerra a transmissão antes).
+			appShouldQuit = true;
+			app.quit();
 		}
 	});
 
@@ -137,7 +153,8 @@ function createWindow(): void {
 }
 
 function createTray(iconPath: string): void {
-	if (tray || process.platform !== "win32") return;
+	// Linux também ganha ícone de bandeja (onde o ambiente suporta), mas fechar a janela encerra o app
+	if (tray || (process.platform !== "win32" && process.platform !== "linux")) return;
 
 	try {
 		const icon = nativeImage.createFromPath(iconPath);

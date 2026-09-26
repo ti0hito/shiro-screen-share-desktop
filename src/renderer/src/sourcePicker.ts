@@ -6,6 +6,11 @@ export class SourcePicker {
 	private currentFilter: SourceType = "window";
 	private containerElement: HTMLElement;
 	private onSelectCallback: (source: WindowSource) => void;
+	/**
+	 * Modo "seletor do sistema" (Linux Wayland): o app não consegue listar janelas; a fonte é
+	 * escolhida no seletor nativo. Mostra um card de ação e ignora o filtro Janela/Tela.
+	 */
+	private systemPickerAction: (() => void) | null = null;
 
 	constructor(
 		containerElement: HTMLElement,
@@ -17,6 +22,11 @@ export class SourcePicker {
 
 	public setSources(sources: WindowSource[]): void {
 		this.sources = sources;
+		this.render();
+	}
+
+	public setSystemPickerAction(action: (() => void) | null): void {
+		this.systemPickerAction = action;
 		this.render();
 	}
 
@@ -43,9 +53,9 @@ export class SourcePicker {
 	}
 
 	public render(): void {
-		const filtered = this.sources.filter(
-			(s) => s.sourceType === this.currentFilter,
-		);
+		const filtered = this.systemPickerAction
+			? this.sources
+			: this.sources.filter((s) => s.sourceType === this.currentFilter);
 
 		// Mesmas fontes na mesma ordem: atualiza os cards no lugar em vez de recriá-los.
 		// Recriar o DOM a cada atualização (15s) fazia cliques em andamento se perderem.
@@ -62,6 +72,20 @@ export class SourcePicker {
 		}
 
 		this.containerElement.innerHTML = "";
+
+		if (this.systemPickerAction) {
+			const action = this.systemPickerAction;
+			const pickerCard = document.createElement("button");
+			pickerCard.type = "button";
+			pickerCard.className = "source-card source-card-picker";
+			pickerCard.innerHTML = `
+				<span class="source-card-picker-icon">＋</span>
+				<span class="source-card-picker-title">${this.sources.length ? "Trocar tela ou janela" : "Escolher tela ou janela"}</span>
+				<span class="source-card-picker-hint">Abre o seletor do sistema</span>`;
+			pickerCard.addEventListener("click", () => action());
+			this.containerElement.appendChild(pickerCard);
+			if (filtered.length === 0) return;
+		}
 
 		if (filtered.length === 0) {
 			const emptyState = document.createElement("div");

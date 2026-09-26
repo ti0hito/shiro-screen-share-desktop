@@ -5660,3 +5660,42 @@ svg {
 .right-section:fullscreen {
   background: #000;
 }
+
+/* ── Linux Wayland: card que abre o seletor de tela/janela do sistema ── */
+.source-card.source-card-picker {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 110px;
+  padding: 14px 10px;
+  border: 1.5px dashed color-mix(in srgb, var(--accent-purple) 55%, transparent);
+  background: color-mix(in srgb, var(--accent-purple) 7%, transparent);
+  color: var(--text-main);
+  font-family: inherit;
+  cursor: pointer;
+  text-align: center;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.source-card.source-card-picker:hover {
+  border-color: var(--accent-purple);
+  background: color-mix(in srgb, var(--accent-purple) 14%, transparent);
+}
+
+.source-card-picker-icon {
+  font-size: 22px;
+  line-height: 1;
+  color: var(--accent-purple);
+}
+
+.source-card-picker-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.source-card-picker-hint {
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
