@@ -1,0 +1,32 @@
+# Gera os pacotes Linux (AppImage + .deb) em uma máquina Ubuntu do GitHub.
+# Rodar manualmente: aba "Actions" → "Build Linux" → "Run workflow".
+# Os arquivos ficam em "Artifacts" na página da execução.
+name: Build Linux
+
+on:
+  workflow_dispatch:
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Compilar e empacotar (AppImage + deb)
+        run: npm run build:linux
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shiro-screen-share-linux
+          path: |
+            release/*.AppImage
+            release/*.deb
+          if-no-files-found: error

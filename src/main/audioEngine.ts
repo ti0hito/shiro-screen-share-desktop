@@ -1,5 +1,22 @@
 import type { BrowserWindow } from "electron";
-import loopback from "loopback-capture";
+
+/**
+ * loopback-capture é nativo (WASAPI no Windows, PipeWire no Linux). Carregado sob demanda:
+ * se faltar no sistema (ex.: Linux sem PipeWire), só o áudio fica indisponível — o app abre normal.
+ */
+let loopbackModule: any | null | undefined;
+function getLoopback(): any | null {
+	if (loopbackModule !== undefined) return loopbackModule;
+	try {
+		// eslint-disable-next-line @typescript-eslint/no-var-requires
+		const mod = require("loopback-capture");
+		loopbackModule = mod?.default ?? mod;
+	} catch (err: any) {
+		console.warn("[AudioEngine] Captura de audio indisponivel neste sistema:", err?.message ?? err);
+		loopbackModule = null;
+	}
+	return loopbackModule;
+}
 import type { AudioCaptureStatus } from "../types/audio";
 import type { AudioCaptureConfig } from "../types/capture";
 import { findCandidatePids } from "./windowScanner";
@@ -127,6 +144,8 @@ export class AudioCaptureEngine {
 	): Promise<boolean> {
 		return new Promise((resolve, reject) => {
 			try {
+				const loopback = getLoopback();
+				if (!loopback) throw new Error("Captura de audio indisponivel neste sistema");
 				const capture = new loopback.LoopbackCapture();
 
 				// Pass includeChildren = true to capture the entire target process tree
@@ -154,6 +173,8 @@ export class AudioCaptureEngine {
 	private trySystemLoopback(window: BrowserWindow): Promise<boolean> {
 		return new Promise((resolve, reject) => {
 			try {
+				const loopback = getLoopback();
+				if (!loopback) throw new Error("Captura de audio indisponivel neste sistema");
 				const capture = new loopback.LoopbackCapture();
 
 				capture.startSystemAudio((chunk: Buffer) => {

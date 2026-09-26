@@ -14,8 +14,17 @@ files:
   - "node_modules/**/*"
   - "package.json"
   - "icon.ico"
+  - "icon.png"
 extraResources:
   - icon.ico
+  - icon.png
+# koffi e loopback-capture são N-API com binários prontos (Windows e Linux x64): não recompilar
+npmRebuild: false
+# Deep link shiro:// (no Linux vira MimeType no arquivo .desktop)
+protocols:
+  - name: Shiro Screen Share
+    schemes:
+      - shiro
 win:
   target:
     - nsis
@@ -27,3 +36,33 @@ nsis:
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: Shiro - Screen Share
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+    - target: deb
+      arch:
+        - x64
+  # PNGs 16–256px extraídos do icon.ico (.ico é formato do Windows)
+  icon: assets/icons
+  executableName: shiro-screen-share
+  category: Network
+  maintainer: Hito
+  synopsis: Compartilhamento de tela P2P com áudio por aplicativo
+  description: Compartilhe sua tela em salas P2P com áudio isolado por aplicativo.
+deb:
+  # Captura de áudio (loopback-capture) usa PipeWire
+  depends:
+    - libgtk-3-0
+    - libnotify4
+    - libnss3
+    - libxss1
+    - libxtst6
+    - xdg-utils
+    - libatspi2.0-0
+    - libuuid1
+    - libsecret-1-0
+    - libpipewire-0.3-0
+  recommends:
+    - x11-utils

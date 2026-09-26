@@ -14,6 +14,10 @@ export interface AppSettings {
 	autoUpdate: boolean;
 	/** Versão do app (package.json), exibida no header */
 	version: string;
+	/** Sistema operacional (process.platform) */
+	platform: string;
+	/** Sessão Linux Wayland: a captura de tela passa pelo seletor do sistema (portal) */
+	isWayland: boolean;
 }
 
 export interface ApiRequestOptions {

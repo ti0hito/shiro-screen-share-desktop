@@ -137,6 +137,11 @@ export function setupIpcHandlers(
 			openAtLogin: loginSettings.openAtLogin,
 			autoUpdate: isAutoUpdateEnabled(),
 			version: app.getVersion(),
+			platform: process.platform,
+			// Wayland: captura de tela só pelo portal do sistema (seletor nativo a cada captura)
+			isWayland:
+				process.platform === "linux" &&
+				(process.env.XDG_SESSION_TYPE === "wayland" || !!process.env.WAYLAND_DISPLAY),
 		};
 	});
 
