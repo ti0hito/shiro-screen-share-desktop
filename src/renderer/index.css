@@ -1458,6 +1458,35 @@ svg {
   text-transform: lowercase;
 }
 
+/* Visitante assistindo pelo navegador (só aparece na lista da sala) */
+.guest-user-card {
+  cursor: default;
+}
+
+.guest-user-avatar {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-muted);
+}
+
+.guest-user-avatar svg {
+  width: 16px;
+  height: 16px;
+}
+
+.user-guest-tag {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  padding: 1px 6px;
+  border-radius: 6px;
+  margin-left: 6px;
+  vertical-align: middle;
+  text-transform: lowercase;
+}
+
 /* ══════════════════════════════════════════════════════════
    RIGHT SECTION — Grid Principal + Bottom Bar
    ══════════════════════════════════════════════════════════ */
