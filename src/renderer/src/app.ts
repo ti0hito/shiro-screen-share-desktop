@@ -1537,6 +1537,11 @@ class ShiroApp {
 
 	private getRoomMembersCount(room?: any): number {
 		if (!room) return 1;
+		// Visitantes do navegador contam como pessoas na sala
+		return this.getRoomUsersCount(room) + (Array.isArray(room.guests) ? room.guests.length : 0);
+	}
+
+	private getRoomUsersCount(room: any): number {
 
 		if (Array.isArray(room.members)) {
 			// O servidor pode ter membros duplicados (entradas simultâneas antigas): conta cada um uma vez
@@ -1730,10 +1735,21 @@ class ShiroApp {
 		const room = this.currentRoom;
 		if (!room) return true;
 
-		const streams = await getRoomStreams(room.roomId);
-		if (streams === null) return false;
+		const result = await getRoomStreams(room.roomId);
+		if (result === null) return false;
+		const { activeStreams: streams, guests } = result;
 		// O usuário pode ter trocado de sala enquanto a requisição estava em andamento
 		if (this.currentRoom?.roomId !== room.roomId) return true;
+
+		// Visitantes (navegador) entrando/saindo: atualiza a lista da sala
+		const guestKey = (list: { id: string }[] | undefined) => (list ?? []).map((g) => g.id).sort().join(",");
+		if (guests && guestKey(guests) !== guestKey(this.currentRoom.guests)) {
+			this.currentRoom.guests = guests;
+			const listed = this.rooms.find((r) => r.roomId === room.roomId);
+			if (listed) listed.guests = guests;
+			this.updateCurrentRoomBanner();
+			this.renderUsersList();
+		}
 
 		const key = (list: { userId: string }[] | undefined) => (list ?? []).map((s) => s.userId).sort().join(",");
 		if (key(streams) !== key(this.currentRoom.activeStreams)) {
@@ -2389,17 +2405,20 @@ class ShiroApp {
 		if (titleEl) titleEl.textContent = this.currentRoom ? "Online na sala" : "Online agora";
 
 		const users = this.getVisibleUsers();
+		// Visitantes (navegador) aparecem só na lista da sala, nunca na lista global
+		const guests = this.currentRoom?.guests ?? [];
 		const currentUser = getUser();
 
 		// Evita re-renderizar (e fechar o mini perfil) quando nada visível mudou
 		const renderKey = JSON.stringify([
 			this.currentRoom?.roomId ?? null,
 			users.map((u) => [u.id, u.username, u.nickname, u.avatar]),
+			guests.map((g) => [g.id, g.name]),
 		]);
 		if (renderKey === this.lastUsersRenderKey) return;
 		this.lastUsersRenderKey = renderKey;
 
-		if (users.length === 0) {
+		if (users.length === 0 && guests.length === 0) {
 			listEl.innerHTML = `
 				<div class="users-empty">
 					<i data-lucide="wifi-off"></i>
@@ -2435,9 +2454,24 @@ class ShiroApp {
 				</div>
 			</div>`;
 			})
-			.join("");
+			.join("") +
+			guests
+				.map(
+					(g) => `
+			<div class="user-card guest-user-card" data-guest-id="${this.escapeHtml(g.id)}" title="Assistindo pelo navegador como visitante">
+				<div class="user-card-avatar-wrapper">
+					<div class="user-card-avatar guest-user-avatar"><i data-lucide="eye"></i></div>
+					<div class="user-card-status-dot"></div>
+				</div>
+				<div class="user-card-info">
+					<span class="user-card-name">${this.escapeHtml(g.name)} <span class="user-guest-tag">visitante</span></span>
+					<span class="user-card-id">Assistindo pelo navegador</span>
+				</div>
+			</div>`,
+				)
+				.join("");
 
-		listEl.querySelectorAll<HTMLElement>(".user-card").forEach((card) => {
+		listEl.querySelectorAll<HTMLElement>(".user-card[data-user-id]").forEach((card) => {
 			card.addEventListener("click", () => {
 				const userId = card.dataset.userId;
 				if (this.activeMiniProfileUserId === userId) {

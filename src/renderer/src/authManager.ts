@@ -312,6 +312,12 @@ export interface ActiveStreamInfo {
 	startedAt: string;
 }
 
+/** Visitante assistindo pelo navegador (entrou por link de convite; só aparece na sala) */
+export interface RoomGuestInfo {
+	id: string;
+	name: string;
+}
+
 export interface RoomInfo {
 	id: string;
 	roomId: string;
@@ -324,6 +330,7 @@ export interface RoomInfo {
 	membersCount: number;
 	members?: string[];
 	activeStreams: ActiveStreamInfo[];
+	guests?: RoomGuestInfo[];
 	createdAt?: string;
 }
 
@@ -342,10 +349,12 @@ export async function getRooms(): Promise<{ ok: boolean; rooms: RoomInfo[] }> {
 }
 
 /**
- * Transmissões ativas de uma sala (consulta leve, feita com frequência enquanto o usuário está na sala).
- * Retorna null se a requisição falhar.
+ * Transmissões ativas e visitantes de uma sala (consulta leve, feita com frequência enquanto o
+ * usuário está na sala). Retorna null se a requisição falhar. guests fica undefined em APIs antigas.
  */
-export async function getRoomStreams(roomId: string): Promise<ActiveStreamInfo[] | null> {
+export async function getRoomStreams(
+	roomId: string,
+): Promise<{ activeStreams: ActiveStreamInfo[]; guests?: RoomGuestInfo[] } | null> {
 	const token = getToken();
 	if (!token || !window.api?.apiRequest) return null;
 
@@ -356,7 +365,8 @@ export async function getRoomStreams(roomId: string): Promise<ActiveStreamInfo[]
 	});
 
 	if (!result.ok) return null;
-	return (result.data as any).activeStreams ?? [];
+	const data = result.data as any;
+	return { activeStreams: data.activeStreams ?? [], guests: Array.isArray(data.guests) ? data.guests : undefined };
 }
 
 export async function createRoom(data: {
