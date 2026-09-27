@@ -66,17 +66,29 @@ if (!gotLock) {
 // Register Protocol Client
 registerDeepLinkProtocol();
 
+// A tela pede o deep link que abriu o app (ou chegou antes de ela terminar de carregar)
+ipcMain.handle("get-pending-deep-link", () => {
+	const params = pendingDeepLink;
+	pendingDeepLink = null;
+	return params;
+});
+
 function handleArgvDeepLink(argv: string[]): void {
 	const deepLinkArg = argv.find((arg) => arg.startsWith("shiro://"));
 	if (deepLinkArg) {
 		const params = parseDeepLinkUrl(deepLinkArg);
 		if (params) {
+			const rendererReady = mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isLoading();
+			if (rendererReady) {
+				mainWindow!.webContents.send("deep-link", params);
+			} else {
+				// Tela ainda carregando: ela busca o link pendente ao iniciar (get-pending-deep-link)
+				pendingDeepLink = params;
+			}
 			if (mainWindow && !mainWindow.isDestroyed()) {
-				mainWindow.webContents.send("deep-link", params);
+				if (mainWindow.isMinimized()) mainWindow.restore();
 				mainWindow.show();
 				mainWindow.focus();
-			} else {
-				pendingDeepLink = params;
 			}
 		}
 	}
@@ -124,12 +136,6 @@ function createWindow(): void {
 	const htmlPath = path.join(__dirname, "..", "renderer", "index.html");
 	mainWindow.loadFile(htmlPath);
 
-	mainWindow.on("ready-to-show", () => {
-		if (pendingDeepLink && mainWindow) {
-			mainWindow.webContents.send("deep-link", pendingDeepLink);
-			pendingDeepLink = null;
-		}
-	});
 
 	// Start WebSocket server for Stream Deck bridge
 	startWebSocketServer(mainWindow);

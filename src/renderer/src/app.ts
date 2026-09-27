@@ -84,6 +84,7 @@ import {
 	type BadgeId,
 	type BadgeStats,
 	checkSavedSession,
+	createInviteLink,
 	createRoom,
 	dismissRoomInvite,
 	FriendInfo,
@@ -101,11 +102,15 @@ import {
 	joinRoomByInvite,
 	kickUserFromRoom,
 	leaveRoom,
+	listRoomInviteLinks,
 	login,
 	logout,
 	notifyRoomStream,
+	redeemInviteLink,
 	register,
 	rejectFriend,
+	revokeInviteLink,
+	type RoomInviteLink,
 	RoomInfo,
 	RoomInvite,
 	SavedSessionResult,
@@ -269,6 +274,11 @@ class ShiroApp {
 	private lastUsersRenderKey = "";
 	private tutorial: GuidedTour | null = null;
 	private modalCloseTimers = new Map<HTMLElement, ReturnType<typeof setTimeout>>();
+	/** Diálogos pedidos enquanto outro está aberto aguardam na fila */
+	private dialogQueue: Promise<unknown> = Promise.resolve();
+	/** Convite (shiro://join?invite=...) recebido antes do login: usado assim que a tela principal carregar */
+	private pendingInviteCode: string | null = null;
+	private mainViewReady = false;
 	private refreshSpinnerCounts = new Map<string, number>();
 	/** Plataforma do app (carregada no initialize). No Wayland a captura passa pelo seletor do sistema. */
 	private platformInfo: { platform: string; isWayland: boolean } = { platform: "win32", isWayland: false };
@@ -294,6 +304,7 @@ class ShiroApp {
 		this.setupStreamDeckBridge();
 		this.setupQuitCleanup();
 		await this.loadAppInfo();
+		await this.setupDeepLinks();
 
 		const saved = checkSavedSession();
 
@@ -521,6 +532,8 @@ class ShiroApp {
 			const password = (document.getElementById("login-password") as HTMLInputElement)?.value;
 			const rememberMe = (document.getElementById("login-remember-me") as HTMLInputElement)?.checked ?? false;
 			const errorEl = document.getElementById("login-error");
+			// O aviso de convite pendente (roxo) dá lugar às mensagens de erro normais
+			errorEl?.classList.remove("info");
 
 			if (!username || !password) {
 				if (errorEl) {
@@ -699,7 +712,15 @@ class ShiroApp {
 		await this.refreshUsersList();
 
 		this.startPolling();
-		this.maybeShowTutorialWelcome();
+		this.mainViewReady = true;
+
+		if (this.pendingInviteCode) {
+			const code = this.pendingInviteCode;
+			this.pendingInviteCode = null;
+			await this.joinViaInviteLink(code);
+		} else {
+			this.maybeShowTutorialWelcome();
+		}
 	}
 
 	/**
@@ -826,6 +847,7 @@ class ShiroApp {
 			["streamDeckBridge", () => this.setupStreamDeckBridge()],
 			["serverEvents", () => this.subscribeServerEvents()],
 			["accountMenu", () => this.setupAccountMenu()],
+			["inviteLinks", () => this.setupInviteLinks()],
 			["tutorial", () => this.setupTutorial()],
 			["controlsAutoHide", () => this.setupControlsAutoHide()],
 			["fullscreenSync", () => this.setupFullscreenSync()],
@@ -1611,6 +1633,12 @@ class ShiroApp {
 				copyBtn.innerHTML = `<i data-lucide="copy"></i>`;
 			}
 
+			const inviteLinkBtn = document.getElementById("btn-open-invite-link");
+			if (inviteLinkBtn) {
+				// Sala privada: só o dono (o link dispensa a senha). Pública: qualquer membro
+				inviteLinkBtn.classList.toggle("hidden", !(isOwner || !this.currentRoom.isPrivate));
+			}
+
 			const copyInviteBtn = document.getElementById("btn-copy-invite-code");
 			if (copyInviteBtn) {
 				if (isOwner && this.currentRoom.inviteCode) {
@@ -1832,7 +1860,7 @@ class ShiroApp {
 					if (res.ok && res.room) {
 						await this.onRoomSelected(res.room);
 					} else if (!res.ok) {
-						alert(res.error || "Não foi possível entrar na sala.");
+						void this.showAlert(res.error || "Não foi possível entrar na sala.");
 					}
 				}
 			});
@@ -2608,7 +2636,7 @@ class ShiroApp {
 			this.mainSourcePicker?.setSelectedSource(selectedSource);
 		}
 		if (!selectedSource) {
-			alert("Selecione uma fonte de vídeo antes de iniciar a transmissão.");
+			void this.showAlert("Selecione uma fonte de vídeo antes de iniciar a transmissão.");
 			return;
 		}
 
@@ -2617,7 +2645,7 @@ class ShiroApp {
 		}
 
 		if (!this.currentVideoTrack) {
-			alert("Não foi possível capturar a fonte selecionada.");
+			void this.showAlert("Não foi possível capturar a fonte selecionada.");
 			return;
 		}
 
@@ -2669,7 +2697,7 @@ class ShiroApp {
 			}
 		} catch (err: any) {
 			console.error("[App] Erro ao notificar sala:", err);
-			alert(`Erro ao iniciar transmissão na sala: ${err.message}`);
+			void this.showAlert(`Erro ao iniciar transmissão na sala: ${err.message}`);
 			setStreamStatus(false, "Erro ao Conectar");
 			this.stopStreaming();
 		}
@@ -2753,6 +2781,7 @@ class ShiroApp {
 
 			this.tutorial?.stop(false);
 			document.getElementById("modal-tutorial-welcome")?.classList.add("hidden");
+			this.mainViewReady = false;
 			logout();
 			this.showLoginView(checkSavedSession());
 		});
@@ -3115,6 +3144,285 @@ class ShiroApp {
 		}
 	}
 
+	// ------------------------------------------------------------------------------------------------------------------------------
+	//  LINKS DE CONVITE + DEEP LINK shiro://join?invite=<codigo>
+	// ------------------------------------------------------------------------------------------------------------------------------
+
+	/** Código do link de convite a partir de uma URL (…/i/codigo) ou do próprio código; null se for código fixo (INV-…) */
+	private extractInviteLinkCode(value: string): string | null {
+		const fromUrl = value.match(/\/i\/([a-z0-9-]{1,32})/i);
+		if (fromUrl) return fromUrl[1].toLowerCase();
+		if (/^INV-/i.test(value)) return null;
+		return /^[a-z0-9-]{1,32}$/i.test(value) ? value.toLowerCase() : null;
+	}
+
+	private async setupDeepLinks(): Promise<void> {
+		window.api?.onDeepLink?.((params) => void this.handleDeepLink(params));
+		try {
+			const pending = await window.api?.getPendingDeepLink?.();
+			if (pending) await this.handleDeepLink(pending);
+		} catch (err) {
+			console.warn("[App] Não foi possível ler o deep link pendente:", err);
+		}
+	}
+
+	private async handleDeepLink(params: Record<string, string>): Promise<void> {
+		console.log("[App] Deep link recebido:", params);
+		if (params._action !== "join" || !params.invite) return;
+		const code = params.invite.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 32);
+		if (!code) return;
+
+		if (this.mainViewReady && isAuthenticated()) {
+			await this.joinViaInviteLink(code);
+			return;
+		}
+		// Sem login ainda: entra na sala assim que o login terminar
+		this.pendingInviteCode = code;
+		const errorEl = document.getElementById("login-error");
+		if (errorEl && !document.getElementById("view-login")?.classList.contains("hidden")) {
+			errorEl.textContent = "Faça login para entrar na sala do convite.";
+			errorEl.classList.add("info");
+		}
+	}
+
+	private async joinViaInviteLink(code: string): Promise<void> {
+		const res = await redeemInviteLink(code);
+		if (!res.ok || !res.room) {
+			void this.showAlert(res.error || "Não foi possível entrar pelo convite.");
+			return;
+		}
+		await this.onRoomSelected(res.room);
+		const notice = { title: "Você entrou pelo convite", message: `Bem-vindo à sala ${res.room.name}!`, type: "info" as const };
+		this.showSystemNoticeToast({ id: `invite-${Date.now()}`, date: "Agora", ...notice });
+	}
+
+	private formatInviteExpiry(iso: string): string {
+		const ms = new Date(iso).getTime() - Date.now();
+		if (ms <= 0) return "expirado";
+		const hours = Math.floor(ms / 3_600_000);
+		if (hours >= 48) return `expira em ${Math.floor(hours / 24)} dias`;
+		if (hours >= 1) return `expira em ${hours} h`;
+		return `expira em ${Math.max(1, Math.floor(ms / 60_000))} min`;
+	}
+
+	private setupInviteLinks(): void {
+		const modal = document.getElementById("modal-invite-link");
+		const form = document.getElementById("form-invite-link") as HTMLFormElement | null;
+		const roomNameEl = document.getElementById("invite-link-room-name");
+		const maxUsesInput = document.getElementById("input-invite-max-uses") as HTMLInputElement | null;
+		const customInput = document.getElementById("input-invite-custom") as HTMLInputElement | null;
+		const errorEl = document.getElementById("invite-link-error");
+		const resultBox = document.getElementById("invite-link-result");
+		const resultUrl = document.getElementById("invite-link-result-url") as HTMLInputElement | null;
+		const btnCopyResult = document.getElementById("btn-copy-invite-link-result");
+		const listEl = document.getElementById("invite-links-list");
+
+		const copyWithFeedback = (text: string, button: HTMLElement | null) => {
+			navigator.clipboard.writeText(text).catch(() => {});
+			if (!button) return;
+			const original = button.innerHTML;
+			button.innerHTML = `<i data-lucide="check"></i> <span>Copiado!</span>`;
+			this.refreshIcons();
+			setTimeout(() => {
+				button.innerHTML = original;
+				this.refreshIcons();
+			}, 1500);
+		};
+
+		const renderList = async () => {
+			if (!listEl || !this.currentRoom) return;
+			listEl.innerHTML = `<span class="invite-links-empty">Carregando…</span>`;
+			const invites = await listRoomInviteLinks(this.currentRoom.roomId);
+			if (invites.length === 0) {
+				listEl.innerHTML = `<span class="invite-links-empty">Nenhum link ativo nesta sala.</span>`;
+				return;
+			}
+			listEl.innerHTML = invites
+				.map((inv: RoomInviteLink) => {
+					const uses = inv.maxUses === null ? `${inv.uses} ${inv.uses === 1 ? "pessoa" : "pessoas"} · sem limite` : `${inv.uses}/${inv.maxUses} pessoas`;
+					return `
+					<div class="invite-link-item" data-code="${this.escapeHtml(inv.code)}">
+						<div class="invite-link-item-info">
+							<span class="invite-link-item-url">share.shirobot.xyz/i/${this.escapeHtml(inv.code)}</span>
+							<span class="invite-link-item-meta">${uses} · ${this.formatInviteExpiry(inv.expiresAt)} · por @${this.escapeHtml(inv.createdByUsername)}</span>
+						</div>
+						<button type="button" class="btn-copy-id invite-link-copy" title="Copiar link"><i data-lucide="copy"></i></button>
+						<button type="button" class="btn-copy-id invite-link-revoke" title="Desativar link"><i data-lucide="trash-2"></i></button>
+					</div>`;
+				})
+				.join("");
+			listEl.querySelectorAll<HTMLElement>(".invite-link-item").forEach((item) => {
+				const inv = invites.find((i) => i.code === item.dataset.code);
+				if (!inv) return;
+				item.querySelector<HTMLElement>(".invite-link-copy")?.addEventListener("click", () => {
+					navigator.clipboard.writeText(inv.url).catch(() => {});
+					item.classList.add("copied");
+					setTimeout(() => item.classList.remove("copied"), 1200);
+				});
+				item.querySelector<HTMLElement>(".invite-link-revoke")?.addEventListener("click", async () => {
+					const ok = await this.showDialog({
+					title: "Desativar link",
+					message: `Desativar o link share.shirobot.xyz/i/${inv.code}? Quem tiver o link não vai mais conseguir entrar.`,
+					confirmLabel: "Desativar",
+					cancelLabel: "Cancelar",
+					variant: "danger",
+				});
+				if (!ok) return;
+					const res = await revokeInviteLink(inv.code);
+					if (!res.ok) void this.showAlert(res.error || "Não foi possível desativar o link.");
+					await renderList();
+				});
+			});
+			this.refreshIcons();
+		};
+
+		const openModal = () => {
+			if (!this.currentRoom) return;
+			if (roomNameEl) roomNameEl.textContent = this.currentRoom.name;
+			form?.reset();
+			this.setCustomSelectValue("select-invite-duration", "24");
+			if (errorEl) errorEl.textContent = "";
+			resultBox?.classList.add("hidden");
+			this.showModal(modal);
+			this.refreshIcons();
+			void renderList();
+		};
+		const closeModal = () => this.hideModalAnimated(modal);
+
+		document.getElementById("btn-open-invite-link")?.addEventListener("click", openModal);
+		document.getElementById("btn-close-invite-link")?.addEventListener("click", closeModal);
+		modal?.addEventListener("click", (e) => {
+			if (e.target === modal) closeModal();
+		});
+
+		// Link personalizado: minúsculas, números e hífen, até 10 caracteres
+		customInput?.addEventListener("input", () => {
+			const clean = customInput.value.toLowerCase().replace(/[^a-z0-9-]/g, "").replace(/-{2,}/g, "-").slice(0, 10);
+			if (clean !== customInput.value) customInput.value = clean;
+		});
+
+		btnCopyResult?.addEventListener("click", () => {
+			if (resultUrl?.value) copyWithFeedback(resultUrl.value, btnCopyResult);
+		});
+
+		form?.addEventListener("submit", async (e) => {
+			e.preventDefault();
+			if (!this.currentRoom) return;
+			if (errorEl) errorEl.textContent = "";
+
+			const durationHours = parseInt((document.getElementById("select-invite-duration") as HTMLSelectElement)?.value || "24", 10);
+			const maxUsesRaw = maxUsesInput?.value.trim() ?? "";
+			const maxUses = maxUsesRaw ? parseInt(maxUsesRaw, 10) : null;
+			const customCode = customInput?.value.replace(/^-+|-+$/g, "") ?? "";
+
+			if (maxUses !== null && (!Number.isInteger(maxUses) || maxUses < 1)) {
+				if (errorEl) errorEl.textContent = "O limite de pessoas deve ser um número a partir de 1 (ou vazio para sem limite).";
+				return;
+			}
+			if (customCode && customCode.length < 3) {
+				if (errorEl) errorEl.textContent = "O link personalizado precisa ter pelo menos 3 caracteres.";
+				return;
+			}
+
+			this.setAuthLoading("btn-create-invite-link", true);
+			const res = await createInviteLink({
+				roomId: this.currentRoom.roomId,
+				durationHours,
+				maxUses,
+				customCode: customCode || undefined,
+			});
+			this.setAuthLoading("btn-create-invite-link", false);
+
+			if (!res.ok || !res.invite) {
+				if (errorEl) errorEl.textContent = res.error || "Não foi possível criar o link.";
+				return;
+			}
+
+			if (resultUrl) resultUrl.value = res.invite.url;
+			resultBox?.classList.remove("hidden");
+			copyWithFeedback(res.invite.url, btnCopyResult);
+			await renderList();
+		});
+	}
+
+	/**
+	 * Diálogo do app no lugar de alert()/confirm() nativos (que abriam a janela do sistema).
+	 * Com cancelLabel vira uma confirmação e resolve true/false; sem, é só um aviso.
+	 */
+	private showDialog(opts: {
+		title?: string;
+		message: string;
+		confirmLabel?: string;
+		cancelLabel?: string;
+		variant?: "info" | "warning" | "danger";
+	}): Promise<boolean> {
+		const run = () =>
+			new Promise<boolean>((resolve) => {
+				const modal = document.getElementById("modal-app-dialog");
+				const titleEl = document.getElementById("app-dialog-title");
+				const messageEl = document.getElementById("app-dialog-message");
+				const iconEl = document.getElementById("app-dialog-icon");
+				const btnConfirm = document.getElementById("app-dialog-confirm") as HTMLButtonElement | null;
+				const btnCancel = document.getElementById("app-dialog-cancel") as HTMLButtonElement | null;
+				if (!modal || !btnConfirm || !btnCancel) {
+					resolve(opts.cancelLabel ? window.confirm(opts.message) : (window.alert(opts.message), true));
+					return;
+				}
+
+				const variant = opts.variant ?? (opts.cancelLabel ? "warning" : "info");
+				const icon = variant === "info" ? "info" : "alert-triangle";
+				modal.dataset.variant = variant;
+				if (titleEl) titleEl.textContent = opts.title ?? (variant === "info" ? "Aviso" : "Atenção");
+				if (messageEl) messageEl.textContent = opts.message;
+				if (iconEl) iconEl.innerHTML = `<i data-lucide="${icon}"></i>`;
+				btnConfirm.textContent = opts.confirmLabel ?? "OK";
+				btnConfirm.className = `btn ${variant === "danger" ? "btn-danger" : "btn-primary"}`;
+				btnCancel.textContent = opts.cancelLabel ?? "Cancelar";
+				btnCancel.classList.toggle("hidden", !opts.cancelLabel);
+
+				const finish = (result: boolean) => {
+					btnConfirm.removeEventListener("click", onConfirm);
+					btnCancel.removeEventListener("click", onCancel);
+					modal.removeEventListener("click", onBackdrop);
+					document.removeEventListener("keydown", onKey, true);
+					this.hideModalAnimated(modal);
+					resolve(result);
+				};
+				const onConfirm = () => finish(true);
+				const onCancel = () => finish(false);
+				const onBackdrop = (e: MouseEvent) => {
+					if (e.target === modal) finish(false);
+				};
+				const onKey = (e: KeyboardEvent) => {
+					if (e.key === "Escape") {
+						e.preventDefault();
+						e.stopPropagation(); // não fecha outros modais/tela cheia junto
+						finish(false);
+					} else if (e.key === "Enter") {
+						e.preventDefault();
+						finish(true);
+					}
+				};
+
+				btnConfirm.addEventListener("click", onConfirm);
+				btnCancel.addEventListener("click", onCancel);
+				modal.addEventListener("click", onBackdrop);
+				document.addEventListener("keydown", onKey, true);
+
+				this.showModal(modal);
+				this.refreshIcons();
+				btnConfirm.focus();
+			});
+
+		const next = this.dialogQueue.then(run, run);
+		this.dialogQueue = next.catch(() => {});
+		return next;
+	}
+
+	private showAlert(message: string, title?: string): Promise<boolean> {
+		return this.showDialog({ message, title });
+	}
+
 	/** Abre um modal (cancela um fechamento animado em andamento, se houver) */
 	private showModal(modal: HTMLElement | null): void {
 		if (!modal) return;
@@ -3470,7 +3778,7 @@ class ShiroApp {
 					btn.disabled = false;
 					btn.innerHTML = `<i data-lucide="radio"></i> <span>Convidar</span>`;
 					this.refreshIcons();
-					alert(res.error || "Erro ao convidar amigo.");
+					void this.showAlert(res.error || "Erro ao convidar amigo.");
 				}
 			});
 		});
@@ -3478,7 +3786,14 @@ class ShiroApp {
 		listEl.querySelectorAll<HTMLButtonElement>(".btn-remove-friend").forEach((btn) => {
 			btn.addEventListener("click", async () => {
 				const friendId = btn.dataset.friendId!;
-				if (!confirm("Deseja realmente desfazer a amizade com este usuário?")) return;
+				const ok = await this.showDialog({
+					title: "Desfazer amizade",
+					message: "Deseja realmente desfazer a amizade com este usuário?",
+					confirmLabel: "Desfazer amizade",
+					cancelLabel: "Cancelar",
+					variant: "danger",
+				});
+				if (!ok) return;
 				btn.disabled = true;
 				await rejectFriend(friendId);
 				await this.refreshFriends();
@@ -3752,17 +4067,24 @@ class ShiroApp {
 		formInvite?.addEventListener("submit", async (e) => {
 			e.preventDefault();
 			const codeInput = document.getElementById("join-invite-code-input") as HTMLInputElement | null;
-			const code = codeInput?.value.trim().toUpperCase();
+			const raw = codeInput?.value.trim() ?? "";
 			const errorEl = document.getElementById("join-by-invite-error");
 
-			if (!code) {
-				if (errorEl) errorEl.textContent = "Digite o código de convite.";
+			if (!raw) {
+				if (errorEl) errorEl.textContent = "Digite o código ou cole o link de convite.";
 				return;
 			}
 
 			if (errorEl) errorEl.textContent = "";
 			this.setAuthLoading("btn-submit-join-by-invite", true);
-			const res = await joinRoomByInvite(code);
+			// Link (…/i/codigo) ou código de link → convite novo; "INV-…" → código fixo da sala
+			const linkCode = this.extractInviteLinkCode(raw);
+			let res = linkCode ? await redeemInviteLink(linkCode) : await joinRoomByInvite(raw.toUpperCase());
+			if (!res.ok && linkCode && !/\/i\//i.test(raw)) {
+				// Não era um link: tenta como código fixo da sala
+				const legacy = await joinRoomByInvite(raw.toUpperCase());
+				if (legacy.ok) res = legacy;
+			}
 			this.setAuthLoading("btn-submit-join-by-invite", false);
 
 			if (!res.ok || !res.room) {
@@ -3801,7 +4123,7 @@ class ShiroApp {
 				if (resJoin.ok && resJoin.room) {
 					await this.onRoomSelected(resJoin.room);
 				} else {
-					alert(res.error || "Não foi possível entrar na sala convidada.");
+					void this.showAlert(res.error || "Não foi possível entrar na sala convidada.");
 				}
 			}
 		});
@@ -4220,7 +4542,7 @@ class ShiroApp {
 					if (resJoin.ok && resJoin.room) {
 						await this.onRoomSelected(resJoin.room);
 					} else {
-						alert(res.error || "Não foi possível entrar na sala.");
+						void this.showAlert(res.error || "Não foi possível entrar na sala.");
 					}
 				}
 				await this.refreshFriends();
@@ -5064,7 +5386,7 @@ class ShiroApp {
 			const res = await setUserBadge(userData.id, "beta-tester", !hasBeta);
 			if (!res.ok) {
 				btn.disabled = false;
-				alert(res.error || "Erro ao atualizar insígnia.");
+				void this.showAlert(res.error || "Erro ao atualizar insígnia.");
 				return;
 			}
 
@@ -5181,7 +5503,7 @@ class ShiroApp {
 		btnOpen?.addEventListener("click", () => {
 			const currentUser = getUser();
 			if (!currentUser || currentUser.id !== DEV_ADMIN_ID) {
-				alert("Acesso exclusivo do Desenvolvedor.");
+				void this.showAlert("Acesso exclusivo do Desenvolvedor.");
 				return;
 			}
 			document.getElementById("notifications-popover")?.classList.add("hidden");
@@ -5197,7 +5519,7 @@ class ShiroApp {
 			e.preventDefault();
 			const currentUser = getUser();
 			if (!currentUser || currentUser.id !== DEV_ADMIN_ID) {
-				alert("Ação não autorizada. Apenas o desenvolvedor pode lançar comunicados.");
+				void this.showAlert("Ação não autorizada. Apenas o desenvolvedor pode lançar comunicados.");
 				return;
 			}
 
