@@ -1119,7 +1119,7 @@ class ShiroApp {
 			{
 				title: "Você está ao vivo! 🎉",
 				text: `Para parar, clique em <b>Encerrar transmissão</b>. Chame seus amigos pela aba <b>Amigos</b>
-					ou compartilhe o ID da sala. Quer rever este tour? É só clicar no <b>?</b> no topo da tela.`,
+					ou compartilhe o ID da sala. Quer rever este tour? É só clicar no seu perfil/icone no topo da tela e clicar em <b>Tutorial</b>.`,
 				target: () => document.getElementById("btn-stop-stream"),
 				nextLabel: "Concluir",
 			},
