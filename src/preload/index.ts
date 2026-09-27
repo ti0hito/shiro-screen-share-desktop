@@ -81,6 +81,17 @@ const api: ElectronAPI = {
 		ipcRenderer.send("app-quit-ready");
 	},
 
+	// Deep links shiro:// (ex.: shiro://join?invite=codigo)
+	onDeepLink: (callback: (params: Record<string, string>) => void) => {
+		const listener = (_event: any, params: Record<string, string>) => callback(params);
+		ipcRenderer.on("deep-link", listener);
+		return () => ipcRenderer.removeListener("deep-link", listener);
+	},
+
+	getPendingDeepLink: (): Promise<Record<string, string> | null> => {
+		return ipcRenderer.invoke("get-pending-deep-link");
+	},
+
 	minimizeWindow: (): void => {
 		ipcRenderer.send("window-minimize");
 	},

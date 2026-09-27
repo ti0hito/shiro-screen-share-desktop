@@ -55,6 +55,10 @@ export interface ElectronAPI {
 	/** O app vai fechar: o renderer deve sair da sala e então chamar appQuitReady() */
 	onAppBeforeQuit: (callback: () => void) => () => void;
 	appQuitReady: () => void;
+	/** Deep link shiro:// recebido com o app já aberto (ex.: { _action: "join", invite: "codigo" }) */
+	onDeepLink: (callback: (params: Record<string, string>) => void) => () => void;
+	/** Deep link que abriu o app ou chegou antes de a tela carregar (consumido uma única vez) */
+	getPendingDeepLink: () => Promise<Record<string, string> | null>;
 	minimizeWindow: () => void;
 	maximizeWindow: () => void;
 	closeWindow: () => void;

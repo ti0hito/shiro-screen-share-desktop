@@ -501,6 +501,79 @@ export async function setUserBadge(
 	return { ok: true, badges: data.badges ?? [], badgeStats: data.badgeStats };
 }
 
+// ══════════════════════════════════════════
+//  LINKS DE CONVITE (https://share.shirobot.xyz/i/<code>)
+// ══════════════════════════════════════════
+
+export interface RoomInviteLink {
+	code: string;
+	url: string;
+	custom: boolean;
+	roomId: string;
+	createdBy: string;
+	createdByUsername: string;
+	expiresAt: string;
+	/** null = sem limite de pessoas */
+	maxUses: number | null;
+	uses: number;
+	createdAt: string;
+}
+
+export async function createInviteLink(data: {
+	roomId: string;
+	durationHours: number;
+	maxUses: number | null;
+	customCode?: string;
+}): Promise<{ ok: boolean; error?: string; invite?: RoomInviteLink }> {
+	const token = getToken();
+	if (!token || !window.api?.apiRequest) return { ok: false, error: "Não autenticado." };
+
+	const result = await window.api.apiRequest({ endpoint: "/api/invites", method: "POST", token, body: data });
+	const res = result.data as any;
+	if (result.status === 404 && !res?.error?.includes("Sala")) {
+		return { ok: false, error: "O servidor ainda não suporta links de convite. Atualize a API." };
+	}
+	if (!result.ok) return { ok: false, error: res?.error ?? `Erro ${result.status}` };
+	return { ok: true, invite: res.invite };
+}
+
+export async function listRoomInviteLinks(roomId: string): Promise<RoomInviteLink[]> {
+	const token = getToken();
+	if (!token || !window.api?.apiRequest) return [];
+	const result = await window.api.apiRequest({
+		endpoint: `/api/invites/room/${encodeURIComponent(roomId)}`,
+		method: "GET",
+		token,
+	});
+	if (!result.ok) return [];
+	return (result.data as any).invites ?? [];
+}
+
+export async function revokeInviteLink(code: string): Promise<{ ok: boolean; error?: string }> {
+	const token = getToken();
+	if (!token || !window.api?.apiRequest) return { ok: false, error: "Não autenticado." };
+	const result = await window.api.apiRequest({
+		endpoint: `/api/invites/${encodeURIComponent(code)}`,
+		method: "DELETE",
+		token,
+	});
+	if (!result.ok) return { ok: false, error: (result.data as any)?.error ?? `Erro ${result.status}` };
+	return { ok: true };
+}
+
+/** Entra na sala pelo link de convite */
+export async function redeemInviteLink(code: string): Promise<{ ok: boolean; error?: string; room?: RoomInfo }> {
+	const token = getToken();
+	if (!token || !window.api?.apiRequest) return { ok: false, error: "Não autenticado." };
+	const result = await window.api.apiRequest({
+		endpoint: `/api/invites/${encodeURIComponent(code)}/redeem`,
+		method: "POST",
+		token,
+	});
+	if (!result.ok) return { ok: false, error: (result.data as any)?.error ?? `Erro ${result.status}` };
+	return { ok: true, room: (result.data as any).room };
+}
+
 export async function leaveRoom(roomId: string): Promise<void> {
 	const token = getToken();
 	if (!token || !window.api?.apiRequest) return;
