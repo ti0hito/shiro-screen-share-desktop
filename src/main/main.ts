@@ -20,6 +20,7 @@ app.commandLine.appendSwitch("ignore-gpu-blocklist");
 app.commandLine.appendSwitch("enable-gpu-rasterization");
 app.commandLine.appendSwitch("enable-zero-copy");
 app.commandLine.appendSwitch("disable-background-timer-throttling");
+app.commandLine.appendSwitch("js-flags", "--expose-gc");
 
 // Silence Chromium internal C++ log spam (wgc_capture_session.cc, etc.)
 app.commandLine.appendSwitch("log-level", "3");
@@ -139,6 +140,33 @@ function createWindow(): void {
 
 	// Start WebSocket server for Stream Deck bridge
 	startWebSocketServer(mainWindow);
+
+	mainWindow.on("hide", () => {
+		// Ao minimizar para a bandeja ou ocultar, limpa cache de rede/imagens e aciona coleta de lixo
+		try {
+			mainWindow?.webContents.session.clearCache().catch(() => {});
+			if (typeof (global as any).gc === "function") {
+				(global as any).gc();
+			}
+		} catch {
+			// ignore
+		}
+	});
+
+	// Limpeza periódica de cache e memória a cada 30 minutos em sessões longas
+	const memoryCleanupInterval = setInterval(() => {
+		if (mainWindow && !mainWindow.isDestroyed()) {
+			mainWindow.webContents.session.clearCache().catch(() => {});
+			if (typeof (global as any).gc === "function") {
+				(global as any).gc();
+			}
+		}
+	}, 30 * 60 * 1000);
+
+	mainWindow.on("closed", () => {
+		clearInterval(memoryCleanupInterval);
+		mainWindow = null;
+	});
 
 	mainWindow.on("close", (event) => {
 		if (appShouldQuit) return;
