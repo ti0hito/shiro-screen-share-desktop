@@ -645,11 +645,16 @@ class ShiroApp {
 			this.p2pManager = new P2PManager(user.id, {
 				isPeerAllowed: (peerId) => {
 					if (!this.currentRoom) return false;
+					if (this.p2pManager?.getIsStreaming()) return true;
 					const inActiveStreams = this.currentRoom.activeStreams?.some((s) => s.userId === peerId);
-					if (this.p2pManager?.getIsStreaming()) {
-						return true;
-					}
-					return inActiveStreams ?? false;
+					if (inActiveStreams) return true;
+					// Permite também se for membro ou visitante da sala (a lista de streams pode estar atualizando)
+					const inMembers = this.currentRoom.members?.some((m) => {
+						const memberUser = this.onlineUsers.find((u) => u.username === m || u.id === m);
+						return m === peerId || memberUser?.id === peerId;
+					});
+					const inGuests = this.currentRoom.guests?.some((g) => g.id === peerId);
+					return inMembers || inGuests || false;
 				},
 				onConnected: (peerId) => {
 					console.log(`[App] P2P conectado com sucesso a ${peerId}`);
@@ -675,18 +680,26 @@ class ShiroApp {
 				},
 				onRemoteStream: (stream, peerId) => {
 					console.log(`[App] Stream remota recebida de ${peerId}`);
-					const isStreamerInCurrentRoom = this.currentRoom?.activeStreams?.some((s) => s.userId === peerId);
-					if (!this.currentRoom || !isStreamerInCurrentRoom) {
-						console.warn(`[App] Ignorando stream de ${peerId} pois não está transmitindo na sala ativa (${this.currentRoom?.roomId}).`);
+					if (!this.currentRoom) return;
+
+					const activeStreamer = this.currentRoom.activeStreams?.find((s) => s.userId === peerId);
+					const onlineUser = this.onlineUsers.find((u) => u.id === peerId);
+					const guest = this.currentRoom.guests?.find((g) => g.id === peerId);
+					const isMember = this.currentRoom.members?.some((m) => {
+						const memberUser = this.onlineUsers.find((u) => u.username === m || u.id === m);
+						return m === peerId || memberUser?.id === peerId;
+					});
+
+					if (!activeStreamer && !isMember && !guest) {
+						console.warn(`[App] Ignorando stream de ${peerId} pois não pertence à sala ativa (${this.currentRoom?.roomId}).`);
 						this.p2pManager?.closePeer(peerId);
 						return;
 					}
 
-					const activeStreamer = this.currentRoom.activeStreams?.find((s) => s.userId === peerId);
-					const onlineUser = this.onlineUsers.find((u) => u.id === peerId);
-					const username = activeStreamer?.username ?? onlineUser?.username ?? peerId;
+					const username = activeStreamer?.username ?? onlineUser?.username ?? guest?.name ?? peerId;
 					this.remoteStreams.set(peerId, { stream, username });
 					this.renderLiveStreamsGrid();
+					this.streamsPoller?.trigger();
 				},
 				onSystemNotice: (notice) => {
 					this.addSystemNotice(notice);
@@ -904,8 +917,8 @@ class ShiroApp {
 			this.roomsPoller,
 			this.friendsPoller,
 			this.usersPoller,
-			// Fontes locais (sem API): mantidas com a janela oculta por causa do Stream Deck
-			new Poller(() => this.refreshSources(), { intervalMs: 15_000, hiddenFactor: 1 }),
+			// Fontes locais: escaneia janelas apenas se a aba estiver visível e a janela em foco
+			new Poller(() => this.refreshSourcesIfActive(), { intervalMs: 30_000, hiddenFactor: 10 }),
 		];
 		if (this.serverSupportsEvents) this.applyPollIntervals(POLL_INTERVALS.withServerEvents);
 		this.heartbeatPoller.start(true);
@@ -1219,6 +1232,7 @@ class ShiroApp {
 		tabSources?.addEventListener("click", () => {
 			if (!this.currentRoom) return;
 			activate(tabSources, panelSources);
+			this.refreshSources();
 		});
 		tabFriends?.addEventListener("click", () => {
 			activate(tabFriends, panelFriends);
@@ -1795,11 +1809,9 @@ class ShiroApp {
 				// Tentativa recente ainda em andamento: aguarda em vez de reofertar por cima
 				if (this.p2pManager?.isConnecting(peerId, 20_000)) continue;
 
-				// Conectado mas sem mídia: renegocia na mesma conexão.
-				// Sem conexão, ou presa conectando há mais de 20s: recomeça do zero.
-				const connected = this.p2pManager?.isConnected(peerId) ?? false;
-				console.log(`[App] Detectada stream ativa de ${streamInfo.username} (${peerId}) fora do grid. ${connected ? "Renegociando" : "Iniciando nova conexão"} P2P...`);
-				await this.p2pManager?.renegotiate(peerId, !connected);
+				// Força reinício limpo para estabelecer nova oferta com transceivers adequados
+				console.log(`[App] Detectada stream ativa de ${streamInfo.username} (${peerId}) fora do grid. Iniciando conexão P2P limpa...`);
+				await this.p2pManager?.renegotiate(peerId, true);
 			}
 		} finally {
 			this.autoConnectInFlight = false;
@@ -1942,7 +1954,52 @@ class ShiroApp {
 
 		const isLocalStreaming = this.p2pManager?.getIsStreaming() && this.previewStream;
 
+		const activeRoomStreams = (this.currentRoom?.activeStreams ?? []).filter(
+			(s) => s.userId !== getUser()?.id && !this.remoteStreams.has(s.userId),
+		);
+
 		if (this.remoteStreams.size === 0 && !isLocalStreaming) {
+			if (activeRoomStreams.length > 0) {
+				gridEl.innerHTML = activeRoomStreams
+					.map((s) => `
+						<div class="stream-card stream-card-connecting" data-peer-id="${s.userId}">
+							<div class="stream-card-header">
+								<div class="stream-card-user">
+									<i data-lucide="video"></i>
+									<span>Transmissão de ${this.escapeHtml(s.username)}</span>
+								</div>
+								<div class="stream-card-actions">
+									<span class="badge badge-connecting"><i data-lucide="loader-2" class="animate-spin"></i> CONECTANDO</span>
+								</div>
+							</div>
+							<div class="stream-card-connecting-body">
+								<div class="stream-spinner"></div>
+								<p>Conectando à transmissão de <b>${this.escapeHtml(s.username)}</b>...</p>
+								<button class="btn btn-secondary btn-sm btn-reconnect-stream" data-peer-id="${s.userId}" type="button" style="margin-top: 6px;">
+									<i data-lucide="refresh-cw"></i> Reconectar
+								</button>
+							</div>
+						</div>
+					`)
+					.join("");
+
+				gridEl.querySelectorAll<HTMLButtonElement>(".btn-reconnect-stream").forEach((btn) => {
+					btn.addEventListener("click", async (e) => {
+						e.stopPropagation();
+						const peerId = btn.dataset.peerId;
+						if (peerId) {
+							btn.disabled = true;
+							btn.innerHTML = `<i data-lucide="loader-2" class="animate-spin"></i> Conectando...`;
+							this.refreshIcons();
+							await this.p2pManager?.renegotiate(peerId, true);
+						}
+					});
+				});
+
+				this.refreshIcons();
+				return;
+			}
+
 			gridEl.innerHTML = `
 				<div id="main-grid-placeholder" class="main-grid-placeholder">
 					<i data-lucide="radio" class="placeholder-lucide-icon"></i>
@@ -2078,6 +2135,42 @@ class ShiroApp {
 			gridEl.appendChild(remoteCard);
 		}
 
+		for (const s of activeRoomStreams) {
+			const connCard = document.createElement("div");
+			connCard.className = "stream-card stream-card-connecting";
+			connCard.dataset.peerId = s.userId;
+			connCard.innerHTML = `
+				<div class="stream-card-header">
+					<div class="stream-card-user">
+						<i data-lucide="video"></i>
+						<span>Transmissão de ${this.escapeHtml(s.username)}</span>
+					</div>
+					<div class="stream-card-actions">
+						<span class="badge badge-connecting"><i data-lucide="loader-2" class="animate-spin"></i> CONECTANDO</span>
+					</div>
+				</div>
+				<div class="stream-card-connecting-body">
+					<div class="stream-spinner"></div>
+					<p>Conectando à transmissão de <b>${this.escapeHtml(s.username)}</b>...</p>
+					<button class="btn btn-secondary btn-sm btn-reconnect-stream" data-peer-id="${s.userId}" type="button" style="margin-top: 6px;">
+						<i data-lucide="refresh-cw"></i> Reconectar
+					</button>
+				</div>`;
+
+			const btn = connCard.querySelector(".btn-reconnect-stream") as HTMLButtonElement | null;
+			btn?.addEventListener("click", async (e) => {
+				e.stopPropagation();
+				if (s.userId) {
+					btn.disabled = true;
+					btn.innerHTML = `<i data-lucide="loader-2" class="animate-spin"></i> Conectando...`;
+					this.refreshIcons();
+					await this.p2pManager?.renegotiate(s.userId, true);
+				}
+			});
+
+			gridEl.appendChild(connCard);
+		}
+
 		if (this.maximizedStreamId) {
 			const rightSectionEl = document.querySelector(".right-section");
 			if (rightSectionEl) rightSectionEl.classList.add("maximized-active");
@@ -2150,7 +2243,7 @@ class ShiroApp {
 	}
 
 	private updateAllThumbnails(): void {
-		if (this.maximizedStreamId) return;
+		if (document.hidden || this.maximizedStreamId) return;
 		const gridEl = document.getElementById("live-streams-grid");
 		if (!gridEl) return;
 
@@ -2609,6 +2702,14 @@ class ShiroApp {
 			btnStart.disabled = true;
 			btnStart.title = "Nenhuma fonte de captura encontrada";
 		}
+	}
+
+	private async refreshSourcesIfActive(): Promise<void> {
+		if (document.hidden) return;
+		const panelSources = document.getElementById("panel-sources");
+		const isSourcesActive = panelSources && !panelSources.classList.contains("hidden");
+		if (!isSourcesActive && this.allSources.length > 0) return;
+		await this.refreshSources();
 	}
 
 	private async refreshSources(): Promise<void> {
@@ -4625,7 +4726,10 @@ class ShiroApp {
 		});
 
 		// 3. Consulta de lista de fontes de captura
-		window.api.onStreamDeckGetSources(() => {
+		window.api.onStreamDeckGetSources(async () => {
+			if (this.allSources.length === 0) {
+				await this.refreshSources();
+			}
 			window.api.respondSources(
 				this.allSources.map((s) => ({
 					id: s.id,
@@ -5453,6 +5557,9 @@ class ShiroApp {
 			date: notice.date || "Agora",
 		};
 		this.systemNotices.unshift(newNotice);
+		if (this.systemNotices.length > 50) {
+			this.systemNotices.length = 50;
+		}
 		this.renderNotifications();
 	}
 

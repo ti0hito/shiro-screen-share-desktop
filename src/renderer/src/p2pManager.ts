@@ -246,16 +246,28 @@ export class P2PManager {
 
 	private addLocalTracks(pc: RTCPeerConnection, peerId: string): void {
 		if (!this.localStream) return;
-		const senders = pc.getSenders();
 		for (const track of this.localStream.getTracks()) {
-			const sender = senders.find((s) => s.track?.kind === track.kind);
-			if (sender) {
-				sender.replaceTrack(track).catch((err) => console.warn(`[P2P] Erro replaceTrack para ${peerId}:`, err));
-			} else {
+			const transceivers = pc.getTransceivers();
+			const matching = transceivers.find((t) => t.receiver.track?.kind === track.kind && t.direction !== "stopped");
+			if (matching) {
+				if (matching.sender.track !== track) {
+					matching.sender.replaceTrack(track).catch((err) => console.warn(`[P2P] Erro replaceTrack para ${peerId}:`, err));
+				}
+				matching.direction = "sendrecv";
 				try {
-					pc.addTrack(track, this.localStream);
-				} catch (err) {
-					console.warn(`[P2P] Erro ao adicionar track local para ${peerId}:`, err);
+					matching.sender.setStreams(this.localStream);
+				} catch {}
+			} else {
+				const senders = pc.getSenders();
+				const sender = senders.find((s) => s.track?.kind === track.kind);
+				if (sender) {
+					sender.replaceTrack(track).catch((err) => console.warn(`[P2P] Erro replaceTrack para ${peerId}:`, err));
+				} else {
+					try {
+						pc.addTrack(track, this.localStream);
+					} catch (err) {
+						console.warn(`[P2P] Erro ao adicionar track local para ${peerId}:`, err);
+					}
 				}
 			}
 		}
@@ -279,14 +291,21 @@ export class P2PManager {
 			pc = this.createPeerConnection(targetUserId);
 		}
 
+		// Garante transceivers com direction adequada (Unified Plan)
+		for (const kind of ["video", "audio"] as const) {
+			const has = pc.getTransceivers().some((t) => t.receiver.track?.kind === kind && t.direction !== "stopped");
+			if (!has) {
+				pc.addTransceiver(kind, {
+					direction: this.localStream?.getTracks().some((t) => t.kind === kind) ? "sendrecv" : "recvonly",
+				});
+			}
+		}
+
 		prioritizeH264(pc);
 		this.addLocalTracks(pc, targetUserId);
 
 		try {
-			const offer = await pc.createOffer({
-				offerToReceiveAudio: true,
-				offerToReceiveVideo: true,
-			});
+			const offer = await pc.createOffer();
 			const optimizedSdp = optimizeSdp(offer.sdp || "");
 			await pc.setLocalDescription({ type: "offer", sdp: optimizedSdp });
 			console.log(`[P2P] Oferta criada e enviada para ${targetUserId}`);
@@ -522,12 +541,15 @@ export class P2PManager {
 	}
 
 	private async answerOffer(pc: RTCPeerConnection, fromUserId: string, sdp: string): Promise<void> {
-		prioritizeH264(pc);
-		this.addLocalTracks(pc, fromUserId);
-
+		// 1. Aplica a descrição remota PRIMEIRO para alinhar os transceivers da oferta
 		await pc.setRemoteDescription({ type: "offer", sdp });
 		await this.drainPendingCandidates(fromUserId, pc);
 
+		// 2. Anexa faixas locais nos transceivers alinhados (se estiver transmitindo)
+		prioritizeH264(pc);
+		this.addLocalTracks(pc, fromUserId);
+
+		// 3. Gera e envia a resposta
 		const answer = await pc.createAnswer();
 		const optimizedAnswerSdp = optimizeSdp(answer.sdp || "");
 		await pc.setLocalDescription({ type: "answer", sdp: optimizedAnswerSdp });
