@@ -2136,7 +2136,10 @@ class ShiroApp {
 
 			this.captureInitialThumbnail(videoEl, canvasEl, "local-preview");
 
-			localCard.addEventListener("click", () => this.toggleMaximizeStreamCard("local-preview", localCard));
+			localCard.addEventListener("click", () => {
+				if (this.activePopouts.has("local-preview")) return;
+				this.toggleMaximizeStreamCard("local-preview", localCard);
+			});
 			this.bindFullscreenButton(localCard, "local-preview");
 			this.bindPopoutButton(localCard, "local-preview", user?.username ?? "Você", this.previewStream);
 
@@ -2240,7 +2243,16 @@ class ShiroApp {
 
 			this.captureInitialThumbnail(videoEl, canvasEl, peerId);
 
-			remoteCard.addEventListener("click", () => this.toggleMaximizeStreamCard(cardId, remoteCard));
+			remoteCard.addEventListener("click", () => {
+				if (this.activePopouts.has(peerId)) {
+					const popData = this.activePopouts.get(peerId);
+					if (popData?.win && !popData.win.closed) {
+						popData.win.focus();
+					}
+					return;
+				}
+				this.toggleMaximizeStreamCard(cardId, remoteCard);
+			});
 			this.bindFullscreenButton(remoteCard, cardId);
 			this.bindPopoutButton(remoteCard, peerId, remoteData.username, remoteData.stream);
 
@@ -2589,8 +2601,6 @@ class ShiroApp {
 					align-items: center;
 					justify-content: center;
 					background: #000;
-					-webkit-app-region: drag;
-					cursor: grab;
 				}
 				.popout-container:active {
 					cursor: grabbing;
@@ -2601,7 +2611,6 @@ class ShiroApp {
 					object-fit: contain;
 					background: #000;
 					pointer-events: auto;
-					-webkit-app-region: drag;
 					cursor: grab;
 					image-rendering: high-quality;
 					image-rendering: -webkit-optimize-contrast;
@@ -2611,29 +2620,29 @@ class ShiroApp {
 				video:active {
 					cursor: grabbing;
 				}
-				/* Faixa invisível no topo para permitir arrastar a janela facilmente */
+				/* Faixa no topo para arrasto nativo da janela */
 				.popout-top-drag-strip {
 					position: absolute;
 					top: 0;
 					left: 0;
 					right: 0;
-					height: 12px;
+					height: 16px;
 					z-index: 90;
 					-webkit-app-region: drag;
 					cursor: grab;
 				}
-				/* Barra de ferramentas arrastável */
+				/* Barra de ferramentas com botões e arrasto */
 				.popout-toolbar {
 					position: absolute;
 					top: 0;
 					left: 0;
 					right: 0;
-					height: 42px;
+					height: 44px;
 					display: flex;
 					align-items: center;
 					justify-content: space-between;
-					padding: 0 10px;
-					background: linear-gradient(180deg, rgba(8, 9, 12, 0.95) 0%, rgba(8, 9, 12, 0.75) 60%, transparent 100%);
+					padding: 0 12px;
+					background: linear-gradient(180deg, rgba(8, 9, 12, 0.95) 0%, rgba(8, 9, 12, 0.75) 65%, transparent 100%);
 					opacity: 0;
 					visibility: hidden;
 					pointer-events: none;
@@ -2643,10 +2652,11 @@ class ShiroApp {
 					cursor: grab;
 				}
 				.popout-container:hover .popout-toolbar,
-				.popout-toolbar:hover {
-					opacity: 1;
-					visibility: visible;
-					pointer-events: auto;
+				.popout-toolbar:hover,
+				.popout-toolbar.visible {
+					opacity: 1 !important;
+					visibility: visible !important;
+					pointer-events: auto !important;
 				}
 				.popout-meta {
 					display: flex;
@@ -2676,23 +2686,28 @@ class ShiroApp {
 					display: flex;
 					align-items: center;
 					gap: 6px;
-					-webkit-app-region: no-drag;
+					-webkit-app-region: no-drag !important;
+					pointer-events: auto !important;
+				}
+				.popout-controls * {
+					-webkit-app-region: no-drag !important;
 				}
 				.popout-btn {
-					background: rgba(22, 25, 33, 0.88);
-					border: 1px solid rgba(255, 255, 255, 0.18);
+					background: rgba(22, 25, 33, 0.9);
+					border: 1px solid rgba(255, 255, 255, 0.2);
 					color: #fff;
 					border-radius: 6px;
-					padding: 5px 10px;
-					font-size: 11px;
+					padding: 6px 12px;
+					font-size: 12px;
 					font-weight: 600;
 					display: inline-flex;
 					align-items: center;
-					gap: 5px;
-					cursor: pointer;
+					gap: 6px;
+					cursor: pointer !important;
 					backdrop-filter: blur(10px);
 					transition: all 0.15s ease;
-					-webkit-app-region: no-drag;
+					-webkit-app-region: no-drag !important;
+					pointer-events: auto !important;
 				}
 				.popout-btn:hover {
 					background: #8e44f3;
@@ -2707,8 +2722,9 @@ class ShiroApp {
 					background: #7b31dd;
 				}
 				.popout-btn-close {
-					padding: 4px 8px;
+					padding: 6px 10px;
 					font-weight: 700;
+					font-size: 13px;
 				}
 				.popout-btn-close:hover {
 					background: #e0284f;
@@ -2718,30 +2734,31 @@ class ShiroApp {
 					display: flex;
 					align-items: center;
 					gap: 4px;
-					background: rgba(22, 25, 33, 0.88);
-					border: 1px solid rgba(255, 255, 255, 0.18);
+					background: rgba(22, 25, 33, 0.9);
+					border: 1px solid rgba(255, 255, 255, 0.2);
 					border-radius: 6px;
-					padding: 3px 6px;
-					-webkit-app-region: no-drag;
+					padding: 4px 8px;
+					-webkit-app-region: no-drag !important;
+					pointer-events: auto !important;
 				}
 				.popout-vol-slider {
 					width: 55px;
 					height: 4px;
 					accent-color: #8e44f3;
-					cursor: pointer;
-					-webkit-app-region: no-drag;
+					cursor: pointer !important;
+					-webkit-app-region: no-drag !important;
 				}
 				.popout-vol-mute-btn {
 					background: transparent;
 					border: none;
 					color: #fff;
-					cursor: pointer;
+					cursor: pointer !important;
 					font-size: 13px;
 					display: flex;
 					align-items: center;
 					justify-content: center;
 					padding: 0 2px;
-					-webkit-app-region: no-drag;
+					-webkit-app-region: no-drag !important;
 				}
 			</style>
 		`;
@@ -2829,8 +2846,66 @@ class ShiroApp {
 			this.reattachStream(streamId);
 		});
 
+		// Controle de exibição da barra de botões ao mover o mouse
+		const toolbarEl = doc.querySelector(".popout-toolbar") as HTMLElement;
+		let hideToolbarTimer: any = null;
+		const showToolbar = () => {
+			if (!toolbarEl) return;
+			toolbarEl.classList.add("visible");
+			if (hideToolbarTimer) clearTimeout(hideToolbarTimer);
+			hideToolbarTimer = setTimeout(() => {
+				try {
+					if (!toolbarEl.matches(":hover")) {
+						toolbarEl.classList.remove("visible");
+					}
+				} catch {
+					toolbarEl.classList.remove("visible");
+				}
+			}, 2500);
+		};
+
+		doc.addEventListener("mousemove", showToolbar);
+		doc.addEventListener("mouseenter", showToolbar);
+		doc.addEventListener("click", showToolbar);
+
+		// Arrastar a janela segurando no meio (no próprio vídeo)
+		let isDraggingMiddle = false;
+		let dragStartX = 0;
+		let dragStartY = 0;
+		let initialWinX = 0;
+		let initialWinY = 0;
+		let movedDist = 0;
+
+		videoEl.addEventListener("mousedown", (e) => {
+			if (e.button !== 0) return; // apenas botão esquerdo
+			isDraggingMiddle = true;
+			movedDist = 0;
+			dragStartX = e.screenX;
+			dragStartY = e.screenY;
+			initialWinX = popWin.screenX;
+			initialWinY = popWin.screenY;
+			showToolbar();
+		});
+
+		doc.addEventListener("mousemove", (e) => {
+			if (!isDraggingMiddle) return;
+			const dx = e.screenX - dragStartX;
+			const dy = e.screenY - dragStartY;
+			movedDist = Math.hypot(dx, dy);
+			if (movedDist > 2) {
+				popWin.moveTo(initialWinX + dx, initialWinY + dy);
+			}
+		});
+
+		const endMiddleDrag = () => {
+			isDraggingMiddle = false;
+		};
+		doc.addEventListener("mouseup", endMiddleDrag);
+		doc.addEventListener("mouseleave", endMiddleDrag);
+
 		// Duplo clique no vídeo na popout entra/sai de fullscreen
 		videoEl.addEventListener("dblclick", () => {
+			if (movedDist > 5) return;
 			try {
 				if (!doc.fullscreenElement) {
 					doc.documentElement.requestFullscreen().catch(() => {});

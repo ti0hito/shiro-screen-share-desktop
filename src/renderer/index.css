@@ -6265,7 +6265,8 @@ svg {
 }
 
 .stream-card.is-popped-out .stream-card-video,
-.stream-card.is-popped-out .stream-card-canvas {
+.stream-card.is-popped-out .stream-card-canvas,
+.stream-card.is-popped-out .stream-card-preview-wrap {
   display: none !important;
 }
 
@@ -6281,7 +6282,7 @@ svg {
   color: #fff;
   text-align: center;
   padding: 24px;
-  z-index: 5;
+  z-index: 10;
 }
 
 .stream-card-popped-icon {

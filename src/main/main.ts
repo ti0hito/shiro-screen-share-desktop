@@ -134,8 +134,8 @@ function createWindow(): void {
 	const iconPath = getIconPath();
 
 	mainWindow = new BrowserWindow({
-		width: 1404,
-		height: 936,
+		width: 1194,
+		height: 796,
 		minWidth: 800,
 		minHeight: 600,
 		frame: false,
