@@ -695,14 +695,22 @@ class ShiroApp {
 				isPeerAllowed: (peerId) => {
 					if (!this.currentRoom) return false;
 					if (this.p2pManager?.getIsStreaming()) return true;
-					const inActiveStreams = this.currentRoom.activeStreams?.some((s) => s.userId === peerId);
+					const basePeerId = peerId.split(":web:")[0];
+					const inActiveStreams = this.currentRoom.activeStreams?.some(
+						(s) => s.userId === peerId || s.userId === basePeerId,
+					);
 					if (inActiveStreams) return true;
 					// Permite também se for membro ou visitante da sala (a lista de streams pode estar atualizando)
 					const inMembers = this.currentRoom.members?.some((m) => {
 						const memberUser = this.onlineUsers.find((u) => u.username === m || u.id === m);
-						return m === peerId || memberUser?.id === peerId;
+						return (
+							m === peerId ||
+							m === basePeerId ||
+							memberUser?.id === peerId ||
+							memberUser?.id === basePeerId
+						);
 					});
-					const inGuests = this.currentRoom.guests?.some((g) => g.id === peerId);
+					const inGuests = this.currentRoom.guests?.some((g) => g.id === peerId || g.id === basePeerId);
 					return inMembers || inGuests || false;
 				},
 				onConnected: (peerId) => {
@@ -741,12 +749,20 @@ class ShiroApp {
 					console.log(`[App] Stream remota recebida de ${peerId}: videoTracks=${stream.getVideoTracks().length}, audioTracks=${stream.getAudioTracks().length}`);
 					if (!this.currentRoom) return;
 
-					const activeStreamer = this.currentRoom.activeStreams?.find((s) => s.userId === peerId);
-					const onlineUser = this.onlineUsers.find((u) => u.id === peerId);
-					const guest = this.currentRoom.guests?.find((g) => g.id === peerId);
+					const basePeerId = peerId.split(":web:")[0];
+					const activeStreamer = this.currentRoom.activeStreams?.find(
+						(s) => s.userId === peerId || s.userId === basePeerId,
+					);
+					const onlineUser = this.onlineUsers.find((u) => u.id === peerId || u.id === basePeerId);
+					const guest = this.currentRoom.guests?.find((g) => g.id === peerId || g.id === basePeerId);
 					const isMember = this.currentRoom.members?.some((m) => {
 						const memberUser = this.onlineUsers.find((u) => u.username === m || u.id === m);
-						return m === peerId || memberUser?.id === peerId;
+						return (
+							m === peerId ||
+							m === basePeerId ||
+							memberUser?.id === peerId ||
+							memberUser?.id === basePeerId
+						);
 					});
 
 					if (!activeStreamer && !isMember && !guest) {
@@ -1295,41 +1311,64 @@ class ShiroApp {
 		const tabFriends = document.getElementById("panel-tab-friends");
 		const tabUsers = document.getElementById("panel-tab-users");
 		const btnToggleSidebar = document.getElementById("btn-toggle-sidebar");
+		const btnToggleRightSidebar = document.getElementById("btn-toggle-right-sidebar");
 
 		const panelRooms = document.getElementById("panel-rooms");
 		const panelSources = document.getElementById("panel-sources");
 		const panelFriends = document.getElementById("panel-friends");
 		const panelUsers = document.getElementById("panel-users");
 
-		const activate = (activeTab: HTMLElement | null, activePanel: HTMLElement | null) => {
-			[tabRooms, tabSources, tabFriends, tabUsers].forEach((t) => t?.classList.remove("active"));
-			[panelRooms, panelSources, panelFriends, panelUsers].forEach((p) => p?.classList.add("hidden"));
+		// Abas da Sidebar Esquerda: Salas e Fontes
+		const activateLeft = (activeTab: HTMLElement | null, activePanel: HTMLElement | null) => {
+			[tabRooms, tabSources].forEach((t) => t?.classList.remove("active"));
+			[panelRooms, panelSources].forEach((p) => p?.classList.add("hidden"));
 
 			activeTab?.classList.add("active");
 			activePanel?.classList.remove("hidden");
 			this.refreshIcons();
 		};
 
-		tabRooms?.addEventListener("click", () => activate(tabRooms, panelRooms));
+		// Abas da Sidebar Direita: Amigos e Na Sala (Membros da Sala)
+		const activateRight = (activeTab: HTMLElement | null, activePanel: HTMLElement | null) => {
+			[tabFriends, tabUsers].forEach((t) => t?.classList.remove("active"));
+			[panelFriends, panelUsers].forEach((p) => p?.classList.add("hidden"));
+
+			activeTab?.classList.add("active");
+			activePanel?.classList.remove("hidden");
+			this.refreshIcons();
+		};
+
+		tabRooms?.addEventListener("click", () => activateLeft(tabRooms, panelRooms));
 		tabSources?.addEventListener("click", () => {
 			if (!this.currentRoom) return;
-			activate(tabSources, panelSources);
+			activateLeft(tabSources, panelSources);
 			this.refreshSources();
 		});
 		tabFriends?.addEventListener("click", () => {
-			activate(tabFriends, panelFriends);
+			activateRight(tabFriends, panelFriends);
 			this.refreshFriends();
 		});
-		tabUsers?.addEventListener("click", () => activate(tabUsers, panelUsers));
+		tabUsers?.addEventListener("click", () => {
+			if (!this.currentRoom) return;
+			activateRight(tabUsers, panelUsers);
+		});
 
-		const toggleSidebar = () => {
+		const toggleLeftSidebar = () => {
 			const mainContent = document.querySelector(".main-content");
 			mainContent?.classList.toggle("sidebar-collapsed");
 			this.refreshIcons();
 		};
 
-		btnToggleSidebar?.addEventListener("click", toggleSidebar);
-		document.getElementById("btn-expand-sidebar-floating")?.addEventListener("click", toggleSidebar);
+		const toggleRightSidebar = () => {
+			const mainContent = document.querySelector(".main-content");
+			mainContent?.classList.toggle("right-sidebar-collapsed");
+			this.refreshIcons();
+		};
+
+		btnToggleSidebar?.addEventListener("click", toggleLeftSidebar);
+		document.getElementById("btn-expand-sidebar-floating")?.addEventListener("click", toggleLeftSidebar);
+		btnToggleRightSidebar?.addEventListener("click", toggleRightSidebar);
+		document.getElementById("btn-expand-right-sidebar-floating")?.addEventListener("click", toggleRightSidebar);
 	}
 
 	// ------------------------------------------------------------------------------------------------------------------------------
@@ -1577,18 +1616,26 @@ class ShiroApp {
 				sourcesWrapper.setAttribute("data-tooltip", "Entre em uma sala para liberar as fontes");
 			}
 
-			// Volta para aba de salas
+			// Volta para aba de salas no painel esquerdo e Amigos no painel direito
 			const tabRooms = document.getElementById("panel-tab-rooms");
 			const panelRooms = document.getElementById("panel-rooms");
 			const tabSources = document.getElementById("panel-tab-sources");
 			const panelSources = document.getElementById("panel-sources");
+			const tabFriends = document.getElementById("panel-tab-friends");
+			const panelFriends = document.getElementById("panel-friends");
 			const tabUsers = document.getElementById("panel-tab-users");
 			const panelUsers = document.getElementById("panel-users");
 
-			[tabSources, tabUsers].forEach((t) => t?.classList.remove("active"));
-			[panelSources, panelUsers].forEach((p) => p?.classList.add("hidden"));
+			tabSources?.classList.remove("active");
+			panelSources?.classList.add("hidden");
 			tabRooms?.classList.add("active");
 			panelRooms?.classList.remove("hidden");
+
+			tabUsers?.classList.remove("active");
+			tabUsers?.classList.add("hidden");
+			panelUsers?.classList.add("hidden");
+			tabFriends?.classList.add("active");
+			panelFriends?.classList.remove("hidden");
 
 			await this.refreshRooms();
 			this.renderLiveStreamsGrid();
@@ -1674,7 +1721,24 @@ class ShiroApp {
 	}
 
 	private updateCurrentRoomBanner(): void {
-		// Toda troca de sala passa por aqui: mantém o painel de usuários filtrado pela sala atual
+		const tabUsers = document.getElementById("panel-tab-users");
+		const panelUsers = document.getElementById("panel-users");
+		const tabFriends = document.getElementById("panel-tab-friends");
+		const panelFriends = document.getElementById("panel-friends");
+
+		if (this.currentRoom) {
+			tabUsers?.classList.remove("hidden");
+		} else {
+			tabUsers?.classList.add("hidden");
+			if (tabUsers?.classList.contains("active")) {
+				tabUsers.classList.remove("active");
+				panelUsers?.classList.add("hidden");
+				tabFriends?.classList.add("active");
+				panelFriends?.classList.remove("hidden");
+			}
+		}
+
+		// Toda troca de sala passa por aqui: mantém o painel de membros filtrado pela sala atual
 		this.renderUsersList();
 
 		const banner = document.getElementById("current-room-banner");
@@ -1997,13 +2061,12 @@ class ShiroApp {
 		console.log(`[App] Entrou na sala: ${room.name} (${room.roomId})`);
 		this.updateCurrentRoomBanner();
 
-		// Desbloqueia e ativa a aba de Fontes ao entrar na sala
+		// Desbloqueia e ativa a aba de Fontes ao entrar na sala (no painel esquerdo) e exibe a aba Na Sala (no painel direito)
 		const sourcesTab = document.getElementById("panel-tab-sources");
 		const panelSources = document.getElementById("panel-sources");
 		const tabRooms = document.getElementById("panel-tab-rooms");
 		const tabUsers = document.getElementById("panel-tab-users");
 		const panelRooms = document.getElementById("panel-rooms");
-		const panelUsers = document.getElementById("panel-users");
 
 		if (sourcesTab) {
 			sourcesTab.classList.remove("disabled");
@@ -2016,9 +2079,11 @@ class ShiroApp {
 			sourcesWrapper.removeAttribute("data-tooltip");
 		}
 
-		// Ativa a aba de fontes para o usuário selecionar o que transmitir
-		[tabRooms, sourcesTab, tabUsers].forEach((t) => t?.classList.remove("active"));
-		[panelRooms, panelSources, panelUsers].forEach((p) => p?.classList.add("hidden"));
+		tabUsers?.classList.remove("hidden");
+
+		// Ativa a aba de fontes no painel esquerdo para o usuário selecionar o que transmitir
+		[tabRooms, sourcesTab].forEach((t) => t?.classList.remove("active"));
+		[panelRooms, panelSources].forEach((p) => p?.classList.add("hidden"));
 		sourcesTab?.classList.add("active");
 		panelSources?.classList.remove("hidden");
 
@@ -3183,7 +3248,7 @@ class ShiroApp {
 	 */
 	private getVisibleUsers(): ShiroUser[] {
 		const room = this.currentRoom;
-		if (!room || !Array.isArray(room.members)) return this.onlineUsers;
+		if (!room || !Array.isArray(room.members)) return [];
 
 		const memberKeys = new Set<string>();
 		for (const m of room.members as any[]) {
@@ -3204,12 +3269,17 @@ class ShiroApp {
 		if (!listEl || !this.usersLoaded) return;
 
 		const titleEl = document.getElementById("users-panel-title");
-		if (titleEl) titleEl.textContent = this.currentRoom ? "Online na sala" : "Online agora";
+		if (titleEl) titleEl.textContent = "Membros na sala";
 
 		const users = this.getVisibleUsers();
 		// Visitantes (navegador) aparecem só na lista da sala, nunca na lista global
 		const guests = this.currentRoom?.guests ?? [];
 		const currentUser = getUser();
+
+		const countBadge = document.getElementById("room-users-count-badge");
+		if (countBadge) {
+			countBadge.textContent = String(users.length + guests.length);
+		}
 
 		// Evita re-renderizar (e fechar o mini perfil) quando nada visível mudou
 		const renderKey = JSON.stringify([

@@ -911,34 +911,42 @@ svg {
 }
 
 /* ══════════════════════════════════════════════════════════
-   MAIN LAYOUT — Left Panel + Right Section
+   MAIN LAYOUT — Left Panel + Center Stage + Right Panel
    ══════════════════════════════════════════════════════════ */
 
 .main-content {
   display: grid;
-  grid-template-columns: 340px 1fr;
+  grid-template-columns: 310px 1fr 270px;
   flex: 1;
   overflow: hidden;
   height: calc(100vh - 38px);
   position: relative;
-  transition: grid-template-columns 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: grid-template-columns 0.28s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .main-content.sidebar-collapsed {
-  grid-template-columns: 0px 1fr;
+  grid-template-columns: 0px 1fr 270px;
 }
 
-/* ── Painel Esquerdo ── */
+.main-content.right-sidebar-collapsed {
+  grid-template-columns: 310px 1fr 0px;
+}
+
+.main-content.sidebar-collapsed.right-sidebar-collapsed {
+  grid-template-columns: 0px 1fr 0px;
+}
+
+/* ── Painel Esquerdo (Salas e Fontes) ── */
 .left-panel {
   background-color: var(--bg-panel);
   border-right: 1px solid var(--border-color);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  width: 340px;
+  width: 310px;
   min-width: 0;
-  transition: opacity 0.25s cubic-bezier(0.4, 0, 0.2, 1),
-    border-color 0.25s ease;
+  transition: opacity 0.24s cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 0.24s ease;
 }
 
 .main-content.sidebar-collapsed .left-panel {
@@ -948,42 +956,74 @@ svg {
   border-right-color: transparent;
 }
 
+/* ── Painel Direito (Amigos & Membros da Sala) ── */
+.right-panel {
+  background-color: var(--bg-panel);
+  border-left: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  width: 270px;
+  min-width: 0;
+  transition: opacity 0.24s cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 0.24s ease;
+}
+
+.main-content.right-sidebar-collapsed .right-panel {
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+  border-left-color: transparent;
+}
+
 .sidebar-collapse-btn {
   background: none;
   border: none;
   color: var(--text-muted);
-  width: 32px;
+  width: 28px;
   height: 38px;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: color 0.15s ease, background-color 0.15s ease;
+  opacity: 0.65;
+  transition: color 0.15s ease, background-color 0.15s ease, opacity 0.15s ease;
   flex-shrink: 0;
   border-left: 1px solid var(--border-color);
 }
 
+.sidebar-collapse-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.sidebar-collapse-btn.right-collapse-btn {
+  border-left: none;
+  border-right: 1px solid var(--border-color);
+}
+
 .sidebar-collapse-btn:hover {
+  opacity: 1;
   color: var(--text-main);
   background-color: rgba(255, 255, 255, 0.05);
 }
 
 /* ══════════════════════════════════════════════════════════
-   BOTÃO FLUTUANTE TRANSPARENTE PARA REABRIR A SIDEBAR
+   ABAS DISCRETAS NAS BORDAS PARA REABRIR AS SIDEBARS
    ══════════════════════════════════════════════════════════ */
 
-.sidebar-expand-floating-btn {
+.sidebar-edge-handle {
   position: absolute;
-  top: 14px;
-  left: 14px;
-  z-index: 100;
-  width: 38px;
-  height: 38px;
-  border-radius: var(--radius-md);
-  background: rgba(18, 18, 24, 0.65);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 95;
+  width: 16px;
+  height: 54px;
+  padding: 0;
+  background: rgba(18, 13, 29, 0.55);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(182, 134, 255, 0.18);
   color: var(--text-muted);
   display: flex;
   align-items: center;
@@ -992,35 +1032,63 @@ svg {
   opacity: 0;
   pointer-events: none;
   visibility: hidden;
-  transition: opacity 0.25s cubic-bezier(0.4, 0, 0.2, 1),
-    background-color 0.2s ease,
-    border-color 0.2s ease,
-    color 0.2s ease,
-    transform 0.2s ease,
-    visibility 0.25s;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  transition: opacity 0.2s ease,
+    width 0.18s ease,
+    background-color 0.18s ease,
+    border-color 0.18s ease,
+    color 0.18s ease,
+    visibility 0.2s;
 }
 
-.sidebar-expand-floating-btn:hover {
-  background: rgba(124, 58, 237, 0.25);
-  border-color: rgba(124, 58, 237, 0.5);
-  color: #fff;
-  transform: scale(1.08);
+.sidebar-edge-handle svg {
+  width: 13px;
+  height: 13px;
 }
 
-.sidebar-expand-floating-btn:active {
-  transform: scale(0.96);
+.sidebar-edge-left {
+  left: 0;
+  border-left: none;
+  border-radius: 0 8px 8px 0;
 }
 
-.sidebar-expand-floating-btn svg {
-  width: 18px;
-  height: 18px;
+.sidebar-edge-right {
+  right: 0;
+  border-right: none;
+  border-radius: 8px 0 0 8px;
 }
 
-.main-content.sidebar-collapsed .sidebar-expand-floating-btn {
-  opacity: 1;
+.main-content.sidebar-collapsed .sidebar-edge-left,
+.main-content.right-sidebar-collapsed .sidebar-edge-right {
+  opacity: 0.42;
   pointer-events: auto;
   visibility: visible;
+}
+
+.sidebar-edge-handle:hover {
+  opacity: 1 !important;
+  width: 22px;
+  background: rgba(143, 71, 255, 0.28);
+  border-color: rgba(182, 134, 255, 0.55);
+  color: #fff;
+}
+
+.tab-count-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 15px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: rgba(143, 71, 255, 0.22);
+  color: #e9d5ff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.panel-tab.hidden {
+  display: none !important;
 }
 
 /* Abas Fontes / Usuários */
