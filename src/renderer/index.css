@@ -2533,13 +2533,38 @@ svg {
 
 .live-streams-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 12px;
   padding: 12px;
   width: 100%;
   height: 100%;
   overflow-y: auto;
+  align-content: center;
+  justify-content: center;
+  box-sizing: border-box;
   transition: all 0.2s ease;
+}
+
+.live-streams-grid[data-count="1"]:not(.maximized-active) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.live-streams-grid[data-count="1"]:not(.maximized-active) > .stream-card {
+  width: min(680px, 88%);
+  margin: auto;
+}
+
+.live-streams-grid[data-count="2"] {
+  grid-template-columns: repeat(2, minmax(240px, 1fr));
+  align-content: center;
+}
+
+.live-streams-grid[data-count="3"],
+.live-streams-grid[data-count="4"] {
+  grid-template-columns: repeat(2, minmax(240px, 1fr));
+  align-content: center;
 }
 
 .stream-card {
@@ -2551,6 +2576,7 @@ svg {
   display: flex;
   flex-direction: column;
   aspect-ratio: 16 / 9;
+  max-height: calc(50vh - 30px);
   cursor: pointer;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
 }
@@ -2565,7 +2591,78 @@ svg {
   align-items: center;
   justify-content: space-between;
   padding: 8px 12px;
-  background: linear-gradient(180deg, rgba(0,0,0,0.8) 0%, rgba(0,0,0,0) 100%);
+  background: linear-gradient(180deg, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0) 100%);
+  pointer-events: none;
+}
+
+.stream-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  pointer-events: auto;
+}
+
+/* No modo grid (quadrados), esconde botões secundários para manter o card limpo */
+.stream-card:not(.maximized) .stream-popout-btn,
+.stream-card:not(.maximized) .stream-fullscreen-btn {
+  display: none !important;
+}
+
+.stream-card:not(.maximized):hover .stream-popout-btn,
+.stream-card:not(.maximized):hover .stream-fullscreen-btn {
+  display: inline-flex !important;
+}
+
+/* No modo maximizado (em foco), exibe botões de Pop-out e Tela Cheia */
+.stream-card.maximized .stream-popout-btn,
+.stream-card.maximized .stream-fullscreen-btn {
+  display: inline-flex !important;
+}
+
+.stream-volume-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(8px);
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  pointer-events: auto;
+}
+
+.stream-vol-btn {
+  background: none;
+  border: none;
+  color: #fff;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  width: 18px;
+  height: 18px;
+  transition: transform 0.15s ease;
+}
+
+.stream-vol-btn:hover {
+  transform: scale(1.15);
+  color: var(--accent-purple, #8e44f3);
+}
+
+.stream-vol-slider {
+  width: 55px;
+  height: 4px;
+  accent-color: var(--accent-purple, #8e44f3);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.stream-vol-percent {
+  font-size: 10px;
+  font-family: monospace;
+  color: #e4e4e7;
+  min-width: 26px;
+  text-align: right;
   pointer-events: none;
 }
 
@@ -2586,31 +2683,86 @@ svg {
   background: #000;
 }
 
-.stream-card-maximize-hint {
+/* Preview wrapper com overflow oculto para conter o blur */
+.stream-card-preview-wrap {
   position: absolute;
-  bottom: 8px;
-  right: 8px;
-  z-index: 10;
-  background: rgba(0, 0, 0, 0.6);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  color: #fff;
-  padding: 4px 8px;
-  border-radius: var(--radius-sm);
-  font-size: 10px;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  display: block;
+  z-index: 2;
+  cursor: pointer;
+}
+
+.stream-card-preview-wrap.hidden,
+.stream-card.maximized .stream-card-preview-wrap {
+  display: none !important;
+}
+
+/* Overlay central com botão para abrir a transmissão */
+.stream-card-center-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 5;
   display: flex;
   align-items: center;
-  gap: 4px;
-  opacity: 0;
-  transition: opacity 0.2s ease;
+  justify-content: center;
   pointer-events: none;
+  background: radial-gradient(circle at center, rgba(0, 0, 0, 0.2) 0%, rgba(0, 0, 0, 0.55) 100%);
+  transition: background 0.25s ease;
 }
 
-.stream-card:hover .stream-card-maximize-hint {
-  opacity: 1;
+.stream-card:not(.maximized):hover .stream-card-center-overlay {
+  background: radial-gradient(circle at center, rgba(142, 68, 243, 0.15) 0%, rgba(0, 0, 0, 0.35) 100%);
 }
 
-.stream-card.maximized .stream-card-maximize-hint {
-  display: none;
+.stream-card-play-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(14, 16, 22, 0.88);
+  border: 1px solid rgba(142, 68, 243, 0.45);
+  color: #fff;
+  padding: 10px 20px;
+  border-radius: 30px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6), 0 0 15px rgba(142, 68, 243, 0.25);
+  backdrop-filter: blur(12px);
+  pointer-events: none;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  transform: translateY(0);
+}
+
+.stream-card:not(.maximized):hover .stream-card-play-pill {
+  transform: translateY(-2px) scale(1.04);
+  background: var(--accent-purple, #8e44f3);
+  border-color: #a86bf5;
+  box-shadow: 0 6px 24px rgba(142, 68, 243, 0.5), 0 0 20px rgba(142, 68, 243, 0.4);
+}
+
+.stream-card-play-pill svg {
+  width: 16px;
+  height: 16px;
+  fill: #fff;
+  color: #fff;
+  transition: transform 0.2s ease;
+}
+
+.stream-card:not(.maximized):hover .stream-card-play-pill svg {
+  transform: scale(1.1);
+}
+
+.stream-card-maximize-hint {
+  display: none !important;
 }
 
 .stream-card-connecting {
@@ -2672,6 +2824,7 @@ svg {
   inset: 0;
   width: 100%;
   height: 100%;
+  max-height: none;
   aspect-ratio: unset;
   border-radius: 0;
   border: none;
@@ -2866,14 +3019,22 @@ svg {
   margin-top: 2px;
 }
 
-/* Static thumbnail canvas preview in grid */
+/* Static thumbnail canvas preview in grid - object-fit cover remove barras pretas e blur suave */
 .stream-card-canvas,
 .stream-card-canvas-preview {
   width: 100%;
   height: 100%;
-  object-fit: contain;
-  background: #000;
+  object-fit: cover;
   display: block;
+  filter: blur(8px) brightness(0.8);
+  transform: scale(1.08);
+  transition: filter 0.3s ease, transform 0.3s ease;
+}
+
+.stream-card:not(.maximized):hover .stream-card-canvas,
+.stream-card:not(.maximized):hover .stream-card-canvas-preview {
+  filter: blur(4px) brightness(0.88);
+  transform: scale(1.05);
 }
 
 .stream-card-canvas.hidden,
@@ -3820,7 +3981,34 @@ svg {
   gap: 6px;
   overflow-y: auto;
   flex: 1;
-  padding: 2px;
+  padding: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+}
+
+.friends-list::-webkit-scrollbar,
+.friend-requests-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.friends-list::-webkit-scrollbar-track,
+.friend-requests-list::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+}
+
+.friends-list::-webkit-scrollbar-thumb,
+.friend-requests-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.2);
+  transition: background 0.2s ease;
+}
+
+.friends-list::-webkit-scrollbar-thumb:hover,
+.friend-requests-list::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-purple, #8e44f3);
+  box-shadow: 0 0 8px rgba(142, 68, 243, 0.5);
 }
 
 .friend-requests-section {
@@ -4609,12 +4797,14 @@ svg {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  border-radius: var(--radius-sm);
+  transition: all 0.2s ease;
 }
 
 .notif-toggle-btn svg {
   width: 15px;
   height: 15px;
-  transition: transform 0.15s ease;
+  transition: transform 0.2s ease, color 0.2s ease;
 }
 
 .notif-toggle-btn:hover svg {
@@ -4622,29 +4812,51 @@ svg {
   color: #a78bfa;
 }
 
+.notif-toggle-btn.has-notifs {
+  color: var(--accent-purple, #8e44f3);
+}
+
+.notif-toggle-btn.has-notifs:hover {
+  background-color: rgba(142, 68, 243, 0.15);
+}
+
+.notif-toggle-btn.has-invites svg {
+  color: #c084fc;
+  animation: bellShake 3s ease-in-out infinite;
+}
+
+@keyframes bellShake {
+  0%, 75%, 100% { transform: rotate(0); }
+  80% { transform: rotate(14deg); }
+  85% { transform: rotate(-14deg); }
+  90% { transform: rotate(10deg); }
+  95% { transform: rotate(-6deg); }
+}
+
 .header-notif-badge {
   position: absolute;
-  top: 4px;
-  right: 4px;
-  background: #ef4444;
+  top: 3px;
+  right: 3px;
+  background: linear-gradient(135deg, #ef4444, #dc2626);
   color: #ffffff;
   font-size: 9px;
-  font-weight: 700;
-  min-width: 14px;
-  height: 14px;
+  font-weight: 800;
+  min-width: 15px;
+  height: 15px;
   border-radius: 10px;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 0 3px;
-  box-shadow: 0 0 8px rgba(239, 68, 68, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  box-shadow: 0 0 10px rgba(239, 68, 68, 0.85);
   pointer-events: none;
   animation: pulseBadge 2s infinite;
 }
 
-@keyframes pulseBadge {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.15); }
+.notif-toggle-btn.has-invites .header-notif-badge {
+  background: linear-gradient(135deg, #8b5cf6, #ec4899);
+  box-shadow: 0 0 12px rgba(168, 85, 247, 0.9);
 }
 
 .notif-popover {
@@ -6012,4 +6224,155 @@ svg {
 .app-dialog-actions .btn.hidden + .btn,
 .app-dialog-actions .btn:only-child {
   max-width: 200px;
+}
+
+/* ── Janela Pop-out / Picture-in-Picture de Transmissão ── */
+.stream-popout-btn {
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(8px);
+  color: #fff;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.stream-popout-btn:hover {
+  background: var(--accent-purple, #8e44f3);
+  color: #fff;
+  transform: scale(1.05);
+}
+
+.stream-popout-btn.active {
+  background: var(--accent-purple, #8e44f3);
+  box-shadow: 0 0 10px rgba(142, 68, 243, 0.6);
+}
+
+.stream-popout-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.stream-card.is-popped-out {
+  border-color: rgba(142, 68, 243, 0.5) !important;
+  box-shadow: 0 0 20px rgba(142, 68, 243, 0.25) !important;
+}
+
+.stream-card.is-popped-out .stream-card-video,
+.stream-card.is-popped-out .stream-card-canvas {
+  display: none !important;
+}
+
+.stream-card-popped-overlay {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  width: 100%;
+  height: 100%;
+  background: radial-gradient(circle at center, rgba(142, 68, 243, 0.16) 0%, rgba(13, 14, 18, 0.96) 75%);
+  color: #fff;
+  text-align: center;
+  padding: 24px;
+  z-index: 5;
+}
+
+.stream-card-popped-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 16px;
+  background: rgba(142, 68, 243, 0.2);
+  border: 1px solid rgba(142, 68, 243, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #c499ff;
+  box-shadow: 0 8px 24px rgba(142, 68, 243, 0.3);
+  animation: float-soft 3s ease-in-out infinite;
+}
+
+.stream-card-popped-icon svg {
+  width: 26px;
+  height: 26px;
+}
+
+.stream-card-popped-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #f0f0f5;
+  letter-spacing: -0.01em;
+}
+
+.stream-card-popped-desc {
+  font-size: 12px;
+  color: var(--text-muted, #8a8d9b);
+  max-width: 260px;
+  line-height: 1.4;
+  margin-top: -6px;
+}
+
+.stream-card-popped-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: linear-gradient(135deg, var(--accent-purple, #8e44f3) 0%, #6e27d5 100%);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: var(--radius-md, 8px);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(110, 39, 213, 0.4);
+  transition: all 0.2s ease;
+  margin-top: 4px;
+}
+
+.stream-card-popped-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(110, 39, 213, 0.6);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.stream-card-popped-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+@keyframes float-soft {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-5px);
+  }
+}
+
+/* Badge de atualização no menu da conta */
+.account-menu-badge {
+  font-size: 9px;
+  font-weight: 800;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--accent-purple, #8e44f3);
+  color: #fff;
+  letter-spacing: 0.5px;
+  margin-left: auto;
+  transition: all 0.2s ease;
+}
+
+.account-menu-badge.badge-ready {
+  background: #10b981;
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.5);
+}
+
+.account-menu-badge.badge-downloading {
+  background: #f59e0b;
 }

@@ -13,7 +13,7 @@ const REMEMBER_JWT = "shiro_remember_jwt";
 const REMEMBER_USER = "shiro_remember_user";
 const REMEMBER_TIME = "shiro_remember_time";
 const REMEMBER_USERNAME = "shiro_remember_username";
-const FOURTEEN_DAYS_MS = 14 * 24 * 60 * 60 * 1000; // 14 dias
+export const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000; // 1 ano (365 dias)
 
 /** Insígnias de perfil (definidas e concedidas pela API — ver lib/badges.ts no servidor) */
 export type BadgeId = "developer" | "early-user" | "beta-tester" | "stream-24-7" | "builder" | "neighbor";
@@ -107,7 +107,16 @@ export function clearRememberSession(clearUsername = true): void {
 	}
 }
 
-/** Verifica se há uma sessão salva no localStorage e valida o tempo de 2 semanas (14 dias) */
+/** Verifica se a sessão salva expirou (passou de 1 ano) */
+export function isSessionExpired(): boolean {
+	const savedTimeStr = localStorage.getItem(REMEMBER_TIME);
+	if (!savedTimeStr) return false;
+	const loginTime = parseInt(savedTimeStr, 10);
+	if (isNaN(loginTime)) return false;
+	return Date.now() - loginTime >= ONE_YEAR_MS;
+}
+
+/** Verifica se há uma sessão salva no localStorage e valida o tempo de 1 ano */
 export function checkSavedSession(): SavedSessionResult {
 	const rememberMe = localStorage.getItem(REMEMBER_KEY) === "true";
 	const savedTimeStr = localStorage.getItem(REMEMBER_TIME);
@@ -123,10 +132,10 @@ export function checkSavedSession(): SavedSessionResult {
 	}
 
 	const loginTime = parseInt(savedTimeStr, 10);
-	const isExpired = Date.now() - loginTime >= FOURTEEN_DAYS_MS;
+	const isExpired = Date.now() - loginTime >= ONE_YEAR_MS;
 
 	if (isExpired) {
-		// Limpa os tokens de auto-login pois passou de 2 semanas, mas mantém o username preenchido
+		// Limpa os tokens de auto-login pois passou de 1 ano, mas mantém o username preenchido
 		clearRememberSession(false);
 		return {
 			autoLogin: false,
@@ -135,7 +144,7 @@ export function checkSavedSession(): SavedSessionResult {
 		};
 	}
 
-	// Sessão dentro de 14 dias: injeta no sessionStorage para logar direto
+	// Sessão dentro de 1 ano: injeta no sessionStorage para logar direto
 	sessionStorage.setItem(SESSION_KEY, savedJwt);
 	sessionStorage.setItem(USER_KEY, savedUserRaw);
 

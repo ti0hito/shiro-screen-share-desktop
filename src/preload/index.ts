@@ -53,6 +53,22 @@ const api: ElectronAPI = {
 		return ipcRenderer.invoke("check-for-updates");
 	},
 
+	downloadUpdate: (): Promise<unknown> => {
+		return ipcRenderer.invoke("download-update");
+	},
+
+	onUpdateNotAvailable: (callback: () => void) => {
+		const listener = () => callback();
+		ipcRenderer.on("update-not-available", listener);
+		return () => ipcRenderer.removeListener("update-not-available", listener);
+	},
+
+	onUpdateError: (callback: (err: { message: string }) => void) => {
+		const listener = (_event: any, err: any) => callback(err);
+		ipcRenderer.on("update-error", listener);
+		return () => ipcRenderer.removeListener("update-error", listener);
+	},
+
 	onUpdateAvailable: (callback: (info: { version: string }) => void) => {
 		const listener = (_event: any, info: any) => callback(info);
 		ipcRenderer.on("update-available", listener);
@@ -102,6 +118,10 @@ const api: ElectronAPI = {
 
 	closeWindow: (): void => {
 		ipcRenderer.send("window-close");
+	},
+
+	focusMainWindow: (): void => {
+		ipcRenderer.send("window-focus");
 	},
 
 	onProcessAudioData: (callback: (buffer: ArrayBuffer) => void) => {

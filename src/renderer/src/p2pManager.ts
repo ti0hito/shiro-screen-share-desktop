@@ -92,7 +92,7 @@ function configureSenderParameters(pc: RTCPeerConnection, bitrateKbps: number): 
 					params.encodings[0].maxBitrate = bitrateKbps * 1000;
 					params.encodings[0].networkPriority = "high";
 					params.encodings[0].priority = "high";
-					params.degradationPreference = "maintain-framerate";
+					params.degradationPreference = "maintain-resolution";
 					sender.setParameters(params).catch(() => {});
 				}
 			}
@@ -125,6 +125,7 @@ export class P2PManager {
 	private peerConnections = new Map<string, RTCPeerConnection>();
 	private dataChannels = new Map<string, RTCDataChannel>();
 	private pendingCandidates = new Map<string, RTCIceCandidateInit[]>();
+	private remoteStreams = new Map<string, MediaStream>();
 	private localStream: MediaStream | null = null;
 	private callbacks: P2PCallbacks;
 	private myUserId: string;
@@ -452,8 +453,15 @@ export class P2PManager {
 
 		pc.ontrack = (e) => {
 			if (!isCurrent()) return;
-			console.log(`[P2P] ontrack de ${peerId}: kind=${e.track.kind}, streams=${e.streams.length}`);
-			const stream = e.streams[0] || new MediaStream([e.track]);
+			console.log(`[P2P] ontrack de ${peerId}: kind=${e.track.kind}, id=${e.track.id}, streams=${e.streams.length}`);
+			let stream = this.remoteStreams.get(peerId);
+			if (!stream) {
+				stream = e.streams[0] || new MediaStream();
+				this.remoteStreams.set(peerId, stream);
+			}
+			if (!stream.getTracks().some((t) => t.id === e.track.id)) {
+				stream.addTrack(e.track);
+			}
 			if (this.callbacks.onRemoteStream) {
 				this.callbacks.onRemoteStream(stream, peerId);
 			}
@@ -635,6 +643,7 @@ export class P2PManager {
 				pc.close();
 			} catch {}
 			this.peerConnections.delete(peerId);
+			this.remoteStreams.delete(peerId);
 			this.pendingCandidates.delete(peerId);
 			this.connectStartedAt.delete(peerId);
 			this.callbacks.onDisconnected(peerId);
@@ -674,20 +683,32 @@ export class P2PManager {
 		}
 	}
 
-	private async sendSignal(endpoint: string, body: Record<string, unknown>): Promise<void> {
+	private async sendSignal(endpoint: string, body: Record<string, unknown>, retries = 2): Promise<void> {
 		const token = getToken();
 		if (!token || !window.api?.apiRequest) return;
 
-		const result = await window.api.apiRequest({
-			endpoint,
-			method: "POST",
-			body: { ...body, fromUserId: this.myUserId },
-			token,
-		});
+		for (let attempt = 0; attempt <= retries; attempt++) {
+			const result = await window.api.apiRequest({
+				endpoint,
+				method: "POST",
+				body: { ...body, fromUserId: this.myUserId },
+				token,
+			});
 
-		if (!result.ok) {
-			console.error(`[P2P] Falha ao enviar sinal ${endpoint}:`, result.data);
-			this.callbacks.onError(`Falha na sinalização: ${endpoint}`);
+			if (result.ok) return;
+
+			if (result.status && result.status >= 400 && result.status < 500 && result.status !== 429) {
+				console.error(`[P2P] Falha cliente ao enviar sinal ${endpoint}:`, result.data);
+				return;
+			}
+
+			if (attempt < retries) {
+				const delay = result.status === 429 ? 1000 : (attempt + 1) * 250;
+				await new Promise((r) => setTimeout(r, delay));
+			} else {
+				console.error(`[P2P] Falha ao enviar sinal ${endpoint}:`, result.data);
+				this.callbacks.onError(`Falha na sinalização: ${endpoint}`);
+			}
 		}
 	}
 }
