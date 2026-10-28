@@ -266,7 +266,7 @@
         <!-- ── Painel Esquerdo ── -->
         <aside class="left-panel">
 
-          <!-- Abas: Salas / Fontes / Amigos / Usuários -->
+          <!-- Abas: Salas / Fontes -->
           <div class="panel-tabs">
             <button id="panel-tab-rooms" class="panel-tab active" title="Salas de transmissão">
               <i data-lucide="radio"></i>
@@ -278,16 +278,7 @@
                 <span>Fontes</span>
               </button>
             </div>
-            <button id="panel-tab-friends" class="panel-tab" title="Amigos & Convites">
-              <i data-lucide="user-check"></i>
-              <span>Amigos</span>
-              <span id="friends-badge-dot" class="tab-badge-dot hidden"></span>
-            </button>
-            <button id="panel-tab-users" class="panel-tab" title="Usuários online">
-              <i data-lucide="users"></i>
-              <span>Usuários</span>
-            </button>
-            <button id="btn-toggle-sidebar" class="sidebar-collapse-btn" title="Recolher / Expandir Painel">
+            <button id="btn-toggle-sidebar" class="sidebar-collapse-btn" title="Recolher painel esquerdo">
               <i data-lucide="chevron-left"></i>
             </button>
           </div>
@@ -396,66 +387,17 @@
             </button>
           </div>
 
-          <!-- Sub-painel: Amigos & Convites -->
-          <div id="panel-friends" class="panel-section hidden">
-            <div class="rooms-panel-header">
-              <span class="users-panel-title">Meus Amigos</span>
-              <button id="btn-open-add-friend" class="btn btn-primary btn-sm" title="Adicionar novo amigo">
-                <i data-lucide="user-plus"></i>
-                <span>+ Adicionar</span>
-              </button>
-            </div>
-
-            <!-- Pedidos de amizade pendentes -->
-            <div id="friend-requests-section" class="friend-requests-section hidden">
-              <div class="friend-section-title">
-                <i data-lucide="bell"></i>
-                <span>Pedidos Pendentes (<span id="friend-requests-count">0</span>)</span>
-              </div>
-              <div id="friend-requests-list" class="friend-requests-list"></div>
-            </div>
-
-            <!-- Lista de Amigos -->
-            <div id="friends-list" class="friends-list">
-              <div class="loading-spinner">
-                <i data-lucide="loader-2" class="spin"></i>
-                <span>Carregando amigos...</span>
-              </div>
-            </div>
-
-            <button id="btn-refresh-friends" class="btn btn-ghost btn-sm panel-refresh-btn" title="Atualizar">
-              <i data-lucide="refresh-cw"></i>
-              <span>Atualizar Amigos</span>
-            </button>
-          </div>
-
-          <!-- Sub-painel: Usuários online -->
-          <div id="panel-users" class="panel-section hidden">
-            <div class="users-panel-header">
-              <span class="users-panel-title" id="users-panel-title">Online agora</span>
-            </div>
-
-            <div id="users-list" class="users-list">
-              <div class="users-empty">
-                <i data-lucide="wifi-off"></i>
-                <span>Nenhum usuário online</span>
-              </div>
-            </div>
-
-            <button id="btn-refresh-users" class="btn btn-ghost btn-sm panel-refresh-btn" title="Atualizar">
-              <i data-lucide="refresh-cw"></i>
-              <span>Atualizar Usuários</span>
-            </button>
-          </div>
-
         </aside>
 
-        <!-- ── Área Direita: Transmissões ao Vivo ── -->
+        <!-- ── Área Central: Transmissões ao Vivo ── -->
         <section class="right-section">
 
-          <!-- Botão Flutuante Transparente para reabrir Sidebar em modo colapsado -->
-          <button id="btn-expand-sidebar-floating" class="sidebar-expand-floating-btn" title="Expandir Painel Lateral">
+          <!-- Abas discretas nas bordas para reabrir as sidebars quando colapsadas -->
+          <button id="btn-expand-sidebar-floating" class="sidebar-edge-handle sidebar-edge-left" title="Expandir painel de Salas e Fontes">
             <i data-lucide="chevron-right"></i>
+          </button>
+          <button id="btn-expand-right-sidebar-floating" class="sidebar-edge-handle sidebar-edge-right" title="Expandir painel de Amigos e Membros">
+            <i data-lucide="chevron-left"></i>
           </button>
 
           <!-- Grid principal de transmissões (Multi-Stream Grid) -->
@@ -653,6 +595,80 @@
           </div>
 
         </section>
+
+        <!-- ── Painel Direito (Amigos & Membros da Sala) ── -->
+        <aside class="right-panel">
+
+          <!-- Abas: Amigos / Na Sala (só visível dentro de uma sala) -->
+          <div class="panel-tabs right-panel-tabs">
+            <button id="btn-toggle-right-sidebar" class="sidebar-collapse-btn right-collapse-btn" title="Recolher painel direito">
+              <i data-lucide="chevron-right"></i>
+            </button>
+            <button id="panel-tab-friends" class="panel-tab active" title="Amigos & Convites">
+              <i data-lucide="user-check"></i>
+              <span>Amigos</span>
+              <span id="friends-badge-dot" class="tab-badge-dot hidden"></span>
+            </button>
+            <button id="panel-tab-users" class="panel-tab hidden" title="Membros na sala atual">
+              <i data-lucide="users"></i>
+              <span>Na Sala</span>
+              <span id="room-users-count-badge" class="tab-count-pill">0</span>
+            </button>
+          </div>
+
+          <!-- Sub-painel: Amigos & Convites (Ativo por padrão no painel direito) -->
+          <div id="panel-friends" class="panel-section">
+            <div class="rooms-panel-header">
+              <span class="users-panel-title">Meus Amigos</span>
+              <button id="btn-open-add-friend" class="btn btn-primary btn-sm" title="Adicionar novo amigo">
+                <i data-lucide="user-plus"></i>
+                <span>+ Adicionar</span>
+              </button>
+            </div>
+
+            <!-- Pedidos de amizade pendentes -->
+            <div id="friend-requests-section" class="friend-requests-section hidden">
+              <div class="friend-section-title">
+                <i data-lucide="bell"></i>
+                <span>Pedidos Pendentes (<span id="friend-requests-count">0</span>)</span>
+              </div>
+              <div id="friend-requests-list" class="friend-requests-list"></div>
+            </div>
+
+            <!-- Lista de Amigos -->
+            <div id="friends-list" class="friends-list">
+              <div class="loading-spinner">
+                <i data-lucide="loader-2" class="spin"></i>
+                <span>Carregando amigos...</span>
+              </div>
+            </div>
+
+            <button id="btn-refresh-friends" class="btn btn-ghost btn-sm panel-refresh-btn" title="Atualizar">
+              <i data-lucide="refresh-cw"></i>
+              <span>Atualizar Amigos</span>
+            </button>
+          </div>
+
+          <!-- Sub-painel: Membros da Sala (visível apenas quando conectado em uma sala) -->
+          <div id="panel-users" class="panel-section hidden">
+            <div class="users-panel-header">
+              <span class="users-panel-title" id="users-panel-title">Membros na sala</span>
+            </div>
+
+            <div id="users-list" class="users-list">
+              <div class="users-empty">
+                <i data-lucide="wifi-off"></i>
+                <span>Ninguém online nesta sala</span>
+              </div>
+            </div>
+
+            <button id="btn-refresh-users" class="btn btn-ghost btn-sm panel-refresh-btn" title="Atualizar">
+              <i data-lucide="refresh-cw"></i>
+              <span>Atualizar Membros</span>
+            </button>
+          </div>
+
+        </aside>
       </main>
     </div><!-- /view-main -->
 
