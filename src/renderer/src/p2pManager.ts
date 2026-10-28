@@ -157,23 +157,26 @@ export class P2PManager {
 		for (const [peerId, pc] of this.peerConnections) {
 			if (pc.connectionState === "closed") continue;
 			prioritizeH264(pc);
-			const senders = pc.getSenders();
+			let needsRenegotiation = false;
 			for (const track of stream.getTracks()) {
-				const sender = senders.find((s) => s.track?.kind === track.kind);
-				if (sender) {
-					sender.replaceTrack(track).then(() => {
+				const transceivers = pc.getTransceivers();
+				const matching = transceivers.find((t) => t.receiver.track?.kind === track.kind && t.direction !== "stopped");
+				if (matching && matching.sender.track) {
+					matching.sender.replaceTrack(track).then(() => {
+						try { matching.sender.setStreams(stream); } catch {}
 						console.log(`[P2P] Faixa ${track.kind} substituída em tempo real para ${peerId}`);
 						configureSenderParameters(pc, this.videoBitrateKbps);
 					}).catch((err) => console.warn(`[P2P] Erro replaceTrack para ${peerId}:`, err));
-				} else {
-					try {
-						pc.addTrack(track, stream);
-						console.log(`[P2P] Nova faixa ${track.kind} adicionada para ${peerId}`);
-						configureSenderParameters(pc, this.videoBitrateKbps);
-					} catch (err) {
-						console.warn(`[P2P] Erro addTrack para ${peerId}:`, err);
+					if (matching.direction !== "sendrecv" && matching.direction !== "sendonly") {
+						matching.direction = "sendrecv";
+						needsRenegotiation = true;
 					}
+				} else {
+					needsRenegotiation = true;
 				}
+			}
+			if (needsRenegotiation) {
+				void this.renegotiate(peerId, false);
 			}
 		}
 	}
@@ -245,24 +248,38 @@ export class P2PManager {
 		return this.peerConnections.get(peerId)?.connectionState === "connected";
 	}
 
-	private addLocalTracks(pc: RTCPeerConnection, peerId: string): void {
+	private async addLocalTracks(pc: RTCPeerConnection, peerId: string): Promise<void> {
 		if (!this.localStream) return;
 		for (const track of this.localStream.getTracks()) {
 			const transceivers = pc.getTransceivers();
 			const matching = transceivers.find((t) => t.receiver.track?.kind === track.kind && t.direction !== "stopped");
 			if (matching) {
-				if (matching.sender.track !== track) {
-					matching.sender.replaceTrack(track).catch((err) => console.warn(`[P2P] Erro replaceTrack para ${peerId}:`, err));
-				}
-				matching.direction = "sendrecv";
 				try {
-					matching.sender.setStreams(this.localStream);
-				} catch {}
+					if (!matching.sender.track) {
+						try {
+							pc.addTrack(track, this.localStream);
+						} catch {}
+					}
+					if (matching.sender.track !== track) {
+						await matching.sender.replaceTrack(track);
+					}
+					matching.direction = "sendrecv";
+					try {
+						matching.sender.setStreams(this.localStream);
+					} catch {}
+				} catch (err) {
+					console.warn(`[P2P] Erro replaceTrack para ${peerId}:`, err);
+				}
 			} else {
 				const senders = pc.getSenders();
 				const sender = senders.find((s) => s.track?.kind === track.kind);
 				if (sender) {
-					sender.replaceTrack(track).catch((err) => console.warn(`[P2P] Erro replaceTrack para ${peerId}:`, err));
+					try {
+						await sender.replaceTrack(track);
+						sender.setStreams?.(this.localStream);
+					} catch (err) {
+						console.warn(`[P2P] Erro replaceTrack para ${peerId}:`, err);
+					}
 				} else {
 					try {
 						pc.addTrack(track, this.localStream);
@@ -303,7 +320,7 @@ export class P2PManager {
 		}
 
 		prioritizeH264(pc);
-		this.addLocalTracks(pc, targetUserId);
+		await this.addLocalTracks(pc, targetUserId);
 
 		try {
 			const offer = await pc.createOffer();
@@ -555,12 +572,13 @@ export class P2PManager {
 
 		// 2. Anexa faixas locais nos transceivers alinhados (se estiver transmitindo)
 		prioritizeH264(pc);
-		this.addLocalTracks(pc, fromUserId);
+		await this.addLocalTracks(pc, fromUserId);
 
 		// 3. Gera e envia a resposta
 		const answer = await pc.createAnswer();
 		const optimizedAnswerSdp = optimizeSdp(answer.sdp || "");
 		await pc.setLocalDescription({ type: "answer", sdp: optimizedAnswerSdp });
+		configureSenderParameters(pc, this.videoBitrateKbps);
 
 		await this.sendSignal("/api/signal/answer", {
 			targetUserId: fromUserId,
