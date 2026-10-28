@@ -1,6 +1,6 @@
 import path from "node:path";
 import dotenv from "dotenv";
-import { app, BrowserWindow, ipcMain, Menu, nativeImage, Tray } from "electron";
+import { app, BrowserWindow, ipcMain, Menu, nativeImage, protocol, Tray } from "electron";
 import { autoUpdater } from "electron-updater";
 import { AudioCaptureEngine } from "./audioEngine";
 import { setupIpcHandlers } from "./ipcHandlers";
@@ -9,6 +9,21 @@ import {
 	startWebSocketServer,
 	stopWebSocketServer,
 } from "./websocketServer";
+import { isUpdateMandatory } from "../shared/updateConfig";
+
+// Register file scheme as privileged and secure so DocumentPictureInPicture is permitted
+protocol.registerSchemesAsPrivileged([
+	{
+		scheme: "file",
+		privileges: {
+			standard: true,
+			secure: true,
+			supportFetchAPI: true,
+			corsEnabled: true,
+			allowServiceWorkers: true,
+		},
+	},
+]);
 
 // Set Windows Application ID for Taskbar Icon & Grouping
 if (process.platform === "win32") {
@@ -20,14 +35,17 @@ app.commandLine.appendSwitch("ignore-gpu-blocklist");
 app.commandLine.appendSwitch("enable-gpu-rasterization");
 app.commandLine.appendSwitch("enable-zero-copy");
 app.commandLine.appendSwitch("disable-background-timer-throttling");
+app.commandLine.appendSwitch("enable-blink-features", "DocumentPictureInPictureAPI");
 app.commandLine.appendSwitch("js-flags", "--expose-gc");
 
 // Silence Chromium internal C++ log spam (wgc_capture_session.cc, etc.)
 app.commandLine.appendSwitch("log-level", "3");
 app.commandLine.appendSwitch("disable-logging");
+app.commandLine.appendSwitch("disable-renderer-backgrounding");
+app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");
 app.commandLine.appendSwitch(
 	"disable-features",
-	"WindowsGraphicsCapture,WGCWindowCapturer,WGCDisplayCapturer",
+	"WindowsGraphicsCapture,WGCWindowCapturer,WGCDisplayCapturer,CalculateNativeWinOcclusion",
 );
 
 // Linux: captura de tela via PipeWire (necessária no Wayland, onde a captura passa pelo
@@ -116,8 +134,8 @@ function createWindow(): void {
 	const iconPath = getIconPath();
 
 	mainWindow = new BrowserWindow({
-		width: 1080,
-		height: 720,
+		width: 1404,
+		height: 936,
 		minWidth: 800,
 		minHeight: 600,
 		frame: false,
@@ -129,10 +147,61 @@ function createWindow(): void {
 			contextIsolation: true,
 			nodeIntegration: false,
 			backgroundThrottling: false,
+			webSecurity: false,
 		},
 	});
 
 	setupIpcHandlers(mainWindow, audioEngine);
+
+	// Bloqueia abertura do DevTools por atalhos (Ctrl+Shift+I, Ctrl+Shift+J, F12, Ctrl+U)
+	const blockDevTools = (wc: Electron.WebContents) => {
+		if (!app.isPackaged) return; // No modo dev, permite abrir o DevTools normalmente
+		wc.on("before-input-event", (event, input) => {
+			const isDevTools =
+				(input.control && input.shift && (input.key.toLowerCase() === "i" || input.key.toLowerCase() === "j")) ||
+				input.key === "F12" ||
+				(input.control && input.key.toLowerCase() === "u");
+			if (isDevTools) {
+				event.preventDefault();
+			}
+		});
+	};
+	blockDevTools(mainWindow.webContents);
+
+	mainWindow.webContents.setWindowOpenHandler(() => {
+		return {
+			action: "allow",
+			overrideBrowserWindowOptions: {
+				title: "Shiro Screen Share · Pop-out",
+				frame: false,
+				alwaysOnTop: true,
+				skipTaskbar: false,
+				backgroundColor: "#08090c",
+				autoHideMenuBar: true,
+				resizable: true,
+				minWidth: 320,
+				minHeight: 180,
+				width: 720,
+				height: 405,
+				icon: iconPath,
+				webPreferences: {
+					backgroundThrottling: false,
+					webSecurity: false,
+				},
+			},
+		};
+	});
+
+	mainWindow.webContents.on("did-create-window", (childWindow) => {
+		try {
+			childWindow.setAlwaysOnTop(true, "screen-saver");
+			if (iconPath) childWindow.setIcon(iconPath);
+			childWindow.webContents.setBackgroundThrottling(false);
+			blockDevTools(childWindow.webContents);
+		} catch (err) {
+			console.warn("[Main] Error configuring child window:", err);
+		}
+	});
 
 	const htmlPath = path.join(__dirname, "..", "renderer", "index.html");
 	mainWindow.loadFile(htmlPath);
@@ -247,11 +316,28 @@ export function installUpdateNow(): void {
 	autoUpdater.quitAndInstall(false, true);
 }
 
-export async function checkForUpdatesNow(): Promise<unknown> {
+export async function downloadUpdateNow(): Promise<unknown> {
 	if (app.isPackaged) {
-		return await autoUpdater.checkForUpdates();
+		console.log("[AutoUpdater] Starting manual update download...");
+		return await autoUpdater.downloadUpdate();
 	}
 	return null;
+}
+
+export async function checkForUpdatesNow(): Promise<unknown> {
+	if (app.isPackaged) {
+		try {
+			console.log("[AutoUpdater] Checking for updates on GitHub...");
+			return await autoUpdater.checkForUpdates();
+		} catch (err: any) {
+			console.warn("[AutoUpdater] Error checking updates:", err?.message || err);
+			if (mainWindow && !mainWindow.isDestroyed()) {
+				mainWindow.webContents.send("update-error", { message: err?.message || "Falha ao verificar atualizações" });
+			}
+			return { error: err?.message || "Falha ao verificar atualizações" };
+		}
+	}
+	return { isDev: true, version: app.getVersion() };
 }
 
 function setupAutoUpdater(): void {
@@ -262,9 +348,10 @@ function setupAutoUpdater(): void {
 		console.log("[AutoUpdater] Checking for updates on GitHub...");
 	});
 
-	autoUpdater.on("update-available", (info) => {
-		if (!autoUpdateEnabled) return;
-		console.log(`[AutoUpdater] New update available: v${info.version}`);
+	autoUpdater.on("update-available", (info: any) => {
+		const mandatory = isUpdateMandatory(info.version, info.releaseNotes, info);
+		info.mandatory = mandatory;
+		console.log(`[AutoUpdater] New update available: v${info.version} (mandatory: ${mandatory})`);
 		if (mainWindow && !mainWindow.isDestroyed()) {
 			mainWindow.webContents.send("update-available", info);
 		}
@@ -272,10 +359,12 @@ function setupAutoUpdater(): void {
 
 	autoUpdater.on("update-not-available", () => {
 		console.log("[AutoUpdater] App is up to date.");
+		if (mainWindow && !mainWindow.isDestroyed()) {
+			mainWindow.webContents.send("update-not-available");
+		}
 	});
 
 	autoUpdater.on("download-progress", (progressObj) => {
-		if (!autoUpdateEnabled) return;
 		console.log(
 			`[AutoUpdater] Downloading update... ${progressObj.percent.toFixed(1)}%`,
 		);
@@ -285,12 +374,18 @@ function setupAutoUpdater(): void {
 	});
 
 	autoUpdater.on("update-downloaded", (info) => {
-		if (!autoUpdateEnabled) return;
 		console.log(
 			"[AutoUpdater] Update downloaded. Will install automatically on app quit.",
 		);
 		if (mainWindow && !mainWindow.isDestroyed()) {
 			mainWindow.webContents.send("update-downloaded", info);
+		}
+	});
+
+	autoUpdater.on("error", (err) => {
+		console.warn("[AutoUpdater] Update error:", err?.message || err);
+		if (mainWindow && !mainWindow.isDestroyed()) {
+			mainWindow.webContents.send("update-error", { message: err?.message || "Erro no auto-updater" });
 		}
 	});
 

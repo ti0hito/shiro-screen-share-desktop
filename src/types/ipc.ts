@@ -18,6 +18,7 @@ export interface AppSettings {
 	platform: string;
 	/** Sessão Linux Wayland: a captura de tela passa pelo seletor do sistema (portal) */
 	isWayland: boolean;
+	isDev?: boolean;
 }
 
 export interface ApiRequestOptions {
@@ -49,6 +50,9 @@ export interface ElectronAPI {
 	setAutoUpdate: (enabled: boolean) => Promise<boolean>;
 	installUpdate: () => Promise<void>;
 	checkForUpdates: () => Promise<unknown>;
+	downloadUpdate?: () => Promise<unknown>;
+	onUpdateNotAvailable?: (callback: () => void) => () => void;
+	onUpdateError?: (callback: (err: { message: string }) => void) => () => void;
 	onUpdateAvailable: (callback: (info: { version: string }) => void) => () => void;
 	onUpdateProgress: (callback: (progress: { percent: number; bytesPerSecond: number }) => void) => () => void;
 	onUpdateDownloaded: (callback: (info: { version: string }) => void) => () => void;
@@ -62,6 +66,7 @@ export interface ElectronAPI {
 	minimizeWindow: () => void;
 	maximizeWindow: () => void;
 	closeWindow: () => void;
+	focusMainWindow: () => void;
 
 	/** SSE bridge: pede ao main para abrir conexão SSE (com API Key no main) */
 	startSseSignaling: (userToken: string) => void;

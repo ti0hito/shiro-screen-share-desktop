@@ -53,6 +53,7 @@ import {
 	Search,
 	Send,
 	Settings,
+	ShieldAlert,
 	ShieldCheck,
 	Sparkles,
 	Square,
@@ -98,6 +99,7 @@ import {
 	getUser,
 	inviteFriendToRoom,
 	isAuthenticated,
+	isSessionExpired,
 	joinRoom,
 	joinRoomByInvite,
 	kickUserFromRoom,
@@ -131,6 +133,7 @@ import {
 	AudioVisualizer,
 	setupWindowControls,
 } from "./uiComponents";
+import { isUpdateMandatory } from "../../shared/updateConfig";
 
 function setStreamStatus(live: boolean, text: string): void {
 	const badge = document.getElementById("stream-badge");
@@ -149,8 +152,8 @@ const POLL_INTERVALS: { fallback: PollIntervals; withServerEvents: PollIntervals
 	// Servidor sem avisos em tempo real: polling é a única fonte de atualização
 	fallback: { heartbeat: 60_000, rooms: 15_000, friends: 15_000, users: 30_000 },
 	// Servidor envia avisos pelo SSE (que também mantém a presença online):
-	// polling é só rede de segurança. Heartbeat < 150s (limite de offline das salas no servidor).
-	withServerEvents: { heartbeat: 120_000, rooms: 120_000, friends: 300_000, users: 300_000 },
+	// Heartbeat a cada 45s para manter lastSeen sempre fresco e evitar queda de streams em background.
+	withServerEvents: { heartbeat: 45_000, rooms: 45_000, friends: 180_000, users: 180_000 },
 };
 
 export const DEV_ADMIN_ID = "6ab1e7120ee994421cd420be";
@@ -236,13 +239,20 @@ class ShiroApp {
 	private systemNotices: SystemNotice[] = [
 		{
 			id: "sys-v21",
-			title: "Shiro Screen Share v2.1.0",
+			title: "Shiro Screen Share v2.2.0",
 			message: "Nova arquitetura WebRTC P2P multi-stream ativa com isolamento de áudio.",
 			type: "info",
 			date: "Sistema",
 		},
 	];
 	private activeNotifFilter: "all" | "friends" | "invites" | "system" = "all";
+	private updateState = {
+		downloadedVersion: null as string | null,
+		availableVersion: null as string | null,
+		isChecking: false,
+		downloadProgress: 0,
+	};
+	private streamThumbnailsCache = new Map<string, ImageData>();
 
 	private leftSourcePicker: SourcePicker | null = null;
 	private mainSourcePicker: SourcePicker | null = null;
@@ -295,9 +305,12 @@ class ShiroApp {
 	private maximizedStreamId: string | null = null;
 	private streamDeckBridgeInitialized = false;
 	private activeMiniProfileUserId: string | null = null;
+	private isDev = false;
+	private activePopouts = new Map<string, { win?: Window; videoEl?: HTMLVideoElement; username: string; stream: MediaStream }>();
 
 	public async initialize(): Promise<void> {
 		console.log("[App] Initializing Shiro Screen Share...");
+		this.blockDevToolsShortcuts(window);
 		this.refreshIcons();
 		this.setupLoginWindowControls();
 		this.setupCustomTooltips();
@@ -343,10 +356,45 @@ class ShiroApp {
 			errorEl.style.color = "var(--warning-color)";
 			errorEl.style.background = "rgba(245, 158, 11, 0.1)";
 			errorEl.style.border = "1px solid rgba(245, 158, 11, 0.3)";
-			errorEl.textContent = "Sua sessão expira a cada 2 semanas por segurança. Digite sua senha novamente.";
+			errorEl.textContent = "Sua sessão expirou após 1 ano. Digite sua senha novamente.";
+			setTimeout(() => {
+				void this.showAlert("Sua sessão expirou após 1 ano. Por favor, faça login novamente.");
+			}, 300);
 		}
 
 		this.refreshIcons();
+	}
+
+	private sessionWatcherInterval: ReturnType<typeof setInterval> | null = null;
+
+	private startSessionWatcher(): void {
+		if (this.sessionWatcherInterval) clearInterval(this.sessionWatcherInterval);
+		this.sessionWatcherInterval = setInterval(() => {
+			if (isSessionExpired()) {
+				if (this.sessionWatcherInterval) {
+					clearInterval(this.sessionWatcherInterval);
+					this.sessionWatcherInterval = null;
+				}
+				logout();
+				this.showLoginView({ autoLogin: false, expired: true });
+				void this.showAlert("Sua sessão expirou após o período de 1 ano. Você foi desconectado automaticamente.");
+			}
+		}, 30_000);
+	}
+
+	private blockDevToolsShortcuts(target: Window = window): void {
+		target.addEventListener("keydown", (e) => {
+			if (this.isDev) return; // No modo de desenvolvimento, permite abrir o DevTools normalmente
+			const key = e.key.toLowerCase();
+			if (
+				(e.ctrlKey && e.shiftKey && (key === "i" || key === "j")) ||
+				e.key === "F12" ||
+				(e.ctrlKey && key === "u")
+			) {
+				e.preventDefault();
+				e.stopPropagation();
+			}
+		}, true);
 	}
 
 	private setupLoginWindowControls(): void {
@@ -639,6 +687,7 @@ class ShiroApp {
 		const user = getUser();
 		if (user) {
 			this.updateHeaderUserInfo();
+			this.startSessionWatcher();
 		}
 
 		if (user) {
@@ -674,12 +723,22 @@ class ShiroApp {
 					if (this.remoteStreams.size === 0 && !this.p2pManager?.getIsStreaming()) {
 						setStreamStatus(false, "Desconectado");
 					}
+					// Se o usuário ainda estiver transmitindo na sala atual, agenda tentativa de reconexão limpa
+					const stillStreaming = this.currentRoom?.activeStreams?.some((s) => s.userId === peerId);
+					if (stillStreaming && this.currentRoom && !this.p2pManager?.isConnecting(peerId, 15_000)) {
+						console.log(`[App] Stream de ${peerId} ainda está ativa na sala. Agendando reconexão em 2.5s...`);
+						setTimeout(() => {
+							if (this.currentRoom?.activeStreams?.some((s) => s.userId === peerId) && !this.remoteStreams.has(peerId)) {
+								void this.p2pManager?.renegotiate(peerId, true);
+							}
+						}, 2500);
+					}
 				},
 				onError: (err) => {
 					console.error(`[App] P2P erro: ${err}`);
 				},
 				onRemoteStream: (stream, peerId) => {
-					console.log(`[App] Stream remota recebida de ${peerId}`);
+					console.log(`[App] Stream remota recebida de ${peerId}: videoTracks=${stream.getVideoTracks().length}, audioTracks=${stream.getAudioTracks().length}`);
 					if (!this.currentRoom) return;
 
 					const activeStreamer = this.currentRoom.activeStreams?.find((s) => s.userId === peerId);
@@ -697,7 +756,29 @@ class ShiroApp {
 					}
 
 					const username = activeStreamer?.username ?? onlineUser?.username ?? guest?.name ?? peerId;
-					this.remoteStreams.set(peerId, { stream, username });
+					const existing = this.remoteStreams.get(peerId);
+					let streamToUse = stream;
+					if (existing) {
+						for (const track of stream.getTracks()) {
+							if (!existing.stream.getTracks().some((t) => t.id === track.id)) {
+								existing.stream.addTrack(track);
+							}
+						}
+						streamToUse = existing.stream;
+					}
+					this.remoteStreams.set(peerId, { stream: streamToUse, username });
+
+					// Se houver janela popout aberta, atualiza a stream do vídeo nela
+					const popout = this.activePopouts.get(peerId);
+					if (popout?.win && !popout.win.closed) {
+						popout.stream = streamToUse;
+						const popVideo = popout.win.document.querySelector("video");
+						if (popVideo && popVideo.srcObject !== streamToUse) {
+							popVideo.srcObject = streamToUse;
+							popVideo.play().catch(() => {});
+						}
+					}
+
 					this.renderLiveStreamsGrid();
 					this.streamsPoller?.trigger();
 				},
@@ -770,6 +851,7 @@ class ShiroApp {
 					badge.textContent = `v${settings.version}`;
 				});
 			}
+			this.isDev = !!settings.isDev;
 			this.platformInfo = { platform: settings.platform ?? "win32", isWayland: !!settings.isWayland };
 			document.documentElement.classList.toggle("platform-linux", settings.platform === "linux");
 			document.documentElement.classList.toggle("is-wayland", !!settings.isWayland);
@@ -929,7 +1011,7 @@ class ShiroApp {
 			if (this.currentRoom?.activeStreams?.length) this.autoConnectRoomStreams();
 		}, 10_000);
 
-		this.thumbnailInterval = setInterval(() => this.updateAllThumbnails(), 120_000); // Atualiza preview estática a cada 2 minutos
+		this.thumbnailInterval = setInterval(() => this.updateAllThumbnails(), 300_000); // Atualiza preview estática a cada 5 minutos (baixíssima frequência)
 	}
 
 	private stopPolling(): void {
@@ -1788,8 +1870,10 @@ class ShiroApp {
 			const isStillStreaming = activeStreams.some((s) => s.userId === peerId);
 			if (!isStillStreaming) {
 				console.log(`[App] Transmissão de ${peerId} encerrada. Removendo do grid.`);
+				this.closeStreamPopout(peerId);
 				this.p2pManager?.closePeer(peerId);
 				this.remoteStreams.delete(peerId);
+				this.streamThumbnailsCache.delete(peerId);
 				if (this.maximizedStreamId === `stream-card-${peerId}`) {
 					this.restoreGridMode();
 				} else {
@@ -2010,6 +2094,8 @@ class ShiroApp {
 			return;
 		}
 
+		const totalStreams = (isLocalStreaming ? 1 : 0) + this.remoteStreams.size + activeRoomStreams.length;
+		gridEl.dataset.count = totalStreams.toString();
 		gridEl.innerHTML = "";
 
 		if (isLocalStreaming && this.previewStream) {
@@ -2026,15 +2112,21 @@ class ShiroApp {
 						<span>${this.escapeHtml(user?.username ?? "Você")} (Você Transmitindo)</span>
 					</div>
 					<div class="stream-card-actions">
+						${this.popoutButtonHtml("local-preview")}
 						${this.fullscreenButtonHtml()}
 						<span class="badge badge-live">AO VIVO</span>
 					</div>
 				</div>
-				<canvas class="stream-card-canvas ${isMax ? "hidden" : ""}"></canvas>
-				<video class="stream-card-video ${isMax ? "" : "hidden"}" autoplay playsinline muted></video>
-				<div class="stream-card-maximize-hint">
-					<i data-lucide="target"></i> Clique para Maximizar
-				</div>`;
+				<div class="stream-card-preview-wrap ${isMax ? "hidden" : ""}">
+					<canvas class="stream-card-canvas"></canvas>
+					<div class="stream-card-center-overlay">
+						<div class="stream-card-play-pill">
+							<i data-lucide="play" class="stream-card-play-icon"></i>
+							<span>Abrir Transmissão</span>
+						</div>
+					</div>
+				</div>
+				<video class="stream-card-video ${isMax ? "" : "hidden"}" autoplay playsinline muted></video>`;
 
 			const videoEl = localCard.querySelector("video") as HTMLVideoElement;
 			const canvasEl = localCard.querySelector("canvas") as HTMLCanvasElement;
@@ -2042,10 +2134,21 @@ class ShiroApp {
 			videoEl.muted = true;
 			videoEl.play().catch(() => { });
 
-			this.captureInitialThumbnail(videoEl, canvasEl);
+			this.captureInitialThumbnail(videoEl, canvasEl, "local-preview");
 
 			localCard.addEventListener("click", () => this.toggleMaximizeStreamCard("local-preview", localCard));
 			this.bindFullscreenButton(localCard, "local-preview");
+			this.bindPopoutButton(localCard, "local-preview", user?.username ?? "Você", this.previewStream);
+
+			if (this.activePopouts.has("local-preview")) {
+				localCard.classList.add("is-popped-out");
+				localCard.appendChild(this.createPoppedOverlayElement("local-preview"));
+				const popData = this.activePopouts.get("local-preview");
+				if (popData?.win) {
+					videoEl.srcObject = null;
+					videoEl.pause();
+				}
+			}
 			gridEl.appendChild(localCard);
 		}
 
@@ -2073,15 +2176,21 @@ class ShiroApp {
 							<input type="range" class="stream-vol-slider" min="0" max="100" value="${savedVol}">
 							<span class="stream-vol-percent">${savedVol}%</span>
 						</div>
+						${this.popoutButtonHtml(peerId)}
 						${this.fullscreenButtonHtml()}
 						<span class="badge badge-live">AO VIVO</span>
 					</div>
 				</div>
-				<canvas class="stream-card-canvas ${isMax ? "hidden" : ""}"></canvas>
-				<video class="stream-card-video ${isMax ? "" : "hidden"}" autoplay playsinline></video>
-				<div class="stream-card-maximize-hint">
-					<i data-lucide="target"></i> Clique para Maximizar
-				</div>`;
+				<div class="stream-card-preview-wrap ${isMax ? "hidden" : ""}">
+					<canvas class="stream-card-canvas"></canvas>
+					<div class="stream-card-center-overlay">
+						<div class="stream-card-play-pill">
+							<i data-lucide="play" class="stream-card-play-icon"></i>
+							<span>Abrir Transmissão</span>
+						</div>
+					</div>
+				</div>
+				<video class="stream-card-video ${isMax ? "" : "hidden"}" autoplay playsinline></video>`;
 
 			const videoEl = remoteCard.querySelector("video") as HTMLVideoElement;
 			const canvasEl = remoteCard.querySelector("canvas") as HTMLCanvasElement;
@@ -2106,6 +2215,7 @@ class ShiroApp {
 
 				const currentIcon = volume === 0 ? "volume-x" : (volume < 50 ? "volume-1" : "volume-2");
 				volBtn.innerHTML = `<i data-lucide="${currentIcon}"></i>`;
+				volBtn.title = volume === 0 ? "Ativar som" : "Silenciar";
 				this.refreshIcons();
 			};
 
@@ -2128,10 +2238,22 @@ class ShiroApp {
 				}
 			});
 
-			this.captureInitialThumbnail(videoEl, canvasEl);
+			this.captureInitialThumbnail(videoEl, canvasEl, peerId);
 
 			remoteCard.addEventListener("click", () => this.toggleMaximizeStreamCard(cardId, remoteCard));
 			this.bindFullscreenButton(remoteCard, cardId);
+			this.bindPopoutButton(remoteCard, peerId, remoteData.username, remoteData.stream);
+
+			if (this.activePopouts.has(peerId)) {
+				remoteCard.classList.add("is-popped-out");
+				remoteCard.appendChild(this.createPoppedOverlayElement(peerId));
+				const popData = this.activePopouts.get(peerId);
+				// Apenas pausa no app se a janela for Document Picture-in-Picture (não PiP nativo que utiliza o mesmo videoEl)
+				if (popData?.win) {
+					videoEl.srcObject = null;
+					videoEl.pause();
+				}
+			}
 			gridEl.appendChild(remoteCard);
 		}
 
@@ -2208,10 +2330,23 @@ class ShiroApp {
 		this.updateAllThumbnails();
 	}
 
-	private captureInitialThumbnail(videoEl: HTMLVideoElement, canvasEl: HTMLCanvasElement): void {
+	private captureInitialThumbnail(videoEl: HTMLVideoElement, canvasEl: HTMLCanvasElement, streamId?: string): void {
+		if (streamId && this.streamThumbnailsCache.has(streamId)) {
+			const cached = this.streamThumbnailsCache.get(streamId)!;
+			if (canvasEl.width !== cached.width || canvasEl.height !== cached.height) {
+				canvasEl.width = cached.width;
+				canvasEl.height = cached.height;
+			}
+			const ctx = canvasEl.getContext("2d");
+			if (ctx) {
+				ctx.putImageData(cached, 0, 0);
+				return;
+			}
+		}
+
 		const tryCapture = (): boolean => {
 			if (videoEl.readyState >= 2 && videoEl.videoWidth > 0 && videoEl.videoHeight > 0) {
-				this.updateCardThumbnail(videoEl, canvasEl);
+				this.updateCardThumbnail(videoEl, canvasEl, streamId);
 				return true;
 			}
 			return false;
@@ -2252,12 +2387,13 @@ class ShiroApp {
 			const videoEl = card.querySelector("video") as HTMLVideoElement | null;
 			const canvasEl = card.querySelector("canvas") as HTMLCanvasElement | null;
 			if (videoEl && canvasEl) {
-				this.updateCardThumbnail(videoEl, canvasEl);
+				const streamId = card.id === "stream-card-local" ? "local-preview" : card.id.replace("stream-card-", "");
+				this.updateCardThumbnail(videoEl, canvasEl, streamId);
 			}
 		});
 	}
 
-	private updateCardThumbnail(videoEl: HTMLVideoElement, canvasEl: HTMLCanvasElement): void {
+	private updateCardThumbnail(videoEl: HTMLVideoElement, canvasEl: HTMLCanvasElement, streamId?: string): void {
 		if (videoEl.readyState >= 2 && videoEl.videoWidth > 0 && videoEl.videoHeight > 0) {
 			if (canvasEl.width !== videoEl.videoWidth || canvasEl.height !== videoEl.videoHeight) {
 				canvasEl.width = videoEl.videoWidth;
@@ -2266,6 +2402,13 @@ class ShiroApp {
 			const ctx = canvasEl.getContext("2d");
 			if (ctx) {
 				ctx.drawImage(videoEl, 0, 0, canvasEl.width, canvasEl.height);
+				if (streamId) {
+					try {
+						this.streamThumbnailsCache.set(streamId, ctx.getImageData(0, 0, canvasEl.width, canvasEl.height));
+					} catch {
+						// Ignora no caso de canvas protegido se ocorrer
+					}
+				}
 			}
 		}
 	}
@@ -2276,6 +2419,493 @@ class ShiroApp {
 		} else {
 			this.maximizeStreamCard(cardId, cardEl);
 		}
+	}
+
+
+	// ══════════════════════════════════════════════════════════════
+	//  JANELAS POP-OUT / PICTURE-IN-PICTURE DE TRANSMISSÃO
+	// ══════════════════════════════════════════════════════════════
+
+	private popoutButtonHtml(streamId: string): string {
+		const isPopped = this.activePopouts.has(streamId);
+		return `<button type="button" class="stream-popout-btn ${isPopped ? "active" : ""}" data-stream-id="${streamId}" title="${isPopped ? "Reanexar ao aplicativo" : "Desatarrachar em janela pop-out (PiP)"}">
+			<i data-lucide="${isPopped ? "minimize-2" : "external-link"}"></i>
+		</button>`;
+	}
+
+	private bindPopoutButton(cardEl: HTMLElement, streamId: string, username: string, stream: MediaStream): void {
+		cardEl.querySelector(".stream-popout-btn")?.addEventListener("click", (e) => {
+			e.stopPropagation();
+			void this.toggleStreamPopout(streamId, username, stream, cardEl);
+		});
+	}
+
+	private createPoppedOverlayElement(streamId: string): HTMLElement {
+		const overlay = document.createElement("div");
+		overlay.className = "stream-card-popped-overlay";
+		overlay.innerHTML = `
+			<div class="stream-card-popped-icon">
+				<i data-lucide="external-link"></i>
+			</div>
+			<div class="stream-card-popped-title">Janela Pop-out Ativa</div>
+			<div class="stream-card-popped-desc">Esta transmissão está desatarrachada e flutuando na sua tela.</div>
+			<button type="button" class="stream-card-popped-btn btn-reattach-stream" data-stream-id="${streamId}">
+				<i data-lucide="arrow-down-left"></i> Reanexar ao aplicativo
+			</button>
+		`;
+		overlay.querySelector(".btn-reattach-stream")?.addEventListener("click", (e) => {
+			e.stopPropagation();
+			this.reattachStream(streamId);
+		});
+		return overlay;
+	}
+
+	private async toggleStreamPopout(streamId: string, username: string, stream: MediaStream, cardEl?: HTMLElement | null): Promise<void> {
+		if (this.activePopouts.has(streamId)) {
+			this.reattachStream(streamId);
+		} else {
+			await this.openStreamPopout(streamId, username, stream, cardEl);
+		}
+	}
+
+	private async openStreamPopout(streamId: string, username: string, stream: MediaStream, cardEl?: HTMLElement | null): Promise<void> {
+		const existing = this.activePopouts.get(streamId);
+		if (existing?.win && !existing.win.closed) {
+			existing.win.focus();
+			return;
+		}
+
+		const cardId = `stream-card-${streamId}`;
+		const card = document.getElementById(cardId) || cardEl;
+		const videoEl = card?.querySelector("video") as HTMLVideoElement | null;
+
+		if (!videoEl && !stream) {
+			void this.showAlert("Elemento de vídeo não encontrado para abrir pop-out.");
+			return;
+		}
+
+		if (videoEl) {
+			videoEl.play().catch(() => {});
+		}
+
+		const width = 720;
+		const height = 405;
+		let popWin: Window | null = null;
+
+		// 1. Abre via window.open (cria uma janela BrowserWindow nativa configurada no main.ts com alwaysOnTop e resizable)
+		try {
+			const winName = `shiro_popout_${streamId}_${Date.now()}`;
+			popWin = window.open(
+				"about:blank",
+				winName,
+				`width=${width},height=${height},menubar=no,status=no,toolbar=no,resizable=yes`
+			);
+		} catch (err) {
+			console.warn("[Popout] window.open falhou, tentando DocumentPiP/PiP nativo:", err);
+		}
+
+		// 2. Se window.open não retornou, tenta documentPictureInPicture
+		if (!popWin) {
+			try {
+				if ("documentPictureInPicture" in window && typeof (window as any).documentPictureInPicture?.requestWindow === "function") {
+					popWin = await (window as any).documentPictureInPicture.requestWindow({ width, height });
+				}
+			} catch (err) {
+				console.warn("[Popout] documentPictureInPicture não disponível:", err);
+			}
+		}
+
+		if (popWin) {
+			const init = () => {
+				if (!popWin || popWin.closed) return;
+				this.setupDocumentPipWindow(streamId, username, stream, popWin);
+			};
+
+			if (popWin.document && popWin.document.readyState === "complete") {
+				init();
+			} else if (popWin.document) {
+				popWin.onload = init;
+				setTimeout(init, 60);
+			} else {
+				setTimeout(init, 100);
+			}
+			return;
+		}
+
+		// 3. Fallback: Picture-in-Picture nativo do elemento HTML5 de vídeo
+		if (videoEl && typeof videoEl.requestPictureInPicture === "function") {
+			try {
+				await videoEl.requestPictureInPicture();
+				this.activePopouts.set(streamId, { videoEl, username, stream });
+
+				const onLeavePiP = () => {
+					videoEl.removeEventListener("leavepictureinpicture", onLeavePiP);
+					if (this.activePopouts.has(streamId)) {
+						this.activePopouts.delete(streamId);
+						this.renderLiveStreamsGrid();
+					}
+				};
+				videoEl.addEventListener("leavepictureinpicture", onLeavePiP);
+
+				this.renderLiveStreamsGrid();
+				return;
+			} catch (err) {
+				console.error("[Popout] requestPictureInPicture falhou:", err);
+				void this.showAlert("Não foi possível ativar o modo pop-out.");
+				return;
+			}
+		}
+
+		void this.showAlert("Seu sistema não possui suporte a Picture-in-Picture.");
+	}
+
+	private setupDocumentPipWindow(streamId: string, username: string, stream: MediaStream, popWin: Window): void {
+		this.activePopouts.set(streamId, { win: popWin, username, stream });
+
+		const doc = popWin.document;
+		doc.title = `Transmissão de ${username} · Shiro Screen Share`;
+
+		const isLocal = streamId === "local-preview" || streamId === "local";
+		const savedVol = isLocal ? 0 : this.getSavedStreamVolume(streamId);
+
+		doc.head.innerHTML = `
+			<meta charset="UTF-8">
+			<title>Transmissão de ${this.escapeHtml(username)}</title>
+			<style>
+				* { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+				body, html {
+					width: 100%;
+					height: 100%;
+					background: #08090c;
+					color: #fff;
+					font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+					overflow: hidden;
+				}
+				.popout-container {
+					position: relative;
+					width: 100%;
+					height: 100%;
+					display: flex;
+					align-items: center;
+					justify-content: center;
+					background: #000;
+					-webkit-app-region: drag;
+					cursor: grab;
+				}
+				.popout-container:active {
+					cursor: grabbing;
+				}
+				video {
+					width: 100%;
+					height: 100%;
+					object-fit: contain;
+					background: #000;
+					pointer-events: auto;
+					-webkit-app-region: drag;
+					cursor: grab;
+					image-rendering: high-quality;
+					image-rendering: -webkit-optimize-contrast;
+					transform: none !important;
+					filter: none !important;
+				}
+				video:active {
+					cursor: grabbing;
+				}
+				/* Faixa invisível no topo para permitir arrastar a janela facilmente */
+				.popout-top-drag-strip {
+					position: absolute;
+					top: 0;
+					left: 0;
+					right: 0;
+					height: 12px;
+					z-index: 90;
+					-webkit-app-region: drag;
+					cursor: grab;
+				}
+				/* Barra de ferramentas arrastável */
+				.popout-toolbar {
+					position: absolute;
+					top: 0;
+					left: 0;
+					right: 0;
+					height: 42px;
+					display: flex;
+					align-items: center;
+					justify-content: space-between;
+					padding: 0 10px;
+					background: linear-gradient(180deg, rgba(8, 9, 12, 0.95) 0%, rgba(8, 9, 12, 0.75) 60%, transparent 100%);
+					opacity: 0;
+					visibility: hidden;
+					pointer-events: none;
+					transition: opacity 0.2s ease, visibility 0.2s ease;
+					z-index: 100;
+					-webkit-app-region: drag;
+					cursor: grab;
+				}
+				.popout-container:hover .popout-toolbar,
+				.popout-toolbar:hover {
+					opacity: 1;
+					visibility: visible;
+					pointer-events: auto;
+				}
+				.popout-meta {
+					display: flex;
+					align-items: center;
+					gap: 8px;
+					font-size: 11px;
+					font-weight: 600;
+					text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+					-webkit-app-region: drag;
+					cursor: grab;
+				}
+				.popout-badge {
+					background: #e0284f;
+					color: #fff;
+					font-size: 9px;
+					font-weight: 800;
+					padding: 2px 6px;
+					border-radius: 4px;
+					letter-spacing: 0.5px;
+					flex-shrink: 0;
+				}
+				.popout-drag-icon {
+					color: rgba(255, 255, 255, 0.4);
+					font-size: 11px;
+				}
+				.popout-controls {
+					display: flex;
+					align-items: center;
+					gap: 6px;
+					-webkit-app-region: no-drag;
+				}
+				.popout-btn {
+					background: rgba(22, 25, 33, 0.88);
+					border: 1px solid rgba(255, 255, 255, 0.18);
+					color: #fff;
+					border-radius: 6px;
+					padding: 5px 10px;
+					font-size: 11px;
+					font-weight: 600;
+					display: inline-flex;
+					align-items: center;
+					gap: 5px;
+					cursor: pointer;
+					backdrop-filter: blur(10px);
+					transition: all 0.15s ease;
+					-webkit-app-region: no-drag;
+				}
+				.popout-btn:hover {
+					background: #8e44f3;
+					border-color: #8e44f3;
+					transform: translateY(-1px);
+				}
+				.popout-btn-primary {
+					background: #8e44f3;
+					border-color: #a86bf5;
+				}
+				.popout-btn-primary:hover {
+					background: #7b31dd;
+				}
+				.popout-btn-close {
+					padding: 4px 8px;
+					font-weight: 700;
+				}
+				.popout-btn-close:hover {
+					background: #e0284f;
+					border-color: #e0284f;
+				}
+				.popout-vol-wrap {
+					display: flex;
+					align-items: center;
+					gap: 4px;
+					background: rgba(22, 25, 33, 0.88);
+					border: 1px solid rgba(255, 255, 255, 0.18);
+					border-radius: 6px;
+					padding: 3px 6px;
+					-webkit-app-region: no-drag;
+				}
+				.popout-vol-slider {
+					width: 55px;
+					height: 4px;
+					accent-color: #8e44f3;
+					cursor: pointer;
+					-webkit-app-region: no-drag;
+				}
+				.popout-vol-mute-btn {
+					background: transparent;
+					border: none;
+					color: #fff;
+					cursor: pointer;
+					font-size: 13px;
+					display: flex;
+					align-items: center;
+					justify-content: center;
+					padding: 0 2px;
+					-webkit-app-region: no-drag;
+				}
+			</style>
+		`;
+
+		doc.body.innerHTML = `
+			<div class="popout-container">
+				<div class="popout-top-drag-strip" title="Arraste para mover a janela"></div>
+				<video autoplay playsinline></video>
+				<div class="popout-toolbar">
+					<div class="popout-meta" title="Arraste para mover a janela de transmissão">
+						<span class="popout-badge">AO VIVO</span>
+						<span class="popout-drag-icon">⠿</span>
+						<span class="popout-title">${this.escapeHtml(username)}</span>
+					</div>
+					<div class="popout-controls">
+						${!isLocal ? `
+						<div class="popout-vol-wrap">
+							<button class="popout-vol-mute-btn" type="button" title="Silenciar / Ativar som">${savedVol === 0 ? "🔇" : (savedVol < 50 ? "🔉" : "🔊")}</button>
+							<input type="range" class="popout-vol-slider" min="0" max="100" value="${savedVol}" title="Volume: ${savedVol}%">
+						</div>` : ""}
+						<button type="button" class="popout-btn popout-btn-primary btn-back-to-app" title="Voltar para a janela principal do aplicativo">
+							<span>⤢</span> Voltar ao App
+						</button>
+						<button type="button" class="popout-btn popout-btn-close btn-close-popout" title="Fechar janela e reanexar ao grid">✕</button>
+					</div>
+				</div>
+			</div>
+		`;
+
+		const videoEl = doc.querySelector("video") as HTMLVideoElement;
+		videoEl.srcObject = stream;
+		for (const track of stream.getVideoTracks()) {
+			track.contentHint = "detail";
+		}
+		videoEl.volume = savedVol / 100;
+		videoEl.muted = isLocal || savedVol === 0;
+		videoEl.onloadedmetadata = () => {
+			videoEl.play().catch(() => {});
+		};
+		videoEl.play().catch(() => {});
+
+		if (!isLocal) {
+			const muteBtn = doc.querySelector(".popout-vol-mute-btn") as HTMLButtonElement;
+			const slider = doc.querySelector(".popout-vol-slider") as HTMLInputElement;
+
+			const updatePopoutVol = (vol: number) => {
+				videoEl.volume = vol / 100;
+				videoEl.muted = vol === 0;
+				if (slider) slider.value = vol.toString();
+				if (muteBtn) muteBtn.textContent = vol === 0 ? "🔇" : (vol < 50 ? "🔉" : "🔊");
+				this.setSavedStreamVolume(streamId, vol);
+			};
+
+			slider?.addEventListener("input", (e) => {
+				e.stopPropagation();
+				const vol = parseInt(slider.value, 10) || 0;
+				updatePopoutVol(vol);
+			});
+
+			muteBtn?.addEventListener("click", (e) => {
+				e.stopPropagation();
+				if (videoEl.volume > 0 && !videoEl.muted) {
+					updatePopoutVol(0);
+				} else {
+					const prev = savedVol > 0 ? savedVol : 100;
+					updatePopoutVol(prev);
+				}
+			});
+		}
+
+		// Botão Voltar ao App: foca na janela principal, maximiza a transmissão e fecha o popup
+		doc.querySelector(".btn-back-to-app")?.addEventListener("click", () => {
+			window.api?.focusMainWindow?.();
+			try { popWin.close(); } catch {}
+			this.activePopouts.delete(streamId);
+			this.renderLiveStreamsGrid();
+			const card = document.getElementById(`stream-card-${streamId}`);
+			if (card) {
+				this.maximizeStreamCard(`stream-card-${streamId}`, card);
+			}
+		});
+
+		// Botão Fechar popout (reanexa ao aplicativo)
+		doc.querySelector(".btn-close-popout")?.addEventListener("click", () => {
+			this.reattachStream(streamId);
+		});
+
+		// Duplo clique no vídeo na popout entra/sai de fullscreen
+		videoEl.addEventListener("dblclick", () => {
+			try {
+				if (!doc.fullscreenElement) {
+					doc.documentElement.requestFullscreen().catch(() => {});
+				} else {
+					doc.exitFullscreen().catch(() => {});
+				}
+			} catch {}
+		});
+
+		// Ao fechar a janela pelo X nativo, restaura no grid do app
+		let closedHandled = false;
+		const onPopoutClose = () => {
+			if (closedHandled) return;
+			closedHandled = true;
+			if (this.activePopouts.has(streamId)) {
+				this.activePopouts.delete(streamId);
+				this.renderLiveStreamsGrid();
+			}
+		};
+
+		popWin.addEventListener("pagehide", onPopoutClose);
+		popWin.addEventListener("beforeunload", onPopoutClose);
+
+		// Watchdog periódico para garantir reanexo caso a janela seja fechada pelo sistema
+		const pollClosed = setInterval(() => {
+			if (popWin.closed) {
+				clearInterval(pollClosed);
+				onPopoutClose();
+			}
+		}, 400);
+
+		// Bloqueia DevTools na janela pop-out
+		this.blockDevToolsShortcuts(popWin);
+
+		// Atualiza o grid do app principal para refletir que este card está em popout
+		this.renderLiveStreamsGrid();
+	}
+
+	private reattachStream(streamId: string): void {
+		const handle = this.activePopouts.get(streamId);
+		if (handle) {
+			this.activePopouts.delete(streamId);
+			if (handle.win) {
+				try { handle.win.close(); } catch {}
+			}
+			if (document.pictureInPictureElement) {
+				document.exitPictureInPicture().catch(() => {});
+			}
+			this.renderLiveStreamsGrid();
+		}
+	}
+
+	private closeStreamPopout(streamId: string): void {
+		const handle = this.activePopouts.get(streamId);
+		if (handle) {
+			this.activePopouts.delete(streamId);
+			if (handle.win) {
+				try { handle.win.close(); } catch {}
+			}
+			if (document.pictureInPictureElement) {
+				document.exitPictureInPicture().catch(() => {});
+			}
+		}
+	}
+
+	private closeAllStreamPopouts(): void {
+		for (const [streamId, handle] of this.activePopouts) {
+			try {
+				if (handle.win) handle.win.close();
+			} catch {}
+		}
+		if (document.pictureInPictureElement) {
+			document.exitPictureInPicture().catch(() => {});
+		}
+		this.activePopouts.clear();
 	}
 
 	private fullscreenButtonHtml(): string {
@@ -2329,12 +2959,14 @@ class ShiroApp {
 		if (gridEl) gridEl.classList.add("maximized-active");
 
 		document.querySelectorAll<HTMLElement>(".stream-card").forEach((c) => {
+			const previewWrapEl = c.querySelector(".stream-card-preview-wrap");
 			const canvasEl = c.querySelector("canvas");
 			const videoEl = c.querySelector("video");
 
 			if (c === cardEl) {
 				c.classList.add("maximized");
 				c.style.display = "";
+				if (previewWrapEl) previewWrapEl.classList.add("hidden");
 				if (canvasEl) canvasEl.classList.add("hidden");
 				if (videoEl) {
 					videoEl.classList.remove("hidden");
@@ -2369,6 +3001,7 @@ class ShiroApp {
 		document.querySelectorAll<HTMLElement>(".stream-card").forEach((c) => {
 			c.classList.remove("maximized");
 			c.style.display = "";
+			const previewWrapEl = c.querySelector(".stream-card-preview-wrap");
 			const canvasEl = c.querySelector("canvas");
 			const videoEl = c.querySelector("video");
 
@@ -2376,6 +3009,7 @@ class ShiroApp {
 				videoEl.muted = true; // Garante que o áudio seja silenciado ao voltar ao grid
 				videoEl.classList.add("hidden");
 			}
+			if (previewWrapEl) previewWrapEl.classList.remove("hidden");
 			if (canvasEl) canvasEl.classList.remove("hidden");
 		});
 
@@ -2857,6 +3491,7 @@ class ShiroApp {
 
 	private async stopStreaming(): Promise<void> {
 		console.log("[App] Parando transmissão...");
+		this.closeStreamPopout("local-preview");
 		this.p2pManager?.stopLocalStream();
 		this.audioPipeline.stop();
 		this.audioVisualizer.stop();
@@ -3218,15 +3853,125 @@ class ShiroApp {
 			}
 		});
 
-		// Toast de notificação de atualização baixada
+		// Elementos do toast de atualização
 		const toast = document.getElementById("toast-update-notification");
 		const toastVersion = document.getElementById("toast-update-version");
 		const btnApply = document.getElementById("btn-apply-update-now");
 		const btnDismiss = document.getElementById("btn-dismiss-update-toast");
 
+		// Elementos do botão no menu da conta
+		const btnCheckMenu = document.getElementById("btn-check-updates-menu");
+		const iconCheckMenu = document.getElementById("icon-check-updates-menu");
+		const textCheckMenu = document.getElementById("text-check-updates-menu");
+		const badgeCheckMenu = document.getElementById("badge-update-menu");
+
+		const updateMenuUI = () => {
+			if (!textCheckMenu || !badgeCheckMenu) return;
+			if (this.updateState.downloadedVersion) {
+				badgeCheckMenu.textContent = `v${this.updateState.downloadedVersion}`;
+				badgeCheckMenu.className = "account-menu-badge badge-ready";
+				textCheckMenu.textContent = `Instalar Atualização`;
+			} else if (this.updateState.downloadProgress > 0 && this.updateState.downloadProgress < 100) {
+				badgeCheckMenu.textContent = `${Math.round(this.updateState.downloadProgress)}%`;
+				badgeCheckMenu.className = "account-menu-badge badge-downloading";
+				textCheckMenu.textContent = `Baixando...`;
+			} else if (this.updateState.availableVersion) {
+				badgeCheckMenu.textContent = `v${this.updateState.availableVersion}`;
+				badgeCheckMenu.className = "account-menu-badge";
+				textCheckMenu.textContent = `Nova Versão Disponível`;
+			} else {
+				badgeCheckMenu.className = "account-menu-badge hidden";
+				textCheckMenu.textContent = `Verificar Atualizações`;
+			}
+			this.refreshIcons();
+		};
+
+		// Elementos do modal de Atualização Obrigatória (Dev / Mandatory Flag)
+		const modalMandatory = document.getElementById("modal-mandatory-update");
+		const mandatoryVerEl = document.getElementById("mandatory-update-version");
+		const mandatoryProgressWrap = document.getElementById("mandatory-update-progress-wrap");
+		const mandatoryProgressBar = document.getElementById("mandatory-progress-bar");
+		const mandatoryProgressPercent = document.getElementById("mandatory-progress-percent");
+		const btnMandatoryAction = document.getElementById("btn-mandatory-update-action");
+		const textMandatoryBtn = document.getElementById("text-mandatory-btn");
+		const btnMandatoryExit = document.getElementById("btn-mandatory-exit");
+
+		btnMandatoryExit?.addEventListener("click", () => {
+			window.api?.closeWindow?.();
+		});
+
+		btnMandatoryAction?.addEventListener("click", async () => {
+			if (this.updateState.downloadedVersion) {
+				if (window.api?.installUpdate) await window.api.installUpdate();
+			} else {
+				if (btnMandatoryAction) (btnMandatoryAction as HTMLButtonElement).disabled = true;
+				if (textMandatoryBtn) textMandatoryBtn.textContent = "Baixando atualização...";
+				if (mandatoryProgressWrap) mandatoryProgressWrap.classList.remove("hidden");
+				await window.api?.downloadUpdate?.();
+			}
+		});
+
+		const triggerMandatoryModal = (version: string) => {
+			if (!modalMandatory) return;
+			modalMandatory.classList.remove("hidden");
+			if (mandatoryVerEl) mandatoryVerEl.textContent = `v${version}`;
+			if (!this.updateState.downloadedVersion) {
+				if (mandatoryProgressWrap) mandatoryProgressWrap.classList.remove("hidden");
+				window.api?.downloadUpdate?.().catch(() => {});
+			}
+			this.refreshIcons();
+		};
+
+		// Evento: Nova versão encontrada no GitHub
+		if (window.api?.onUpdateAvailable) {
+			window.api.onUpdateAvailable((info: any) => {
+				console.log("[App] Nova versão disponível encontrada:", info);
+				this.updateState.availableVersion = info.version;
+				updateMenuUI();
+
+				const isMandatory = info.mandatory || isUpdateMandatory(info.version, info.releaseNotes, info);
+				if (isMandatory) {
+					triggerMandatoryModal(info.version);
+					return;
+				}
+
+				if (this.updateState.isChecking) {
+					this.updateState.isChecking = false;
+					if (iconCheckMenu) iconCheckMenu.classList.remove("spin");
+					void this.showAlert(
+						`Uma nova versão (v${info.version}) foi encontrada e o download foi iniciado em segundo plano!`,
+						"Atualização Disponível"
+					);
+				}
+			});
+		}
+
+		// Evento: Progresso do download
+		if (window.api?.onUpdateProgress) {
+			window.api.onUpdateProgress((progress) => {
+				this.updateState.downloadProgress = progress.percent;
+				updateMenuUI();
+				if (mandatoryProgressBar) mandatoryProgressBar.style.width = `${progress.percent}%`;
+				if (mandatoryProgressPercent) mandatoryProgressPercent.textContent = `${Math.round(progress.percent)}%`;
+			});
+		}
+
+		// Evento: Atualização baixada com sucesso
 		if (window.api?.onUpdateDownloaded) {
 			window.api.onUpdateDownloaded((info) => {
 				console.log("[App] Atualização baixada com sucesso:", info);
+				this.updateState.downloadedVersion = info.version || this.updateState.availableVersion || "recente";
+				this.updateState.downloadProgress = 100;
+				updateMenuUI();
+
+				if (textMandatoryBtn) textMandatoryBtn.textContent = "Reiniciar e Atualizar Agora";
+				if (btnMandatoryAction) {
+					(btnMandatoryAction as HTMLButtonElement).disabled = false;
+					btnMandatoryAction.classList.add("btn-primary");
+				}
+				if (mandatoryProgressPercent) mandatoryProgressPercent.textContent = "100%";
+				if (mandatoryProgressBar) mandatoryProgressBar.style.width = "100%";
+
 				if (toast && toastVersion) {
 					toastVersion.textContent = `v${info.version || ""}`;
 					toast.classList.remove("hidden");
@@ -3235,6 +3980,122 @@ class ShiroApp {
 			});
 		}
 
+		// Evento: Já está na versão mais recente
+		if (window.api?.onUpdateNotAvailable) {
+			window.api.onUpdateNotAvailable(() => {
+				console.log("[App] Aplicativo já está na versão mais recente.");
+				if (this.updateState.isChecking) {
+					this.updateState.isChecking = false;
+					if (iconCheckMenu) iconCheckMenu.classList.remove("spin");
+					updateMenuUI();
+					void this.showAlert(
+						"Você já está utilizando a versão mais recente do Shiro Screen Share!",
+						"Tudo Atualizado"
+					);
+				}
+			});
+		}
+
+		// Evento: Erro na busca de atualizações
+		if (window.api?.onUpdateError) {
+			window.api.onUpdateError((err) => {
+				console.warn("[App] Erro reportado pelo auto-updater:", err);
+				if (this.updateState.isChecking) {
+					this.updateState.isChecking = false;
+					if (iconCheckMenu) iconCheckMenu.classList.remove("spin");
+					updateMenuUI();
+					void this.showAlert(
+						`Não foi possível verificar atualizações: ${err.message}`,
+						"Aviso"
+					);
+				}
+			});
+		}
+
+		// Clique no botão "Verificar Atualizações" do Menu da Conta
+		btnCheckMenu?.addEventListener("click", async (e) => {
+			e.stopPropagation();
+
+			// Fecha o dropdown
+			document.getElementById("account-dropdown")?.classList.add("hidden");
+			document.getElementById("header-user-info")?.setAttribute("aria-expanded", "false");
+
+			// Se já baixou, oferece instalar na hora
+			if (this.updateState.downloadedVersion) {
+				const confirmApply = await this.showDialog({
+					title: "Instalar Atualização",
+					message: `A atualização v${this.updateState.downloadedVersion} já está baixada e pronta para ser aplicada.\n\nDeseja reiniciar o Shiro Screen Share agora para concluir a atualização?`,
+					confirmLabel: "Reiniciar e Atualizar",
+					cancelLabel: "Depois",
+					variant: "info",
+				});
+				if (confirmApply && window.api?.installUpdate) {
+					await window.api.installUpdate();
+				}
+				return;
+			}
+
+			// Se estiver baixando
+			if (this.updateState.downloadProgress > 0 && this.updateState.downloadProgress < 100) {
+				void this.showAlert(
+					`O download da versão v${this.updateState.availableVersion || ""} está em andamento (${Math.round(this.updateState.downloadProgress)}%). Aguarde a conclusão para instalar.`,
+					"Baixando Atualização"
+				);
+				return;
+			}
+
+			// Se identificou versão disponível mas não baixada
+			if (this.updateState.availableVersion) {
+				void this.showAlert(
+					`A versão v${this.updateState.availableVersion} está disponível. O download está sendo processado em segundo plano.`,
+					"Atualização Disponível"
+				);
+				if (window.api?.downloadUpdate) {
+					window.api.downloadUpdate().catch(() => {});
+				}
+				return;
+			}
+
+			// Se nenhuma atualização pendente, inicia a verificação
+			if (this.updateState.isChecking) return;
+			this.updateState.isChecking = true;
+
+			if (iconCheckMenu) iconCheckMenu.classList.add("spin");
+			if (textCheckMenu) textCheckMenu.textContent = "Verificando...";
+
+			try {
+				const res: any = await window.api?.checkForUpdates?.();
+				if (res && res.isDev) {
+					this.updateState.isChecking = false;
+					if (iconCheckMenu) iconCheckMenu.classList.remove("spin");
+					updateMenuUI();
+					void this.showAlert(
+						`Você está executando em modo de desenvolvimento local (código-fonte v${res.version || "dev"}). As atualizações automáticas via GitHub Releases funcionam no aplicativo empacotado.`,
+						"Ambiente de Desenvolvimento"
+					);
+				} else if (res && res.error) {
+					this.updateState.isChecking = false;
+					if (iconCheckMenu) iconCheckMenu.classList.remove("spin");
+					updateMenuUI();
+					void this.showAlert(`Falha ao buscar atualizações: ${res.error}`, "Aviso");
+				}
+			} catch (err: any) {
+				this.updateState.isChecking = false;
+				if (iconCheckMenu) iconCheckMenu.classList.remove("spin");
+				updateMenuUI();
+				void this.showAlert(`Falha ao verificar atualizações: ${err?.message || err}`, "Aviso");
+			} finally {
+				setTimeout(() => {
+					if (this.updateState.isChecking) {
+						this.updateState.isChecking = false;
+						if (iconCheckMenu) iconCheckMenu.classList.remove("spin");
+						updateMenuUI();
+					}
+				}, 6000);
+			}
+		});
+
+		// Botão Aplicar Agora no Toast flutuante
 		btnApply?.addEventListener("click", async () => {
 			if (btnApply) {
 				btnApply.setAttribute("disabled", "true");
@@ -4522,6 +5383,20 @@ class ShiroApp {
 			}
 		}
 
+		const btnToggle = document.getElementById("btn-notifications-toggle");
+		if (btnToggle) {
+			if (totalCount > 0) {
+				btnToggle.classList.add("has-notifs");
+				if (invitesCount > 0) {
+					btnToggle.classList.add("has-invites");
+				} else {
+					btnToggle.classList.remove("has-invites");
+				}
+			} else {
+				btnToggle.classList.remove("has-notifs", "has-invites");
+			}
+		}
+
 		if (!listEl) return;
 
 		let itemsHtml = "";
@@ -5754,7 +6629,7 @@ class ShiroApp {
 				nameAttr: PENDING,
 				icons: {
 					Sun, Moon, Monitor, Zap, Wifi, WifiOff, Target, RefreshCw,
-					AppWindow, ScreenShare, Video, PlayCircle, Volume1, Volume2, ShieldCheck,
+					AppWindow, ScreenShare, Video, PlayCircle, Volume1, Volume2, ShieldAlert, ShieldCheck,
 					VolumeX, MicOff, Radio, CheckCircle2, Play, Square, Loader2,
 					Settings, X, Power, User, Users, Lock, Eye, EyeOff, LogOut, Search,
 					ChevronLeft, ChevronRight, Check, Copy, RotateCw, Sparkles, Globe,

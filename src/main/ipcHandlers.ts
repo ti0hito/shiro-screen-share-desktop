@@ -9,6 +9,7 @@ import {
 	setAutoUpdateEnabled,
 	installUpdateNow,
 	checkForUpdatesNow,
+	downloadUpdateNow,
 } from "./main";
 import { scanSources } from "./windowScanner";
 import {
@@ -155,6 +156,7 @@ export function setupIpcHandlers(
 			openAtLogin: loginSettings.openAtLogin,
 			autoUpdate: isAutoUpdateEnabled(),
 			version: app.getVersion(),
+			isDev: !app.isPackaged,
 			platform: process.platform,
 			// Wayland: captura de tela só pelo portal do sistema (seletor nativo a cada captura)
 			isWayland:
@@ -184,6 +186,10 @@ export function setupIpcHandlers(
 
 	ipcMain.handle("check-for-updates", async () => {
 		return await checkForUpdatesNow();
+	});
+
+	ipcMain.handle("download-update", async () => {
+		return await downloadUpdateNow();
 	});
 
 	// Get available window & screen sources with PID resolution
@@ -289,6 +295,14 @@ const DEFAULT_API_URL = "https://share.shirobot.xyz";
 
 	ipcMain.on("window-close", () => {
 		if (window && !window.isDestroyed()) window.close();
+	});
+
+	ipcMain.on("window-focus", () => {
+		if (window && !window.isDestroyed()) {
+			if (window.isMinimized()) window.restore();
+			window.show();
+			window.focus();
+		}
 	});
 
 	// Stream Deck bridge: renderer reports its screen-share state
