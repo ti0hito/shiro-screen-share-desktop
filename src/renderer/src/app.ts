@@ -45,6 +45,7 @@ import {
 	Pencil,
 	Play,
 	PlayCircle,
+	Plus,
 	Power,
 	Radio,
 	RefreshCw,
@@ -1187,18 +1188,26 @@ class ShiroApp {
 
 		const steps: TourStep[] = [
 			{
-				title: "Entre em uma sala",
-				text: `Toda transmissão acontece dentro de uma sala. Clique em <b>+ Criar</b> para criar a sua,
-					use <b>Entrar p/ ID</b>, ou selecione uma sala existente na lista ao lado.`,
-				target: () => document.querySelector(".rooms-header-actions"),
+				title: "Entre ou Crie uma Sala",
+				text: `Toda transmissão acontece dentro de uma sala. Clique em <b>Criar</b> para iniciar uma sala sua, use <b>ID</b> para entrar pelo código de sala, ou selecione qualquer sala da lista.`,
+				target: () => document.querySelector(".rooms-only-tabs") ?? document.querySelector(".rooms-header-actions"),
 				onEnter: () => expandSidebar(),
 				completeWhen: () => !!this.currentRoom,
-				waitingHint: "Crie ou entre em uma sala para continuar",
+				waitingHint: "Crie ou entre em uma sala para continuar o tour",
+			},
+			{
+				title: "Código de Convite Direto (INV)",
+				text: `No card da sua sala conectada, você tem o botão de <b>Link de Convite</b> (🔗) e o <b>Código de Convite Direto</b> (<code>INV-XXXXXX</code>). Compartilhe esse código para que amigos e visitantes entrem direto sem precisar da senha de 8 dígitos!`,
+				target: () => document.getElementById("current-room-banner"),
+			},
+			{
+				title: "Painel Social: Amigos e Participantes",
+				text: `No menu lateral direito, veja quem está conectado <b>Na Sala</b> e use a aba <b>Amigos</b> para ver quem está online, adicionar amigos e convidá-los para sua sala com apenas 1 clique!`,
+				target: () => document.querySelector(".right-panel-tabs") ?? document.getElementById("panel-tab-friends"),
 			},
 			{
 				title: "Ajuste a qualidade e preset",
-				text: `Escolha um <b>preset</b> pronto ou ajuste <b>resolução</b> (1080p/720p), <b>FPS</b> (60/30) e <b>bitrate</b>.
-					O <b>Padrão</b> (1080p a 60 FPS) é perfeito para a maioria dos casos.`,
+				text: `Escolha um <b>preset</b> pronto ou ajuste <b>resolução</b> (1080p/720p), <b>FPS</b> (60/30) e <b>bitrate</b>. O <b>Padrão</b> (1080p a 60 FPS) é perfeito para a maioria dos casos.`,
 				target: () => document.getElementById("settings-popover"),
 				onEnter: () => openPopover("settings-popover", "btn-toggle-settings"),
 				onExit: () => closePopover("settings-popover", "btn-close-settings"),
@@ -1213,17 +1222,15 @@ class ShiroApp {
 				onExit: () => closePopover("audio-popover", "btn-close-audio"),
 			},
 			{
-				title: "Escolha a fonte e comece a transmitir",
-				text: `Clique no botão <b>Iniciar transmissão</b> para abrir o seletor de janelas e telas.
-					Escolha o que deseja compartilhar e confirme com 1 clique!`,
+				title: "Selecione e Transmita em 1 Clique",
+				text: `Clique no botão roxo <b>Transmitir Tela</b> para abrir o seletor. Basta clicar na janela ou tela desejada e a transmissão começa <b>imediatamente</b>!`,
 				target: () => document.getElementById("btn-start-stream"),
 				completeWhen: () => !!this.p2pManager?.getIsStreaming(),
-				waitingHint: "Clique em Iniciar transmissão e escolha sua fonte",
+				waitingHint: "Clique em Transmitir Tela e selecione sua janela ou tela",
 			},
 			{
 				title: "Você está ao vivo! 🎉",
-				text: `Para trocar o que está transmitindo sem derrubar a live, clique em <b>Trocar Fonte</b>.
-					Para finalizar, use <b>Encerrar transmissão</b>. Convide amigos pelo painel direito ou compartilhe o ID da sala!`,
+				text: `Precisa mudar de janela sem derrubar a live? Clique em <b>Trocar Fonte</b> e selecione outra fonte com 1 clique! Para encerrar, clique em <b>Encerrar Transmissão</b>.`,
 				target: () => document.getElementById("btn-stop-stream"),
 				nextLabel: "Concluir",
 			},
@@ -1447,8 +1454,8 @@ class ShiroApp {
 				}
 
 				closeCreateModal();
-				await this.refreshRooms();
 				await this.onRoomSelected(res.room);
+				await this.refreshRooms();
 			} catch (err: any) {
 				if (errorEl) errorEl.textContent = err?.message || "Erro ao criar sala.";
 			} finally {
@@ -1698,10 +1705,13 @@ class ShiroApp {
 		const tabFriends = document.getElementById("panel-tab-friends");
 		const panelFriends = document.getElementById("panel-friends");
 
+		const rightPanelTabs = document.querySelector(".right-panel-tabs");
 		if (this.currentRoom) {
 			tabUsers?.classList.remove("hidden");
+			rightPanelTabs?.classList.remove("single-tab");
 		} else {
 			tabUsers?.classList.add("hidden");
+			rightPanelTabs?.classList.add("single-tab");
 			if (tabUsers?.classList.contains("active")) {
 				tabUsers.classList.remove("active");
 				panelUsers?.classList.add("hidden");
@@ -1991,6 +2001,7 @@ class ShiroApp {
 							<div class="room-item-badges">
 								${isActive ? '<span class="badge-current-room">ATUAL</span>' : ""}
 								${isGlobal ? '<span class="badge-current-room">GLOBAL</span>' : ""}
+								${r.pinnedUntil && new Date(r.pinnedUntil).getTime() > Date.now() ? '<span class="badge-room-pinned" title="Sala Fixa (Não expira)"><i data-lucide="pin" style="width:10px;height:10px;"></i> FIXA</span>' : ""}
 								${streamCount > 0 ? `<span class="badge-room-live"><span class="live-dot"></span>${streamCount} live</span>` : ""}
 							</div>
 						</div>
@@ -2117,8 +2128,10 @@ class ShiroApp {
 
 		const isLocalStreaming = this.p2pManager?.getIsStreaming() && this.previewStream;
 
+		const myId = getUser()?.id;
+		const myUsername = getUser()?.username;
 		const activeRoomStreams = (this.currentRoom?.activeStreams ?? []).filter(
-			(s) => !(isLocalStreaming && s.userId === getUser()?.id) && !this.remoteStreams.has(s.userId),
+			(s) => s.userId !== myId && s.username !== myUsername && !this.remoteStreams.has(s.userId),
 		);
 
 		if (this.remoteStreams.size === 0 && !isLocalStreaming) {
@@ -3237,9 +3250,13 @@ class ShiroApp {
 		const btnRefresh = document.getElementById("btn-refresh-sources");
 
 		if (leftGrid) {
-			this.leftSourcePicker = new SourcePicker(leftGrid, (source) => {
-				this.onSourceSelected(source);
+			this.leftSourcePicker = new SourcePicker(leftGrid, async (source) => {
+				await this.onSourceSelected(source);
 				this.mainSourcePicker?.setSelectedSourceById?.(source.id);
+
+				// Apenas seleciona a fonte para permitir navegar pelas opções. O usuário confirma no botão do rodapé ou duplo-clique.
+				const btnConfirm = document.getElementById("btn-confirm-source-picker") as HTMLButtonElement | null;
+				if (btnConfirm) btnConfirm.disabled = false;
 			});
 		}
 
@@ -3772,6 +3789,11 @@ class ShiroApp {
 		this.audioVisualizer.stop();
 
 		if (this.currentRoom) {
+			const myId = getUser()?.id;
+			const myUsername = getUser()?.username;
+			this.currentRoom.activeStreams = (this.currentRoom.activeStreams || []).filter(
+				(s) => s.userId !== myId && s.username !== myUsername,
+			);
 			await notifyRoomStream(this.currentRoom.roomId, "stop");
 		}
 
@@ -5105,6 +5127,7 @@ class ShiroApp {
 		const inputName = document.getElementById("room-settings-name") as HTMLInputElement | null;
 		const inputPass = document.getElementById("room-settings-password") as HTMLInputElement | null;
 		const inputMax = document.getElementById("room-settings-max-members") as HTMLInputElement | null;
+		const inputPinned = document.getElementById("room-settings-pinned-days") as HTMLSelectElement | null;
 		const privacyBadge = document.getElementById("room-settings-privacy-badge");
 		const passHint = document.getElementById("room-settings-password-hint");
 		const removePassWrap = document.getElementById("room-settings-remove-password-wrap");
@@ -5137,6 +5160,17 @@ class ShiroApp {
 			}
 			if (inputMax) inputMax.value = (this.currentRoom.maxMembers || 15).toString();
 			if (codeText) codeText.textContent = this.currentRoom.inviteCode || "INV-XXXXXX";
+			if (inputPinned) {
+				if (this.currentRoom.pinnedUntil && new Date(this.currentRoom.pinnedUntil).getTime() > Date.now()) {
+					const daysLeft = Math.ceil((new Date(this.currentRoom.pinnedUntil).getTime() - Date.now()) / (24 * 60 * 60 * 1000));
+					if (daysLeft > 7) inputPinned.value = "14";
+					else if (daysLeft > 3) inputPinned.value = "7";
+					else if (daysLeft > 1) inputPinned.value = "3";
+					else inputPinned.value = "1";
+				} else {
+					inputPinned.value = "0";
+				}
+			}
 
 			if (removePassCheckbox) removePassCheckbox.checked = false;
 
@@ -5272,6 +5306,9 @@ class ShiroApp {
 
 			if (maxMembers && !isNaN(maxMembers)) {
 				updatePayload.maxMembers = maxMembers;
+			}
+			if (inputPinned) {
+				updatePayload.pinnedDays = parseInt(inputPinned.value, 10);
 			}
 
 			const res = await updateRoomSettings(this.currentRoom.roomId, updatePayload);
@@ -6906,7 +6943,7 @@ class ShiroApp {
 				icons: {
 					Sun, Moon, Monitor, Zap, Wifi, WifiOff, Target, RefreshCw,
 					AppWindow, ScreenShare, Video, PlayCircle, Volume1, Volume2, ShieldAlert, ShieldCheck,
-					VolumeX, MicOff, Radio, CheckCircle2, Play, Square, Loader2,
+					VolumeX, MicOff, Radio, CheckCircle2, Play, Plus, Square, Loader2,
 					Settings, X, Power, User, Users, Lock, Eye, EyeOff, LogOut, Search,
 					ChevronLeft, ChevronRight, Check, Copy, RotateCw, Sparkles, Globe,
 					UserCog, BadgeCheck, Camera, Image, Trash2, Clock,

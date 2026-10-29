@@ -273,9 +273,19 @@
               <span class="panel-tab-main-title">Salas</span>
               <span id="rooms-count-badge" class="badge-count hidden">0</span>
             </div>
-            <button id="btn-toggle-sidebar" class="sidebar-collapse-btn" title="Recolher painel de salas">
-              <i data-lucide="chevron-left"></i>
-            </button>
+            <div class="rooms-header-actions">
+              <button id="btn-open-join-by-id" class="btn btn-secondary btn-header-action" title="Entrar em sala por ID">
+                <i data-lucide="target"></i>
+                <span>ID</span>
+              </button>
+              <button id="btn-open-create-room" class="btn btn-primary btn-header-action" title="Criar nova sala">
+                <i data-lucide="plus"></i>
+                <span>Criar</span>
+              </button>
+              <button id="btn-toggle-sidebar" class="sidebar-collapse-btn" title="Recolher painel de salas">
+                <i data-lucide="chevron-left"></i>
+              </button>
+            </div>
           </div>
 
           <!-- Sub-painel: Salas de Transmissão -->
@@ -319,19 +329,7 @@
               </div>
             </div>
 
-            <div class="rooms-panel-header">
-              <span class="users-panel-title">Salas públicas</span>
-              <div class="rooms-header-actions">
-                <button id="btn-open-join-by-id" class="btn btn-secondary btn-sm" title="Entrar em sala pública ou privada por ID">
-                  <i data-lucide="target"></i>
-                  <span>Entrar p/ ID</span>
-                </button>
-                <button id="btn-open-create-room" class="btn btn-primary btn-sm" title="Criar nova sala">
-                  <i data-lucide="zap"></i>
-                  <span>+ Criar</span>
-                </button>
-              </div>
-            </div>
+            
 
             <!-- Campo de Busca / Lupa de Salas -->
             <div class="rooms-search-box">
@@ -1155,6 +1153,21 @@
             <i data-lucide="users" class="input-icon"></i>
             <input type="number" id="room-settings-max-members" class="auth-input" min="2" max="50" value="15">
           </div>
+        </div>
+
+        <div class="input-group">
+          <label for="room-settings-pinned-days" class="input-label">Fixar Sala (Não Expira ao Ficar Vazia)</label>
+          <div class="input-wrapper">
+            <i data-lucide="pin" class="input-icon"></i>
+            <select id="room-settings-pinned-days" class="auth-input select-input" style="cursor: pointer; background: #18181b; color: #f4f4f5;">
+              <option value="0">Desativado (exclui 10min após ficar vazia)</option>
+              <option value="1">Fixa por 1 dia</option>
+              <option value="3">Fixa por 3 dias</option>
+              <option value="7">Fixa por 7 dias (1 semana)</option>
+              <option value="14">Fixa por 14 dias (2 semanas - máximo)</option>
+            </select>
+          </div>
+          <span class="input-hint" id="room-settings-pinned-hint">Salas fixas não são apagadas quando todos saem, por até 2 semanas.</span>
         </div>
 
         <!-- Código de Convite Direto -->
