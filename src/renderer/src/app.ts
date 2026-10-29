@@ -1659,8 +1659,10 @@ class ShiroApp {
 
 	private getRoomMembersCount(room?: any): number {
 		if (!room) return 1;
+		const isCurrent = this.currentRoom?.roomId === room.roomId;
 		// Visitantes do navegador contam como pessoas na sala
-		return this.getRoomUsersCount(room) + (Array.isArray(room.guests) ? room.guests.length : 0);
+		const count = this.getRoomUsersCount(room) + (Array.isArray(room.guests) ? room.guests.length : 0);
+		return isCurrent ? Math.max(1, count) : count;
 	}
 
 	private getRoomUsersCount(room: any): number {
