@@ -773,15 +773,16 @@ class ShiroApp {
 
 					const username = activeStreamer?.username ?? onlineUser?.username ?? guest?.name ?? peerId;
 					const existing = this.remoteStreams.get(peerId);
-					let streamToUse = stream;
+					const tracks = new Map<string, MediaStreamTrack>();
 					if (existing) {
-						for (const track of stream.getTracks()) {
-							if (!existing.stream.getTracks().some((t) => t.id === track.id)) {
-								existing.stream.addTrack(track);
-							}
+						for (const t of existing.stream.getTracks()) {
+							if (t.readyState !== "ended") tracks.set(t.kind, t);
 						}
-						streamToUse = existing.stream;
 					}
+					for (const t of stream.getTracks()) {
+						if (t.readyState !== "ended") tracks.set(t.kind, t);
+					}
+					const streamToUse = new MediaStream(Array.from(tracks.values()));
 					this.remoteStreams.set(peerId, { stream: streamToUse, username });
 
 					// Se houver janela popout aberta, atualiza a stream do vídeo nela
@@ -842,7 +843,13 @@ class ShiroApp {
 		const me = getUser();
 		if (!me) return;
 		const stale = this.rooms.filter(
-			(r) => r.roomId !== this.currentRoom?.roomId && Array.isArray(r.members) && r.members.includes(me.username),
+			(r) =>
+				r.roomId !== this.currentRoom?.roomId &&
+				Array.isArray(r.members) &&
+				r.members.includes(me.username) &&
+				!r.activeStreams?.some(
+					(s) => s.username === me.username || (typeof s.userId === "string" && s.userId.startsWith(`${me.id}:web:`)),
+				),
 		);
 		if (stale.length === 0) return;
 
@@ -1071,7 +1078,9 @@ class ShiroApp {
 					break;
 				}
 				case "rooms-changed":
-					this.scheduleServerRefresh(event, this.roomsPoller);
+				case "room-changed":
+					this.scheduleServerRefresh("rooms-changed", this.roomsPoller);
+					this.scheduleServerRefresh("streams-changed", this.streamsPoller);
 					break;
 				case "friends-changed":
 					this.scheduleServerRefresh(event, this.friendsPoller);
@@ -1179,58 +1188,42 @@ class ShiroApp {
 		const steps: TourStep[] = [
 			{
 				title: "Entre em uma sala",
-				text: `Toda transmissão acontece dentro de uma sala. Clique em <b>Criar</b> para criar a sua:
-					<b>sem senha</b> ela fica <b>pública</b>; com uma <b>senha de 8 dígitos</b> ela fica <b>privada</b>.
-					Já tem o ID de uma sala? Use <b>Entrar por ID</b>, ou clique em uma sala da lista.`,
+				text: `Toda transmissão acontece dentro de uma sala. Clique em <b>+ Criar</b> para criar a sua,
+					use <b>Entrar p/ ID</b>, ou selecione uma sala existente na lista ao lado.`,
 				target: () => document.querySelector(".rooms-header-actions"),
-				onEnter: () => {
-					expandSidebar();
-					click("panel-tab-rooms");
-				},
+				onEnter: () => expandSidebar(),
 				completeWhen: () => !!this.currentRoom,
 				waitingHint: "Crie ou entre em uma sala para continuar",
 			},
 			{
-				title: "Escolha o que transmitir",
-				text: `Selecione a <b>janela</b> (um jogo, o navegador…) ou a <b>tela inteira</b> que você quer compartilhar.
-					Use as abas <b>Janelas</b> e <b>Telas</b> para alternar.`,
-				target: () => document.getElementById("panel-sources"),
-				onEnter: () => {
-					expandSidebar();
-					click("panel-tab-sources");
-				},
-				completeWhen: () => !!selectedSource(),
-				waitingHint: "Clique em uma janela ou tela para continuar",
-			},
-			{
-				title: "Ajuste a qualidade",
-				text: `Escolha um <b>preset</b> pronto ou ajuste <b>resolução</b>, <b>FPS</b> e <b>bitrate</b> à mão.
-					O <b>Padrão</b> (1080p a 60 FPS) serve para a maioria; para jogos rápidos use <b>Jogos</b>,
-					e se a internet de quem assiste for fraca, use <b>Economia</b>.`,
+				title: "Ajuste a qualidade e preset",
+				text: `Escolha um <b>preset</b> pronto ou ajuste <b>resolução</b> (1080p/720p), <b>FPS</b> (60/30) e <b>bitrate</b>.
+					O <b>Padrão</b> (1080p a 60 FPS) é perfeito para a maioria dos casos.`,
 				target: () => document.getElementById("settings-popover"),
 				onEnter: () => openPopover("settings-popover", "btn-toggle-settings"),
 				onExit: () => closePopover("settings-popover", "btn-close-settings"),
 			},
 			{
-				title: "Escolha o áudio",
-				text: `<b>Áudio do Processo</b>: só o som da janela escolhida (ideal para jogos).<br>
-					<b>Áudio do Sistema</b>: todo o som do PC.<br>
-					<b>Desativado</b>: transmite só o vídeo.`,
+				title: "Escolha o modo de áudio",
+				text: `<b>Áudio do Processo</b>: captura somente o som da janela escolhida (jogos, navegadores).<br>
+					<b>Áudio do Sistema</b>: todo o som do computador.<br>
+					<b>Desativado</b>: transmite apenas o vídeo.`,
 				target: () => document.getElementById("audio-popover"),
 				onEnter: () => openPopover("audio-popover", "btn-toggle-audio"),
 				onExit: () => closePopover("audio-popover", "btn-close-audio"),
 			},
 			{
-				title: "Comece a transmitir",
-				text: `Tudo pronto! Clique em <b>Iniciar transmissão</b> e quem estiver na sala já vai ver sua tela.`,
+				title: "Escolha a fonte e comece a transmitir",
+				text: `Clique no botão <b>Iniciar transmissão</b> para abrir o seletor de janelas e telas.
+					Escolha o que deseja compartilhar e confirme com 1 clique!`,
 				target: () => document.getElementById("btn-start-stream"),
 				completeWhen: () => !!this.p2pManager?.getIsStreaming(),
-				waitingHint: "Clique em Iniciar transmissão",
+				waitingHint: "Clique em Iniciar transmissão e escolha sua fonte",
 			},
 			{
 				title: "Você está ao vivo! 🎉",
-				text: `Para parar, clique em <b>Encerrar transmissão</b>. Chame seus amigos pela aba <b>Amigos</b>
-					ou compartilhe o ID da sala. Quer rever este tour? É só clicar no seu perfil/icone no topo da tela e clicar em <b>Tutorial</b>.`,
+				text: `Para trocar o que está transmitindo sem derrubar a live, clique em <b>Trocar Fonte</b>.
+					Para finalizar, use <b>Encerrar transmissão</b>. Convide amigos pelo painel direito ou compartilhe o ID da sala!`,
 				target: () => document.getElementById("btn-stop-stream"),
 				nextLabel: "Concluir",
 			},
@@ -1600,36 +1593,15 @@ class ShiroApp {
 			this.currentRoom = null;
 			this.maximizedStreamId = null;
 
-			// Atualiza banner e header
+			// Atualiza banner, header e estado do botão de transmissão
 			this.updateCurrentRoomBanner();
+			this.checkCanStartStream();
 
-			// Desabilita aba de fontes
-			const sourcesTab = document.getElementById("panel-tab-sources");
-			if (sourcesTab) {
-				sourcesTab.classList.add("disabled");
-				sourcesTab.setAttribute("disabled", "true");
-				sourcesTab.removeAttribute("data-tooltip");
-				sourcesTab.title = "";
-			}
-			const sourcesWrapper = sourcesTab?.closest(".panel-tab-wrapper");
-			if (sourcesWrapper) {
-				sourcesWrapper.setAttribute("data-tooltip", "Entre em uma sala para liberar as fontes");
-			}
-
-			// Volta para aba de salas no painel esquerdo e Amigos no painel direito
-			const tabRooms = document.getElementById("panel-tab-rooms");
-			const panelRooms = document.getElementById("panel-rooms");
-			const tabSources = document.getElementById("panel-tab-sources");
-			const panelSources = document.getElementById("panel-sources");
+			// Volta para Amigos no painel direito se estava na aba de Membros da Sala
 			const tabFriends = document.getElementById("panel-tab-friends");
 			const panelFriends = document.getElementById("panel-friends");
 			const tabUsers = document.getElementById("panel-tab-users");
 			const panelUsers = document.getElementById("panel-users");
-
-			tabSources?.classList.remove("active");
-			panelSources?.classList.add("hidden");
-			tabRooms?.classList.add("active");
-			panelRooms?.classList.remove("hidden");
 
 			tabUsers?.classList.remove("active");
 			tabUsers?.classList.add("hidden");
@@ -1880,6 +1852,13 @@ class ShiroApp {
 			const updated = this.rooms.find((r) => r.roomId === this.currentRoom!.roomId);
 			if (updated) {
 				this.currentRoom = updated;
+				const me = getUser();
+				if (me && this.p2pManager?.getIsStreaming()) {
+					const hasMyStream = (this.currentRoom.activeStreams ?? []).some((s) => s.userId === me.id);
+					if (!hasMyStream) {
+						void notifyRoomStream(this.currentRoom.roomId, "start");
+					}
+				}
 				this.autoConnectRoomStreams();
 			}
 		}
@@ -1919,6 +1898,10 @@ class ShiroApp {
 			this.updateCurrentRoomBanner();
 			this.renderRoomsList((document.getElementById("input-search-rooms") as HTMLInputElement | null)?.value.toLowerCase() ?? "");
 		}
+		const me = getUser();
+		if (me && this.p2pManager?.getIsStreaming() && !(streams ?? []).some((s) => s.userId === me.id)) {
+			void notifyRoomStream(room.roomId, "start");
+		}
 		// Conecta em transmissões ainda fora do grid (sem custo de API: usa os dados acima)
 		await this.autoConnectRoomStreams();
 		return true;
@@ -1949,10 +1932,11 @@ class ShiroApp {
 		// 2. Conecta a qualquer transmissão ativa na sala que ainda não esteja visível
 		if (this.autoConnectInFlight) return;
 		this.autoConnectInFlight = true;
+		const isLocalDesktopStreaming = Boolean(this.p2pManager?.getIsStreaming());
 		try {
 			for (const streamInfo of activeStreams) {
 				const peerId = streamInfo.userId;
-				if (!peerId || peerId === currentUser?.id || this.remoteStreams.has(peerId)) continue;
+				if (!peerId || (isLocalDesktopStreaming && peerId === currentUser?.id) || this.remoteStreams.has(peerId)) continue;
 
 				// Tentativa recente ainda em andamento: aguarda em vez de reofertar por cima
 				if (this.p2pManager?.isConnecting(peerId, 20_000)) continue;
@@ -1993,21 +1977,29 @@ class ShiroApp {
 				const isActive = this.currentRoom?.roomId === r.roomId;
 				const streamCount = Array.isArray(r.activeStreams) ? r.activeStreams.length : 0;
 				const membersCount = this.getRoomMembersCount(r);
-
+				const maxMembers = r.maxMembers || 15;
 				const isGlobal = r.roomId === "GERAL";
+
 				return `
 				<div class="room-item ${isActive ? "active" : ""} ${isGlobal ? "room-global" : ""}" data-room-id="${r.roomId}">
-					<div class="room-item-left">
-						<i data-lucide="${isGlobal ? "globe" : "radio"}" class="room-item-icon ${isGlobal ? "icon-global" : ""}"></i>
-						<div class="room-item-details">
-							<span class="room-item-name">${this.escapeHtml(r.name)}</span>
-							<span class="room-item-sub">ID: ${r.roomId} - ${membersCount} membro(s)</span>
+					<div class="room-item-main">
+						<div class="room-item-header">
+							<div class="room-item-title-wrap">
+								<i data-lucide="${isGlobal ? "globe" : r.isPrivate ? "lock" : "radio"}" class="room-item-icon ${r.isPrivate ? "icon-private" : "icon-public"}"></i>
+								<span class="room-item-name" title="${this.escapeHtml(r.name)}">${this.escapeHtml(r.name)}</span>
+							</div>
+							<div class="room-item-badges">
+								${isActive ? '<span class="badge-current-room">ATUAL</span>' : ""}
+								${isGlobal ? '<span class="badge-current-room">GLOBAL</span>' : ""}
+								${streamCount > 0 ? `<span class="badge-room-live"><span class="live-dot"></span>${streamCount} live</span>` : ""}
+							</div>
 						</div>
-					</div>
-					<div class="room-item-right">
-						${isGlobal ? '<span class="room-global-badge"><i data-lucide="globe"></i> GLOBAL</span>' : ""}
-						${r.isPrivate ? '<span class="room-lock-badge" title="Sala Privada (Protegida por senha)"><i data-lucide="lock"></i></span>' : ""}
-						${streamCount > 0 ? `<span class="room-streams-badge">${streamCount}</span>` : ""}
+						<div class="room-item-meta">
+							<code class="room-item-id">${r.roomId}</code>
+							<span class="room-item-dot">·</span>
+							<span class="room-item-members"><i data-lucide="users"></i> ${membersCount}/${maxMembers}</span>
+							${r.createdBy ? `<span class="room-item-dot">·</span><span class="room-item-creator">por ${this.escapeHtml(r.createdBy)}</span>` : ""}
+						</div>
 					</div>
 				</div>`;
 			})
@@ -2059,39 +2051,61 @@ class ShiroApp {
 
 		this.currentRoom = room;
 		console.log(`[App] Entrou na sala: ${room.name} (${room.roomId})`);
+		if (this.p2pManager?.getIsStreaming()) {
+			await notifyRoomStream(room.roomId, "start").catch((err) =>
+				console.warn("[App] Falha ao anunciar transmissão ao entrar na sala:", err),
+			);
+		}
 		this.updateCurrentRoomBanner();
+		this.checkCanStartStream();
 
-		// Desbloqueia e ativa a aba de Fontes ao entrar na sala (no painel esquerdo) e exibe a aba Na Sala (no painel direito)
-		const sourcesTab = document.getElementById("panel-tab-sources");
-		const panelSources = document.getElementById("panel-sources");
-		const tabRooms = document.getElementById("panel-tab-rooms");
+		// Exibe a aba de membros da sala no painel direito
 		const tabUsers = document.getElementById("panel-tab-users");
-		const panelRooms = document.getElementById("panel-rooms");
-
-		if (sourcesTab) {
-			sourcesTab.classList.remove("disabled");
-			sourcesTab.removeAttribute("disabled");
-			sourcesTab.setAttribute("data-tooltip", "Fontes de captura");
-			sourcesTab.title = "";
-		}
-		const sourcesWrapper = sourcesTab?.closest(".panel-tab-wrapper");
-		if (sourcesWrapper) {
-			sourcesWrapper.removeAttribute("data-tooltip");
-		}
-
 		tabUsers?.classList.remove("hidden");
-
-		// Ativa a aba de fontes no painel esquerdo para o usuário selecionar o que transmitir
-		[tabRooms, sourcesTab].forEach((t) => t?.classList.remove("active"));
-		[panelRooms, panelSources].forEach((p) => p?.classList.add("hidden"));
-		sourcesTab?.classList.add("active");
-		panelSources?.classList.remove("hidden");
 
 		// Auto-conecta as transmissões ativas já em andamento na sala
 		await this.autoConnectRoomStreams();
 		// Confere na hora quem está transmitindo (a sala recebida no join pode estar desatualizada)
 		this.streamsPoller?.trigger();
 		await this.refreshRooms();
+	}
+
+	private getStreamerProfile(peerId: string, username: string): { avatar?: string | null; nickname?: string; isGuest?: boolean } {
+		const baseId = peerId.split(":web:")[0];
+		const isGuest = peerId.startsWith("guest-") || peerId.startsWith("gst_") || peerId.startsWith("gst-") ||
+			baseId.startsWith("guest-") || baseId.startsWith("gst_") || baseId.startsWith("gst-");
+
+		// 1. Checa streams ativas da sala atual (onde o servidor já retorna avatar e guest)
+		const roomStream = this.currentRoom?.activeStreams?.find(
+			(s) => s.userId === peerId || s.userId === baseId || s.username?.toLowerCase() === username.toLowerCase(),
+		);
+		if (roomStream) {
+			return {
+				avatar: (roomStream as any).avatar,
+				nickname: (roomStream as any).nickname || roomStream.username,
+				isGuest: Boolean((roomStream as any).guest || isGuest),
+			};
+		}
+		// 2. Checa convidados registrados na sala
+		const guest = this.currentRoom?.guests?.find((g) => g.id === peerId || g.id === baseId);
+		if (guest) {
+			return { nickname: guest.name, isGuest: true };
+		}
+		// 3. Checa usuários online
+		const online = this.onlineUsers?.find(
+			(u) => u.id === peerId || u.id === baseId || u.username?.toLowerCase() === username.toLowerCase(),
+		);
+		if (online) {
+			return { avatar: online.avatar, nickname: online.nickname || online.username, isGuest: false };
+		}
+		// 4. Checa amigos
+		const friend = this.friends?.find(
+			(f) => f.id === peerId || f.id === baseId || f.username?.toLowerCase() === username.toLowerCase(),
+		);
+		if (friend) {
+			return { avatar: friend.avatar, nickname: friend.nickname || friend.username, isGuest: false };
+		}
+		return { isGuest };
 	}
 
 	// ------------------------------------------------------------------------------------------------------------------------------
@@ -2104,18 +2118,29 @@ class ShiroApp {
 		const isLocalStreaming = this.p2pManager?.getIsStreaming() && this.previewStream;
 
 		const activeRoomStreams = (this.currentRoom?.activeStreams ?? []).filter(
-			(s) => s.userId !== getUser()?.id && !this.remoteStreams.has(s.userId),
+			(s) => !(isLocalStreaming && s.userId === getUser()?.id) && !this.remoteStreams.has(s.userId),
 		);
 
 		if (this.remoteStreams.size === 0 && !isLocalStreaming) {
 			if (activeRoomStreams.length > 0) {
 				gridEl.innerHTML = activeRoomStreams
-					.map((s) => `
+					.map((s) => {
+						const profile = this.getStreamerProfile(s.userId, s.username);
+						const displayName = profile.nickname || s.username;
+						let avatarHtml = `<i data-lucide="video"></i>`;
+						if (!profile.isGuest) {
+							if (profile.avatar) {
+								avatarHtml = `<img src="${this.escapeHtml(profile.avatar)}" alt="${this.escapeHtml(displayName)}" class="stream-card-avatar" />`;
+							} else {
+								avatarHtml = `<span class="stream-card-avatar-initial">${this.escapeHtml(((displayName || "U")[0] || "U").toUpperCase())}</span>`;
+							}
+						}
+						return `
 						<div class="stream-card stream-card-connecting" data-peer-id="${s.userId}">
 							<div class="stream-card-header">
 								<div class="stream-card-user">
-									<i data-lucide="video"></i>
-									<span>Transmissão de ${this.escapeHtml(s.username)}</span>
+									${avatarHtml}
+									<span>Transmissão de ${this.escapeHtml(displayName)}</span>
 								</div>
 								<div class="stream-card-actions">
 									<span class="badge badge-connecting"><i data-lucide="loader-2" class="animate-spin"></i> CONECTANDO</span>
@@ -2123,13 +2148,14 @@ class ShiroApp {
 							</div>
 							<div class="stream-card-connecting-body">
 								<div class="stream-spinner"></div>
-								<p>Conectando à transmissão de <b>${this.escapeHtml(s.username)}</b>...</p>
+								<p>Conectando à transmissão de <b>${this.escapeHtml(displayName)}</b>...</p>
 								<button class="btn btn-secondary btn-sm btn-reconnect-stream" data-peer-id="${s.userId}" type="button" style="margin-top: 6px;">
 									<i data-lucide="refresh-cw"></i> Reconectar
 								</button>
 							</div>
 						</div>
-					`)
+					`;
+					})
 					.join("");
 
 				gridEl.querySelectorAll<HTMLButtonElement>(".btn-reconnect-stream").forEach((btn) => {
@@ -2153,7 +2179,7 @@ class ShiroApp {
 				<div id="main-grid-placeholder" class="main-grid-placeholder">
 					<i data-lucide="radio" class="placeholder-lucide-icon"></i>
 					<h3>Transmissões ao Vivo</h3>
-					<p>Nenhuma transmissão ativa nesta sala. Selecione uma fonte ao lado e clique em <b>Iniciar Transmissão</b>!</p>
+					<p>Nenhuma transmissão ativa nesta sala. Clique em <b>Iniciar transmissão</b> para escolher uma tela ou janela!</p>
 				</div>`;
 			this.refreshIcons();
 			return;
@@ -2170,11 +2196,17 @@ class ShiroApp {
 			localCard.id = "stream-card-local";
 
 			const user = getUser();
+			const userAvatar = user?.avatar;
+			const userName = user?.nickname || user?.username || "Você";
+			const avatarHtml = userAvatar
+				? `<img src="${this.escapeHtml(userAvatar)}" alt="${this.escapeHtml(userName)}" class="stream-card-avatar" />`
+				: `<span class="stream-card-avatar-initial">${this.escapeHtml(((userName || "V")[0] || "V").toUpperCase())}</span>`;
+
 			localCard.innerHTML = `
 				<div class="stream-card-header">
 					<div class="stream-card-user">
-						<i data-lucide="user"></i>
-						<span>${this.escapeHtml(user?.username ?? "Você")} (Você Transmitindo)</span>
+						${avatarHtml}
+						<span>${this.escapeHtml(userName)} (Você Transmitindo)</span>
 					</div>
 					<div class="stream-card-actions">
 						${this.popoutButtonHtml("local-preview")}
@@ -2230,11 +2262,22 @@ class ShiroApp {
 			const savedVol = this.getSavedStreamVolume(peerId);
 			const volIcon = savedVol === 0 ? "volume-x" : (savedVol < 50 ? "volume-1" : "volume-2");
 
+			const profile = this.getStreamerProfile(peerId, remoteData.username);
+			const displayName = profile.nickname || remoteData.username;
+			let avatarHtml = `<i data-lucide="video"></i>`;
+			if (!profile.isGuest) {
+				if (profile.avatar) {
+					avatarHtml = `<img src="${this.escapeHtml(profile.avatar)}" alt="${this.escapeHtml(displayName)}" class="stream-card-avatar" />`;
+				} else {
+					avatarHtml = `<span class="stream-card-avatar-initial">${this.escapeHtml(((displayName || "U")[0] || "U").toUpperCase())}</span>`;
+				}
+			}
+
 			remoteCard.innerHTML = `
 				<div class="stream-card-header">
 					<div class="stream-card-user">
-						<i data-lucide="video"></i>
-						<span>Transmissão de ${this.escapeHtml(remoteData.username)}</span>
+						${avatarHtml}
+						<span>Transmissão de ${this.escapeHtml(displayName)}</span>
 					</div>
 					<div class="stream-card-actions">
 						<div class="stream-volume-control" title="Volume da transmissão">
@@ -2430,27 +2473,31 @@ class ShiroApp {
 		};
 
 		if (!tryCapture()) {
-			const onData = () => {
-				if (tryCapture()) {
-					videoEl.removeEventListener("loadeddata", onData);
-					videoEl.removeEventListener("canplay", onData);
-					videoEl.removeEventListener("timeupdate", onData);
+			const events = ["loadedmetadata", "loadeddata", "canplay", "playing", "resize", "timeupdate"] as const;
+			const cleanup = () => {
+				for (const ev of events) {
+					videoEl.removeEventListener(ev, onData);
 				}
 			};
-			videoEl.addEventListener("loadeddata", onData);
-			videoEl.addEventListener("canplay", onData);
-			videoEl.addEventListener("timeupdate", onData);
+			const onData = () => {
+				if (tryCapture()) {
+					cleanup();
+				}
+			};
+			for (const ev of events) {
+				videoEl.addEventListener(ev, onData);
+			}
 
 			let attempts = 0;
 			const interval = setInterval(() => {
 				attempts++;
-				if (tryCapture() || attempts >= 20) {
+				if (tryCapture()) {
 					clearInterval(interval);
-					videoEl.removeEventListener("loadeddata", onData);
-					videoEl.removeEventListener("canplay", onData);
-					videoEl.removeEventListener("timeupdate", onData);
+					cleanup();
+				} else if (attempts >= 60) {
+					clearInterval(interval);
 				}
-			}, 150);
+			}, 200);
 		}
 	}
 
@@ -3467,26 +3514,95 @@ class ShiroApp {
 		this.showSystemNoticeToast({ id: `capture-ended-${Date.now()}`, date: "Agora", ...notice });
 	}
 
+	private sourcePickerMode: "start" | "change" = "start";
+
+	private openSourcePickerModal(mode: "start" | "change" = "start"): void {
+		this.sourcePickerMode = mode;
+		const modal = document.getElementById("modal-source-picker");
+		if (!modal) return;
+
+		const title = document.getElementById("modal-source-picker-title");
+		const confirmBtn = document.getElementById("btn-confirm-source-picker") as HTMLButtonElement | null;
+		const confirmLabel = document.getElementById("btn-confirm-source-label");
+
+		if (title) {
+			title.innerHTML = mode === "change"
+				? `<i data-lucide="layers" class="text-purple"></i> Trocar Fonte de Transmissão`
+				: `<i data-lucide="layers" class="text-purple"></i> Selecione o que deseja transmitir`;
+		}
+		if (confirmLabel) {
+			confirmLabel.textContent = mode === "change" ? "Trocar Fonte" : "Iniciar Transmissão";
+		}
+
+		modal.classList.remove("hidden");
+		void this.refreshSources();
+
+		const sel = this.leftSourcePicker?.getSelectedSource() ?? this.mainSourcePicker?.getSelectedSource();
+		if (confirmBtn) {
+			confirmBtn.disabled = !sel && !this.platformInfo.isWayland;
+		}
+		this.refreshIcons();
+	}
+
+	private setupSourcePickerModal(): void {
+		const modal = document.getElementById("modal-source-picker");
+		const btnClose = document.getElementById("btn-close-source-picker");
+		const btnCancel = document.getElementById("btn-cancel-source-picker");
+		const btnConfirm = document.getElementById("btn-confirm-source-picker") as HTMLButtonElement | null;
+
+		const closeModal = () => {
+			modal?.classList.add("hidden");
+		};
+
+		btnClose?.addEventListener("click", closeModal);
+		btnCancel?.addEventListener("click", closeModal);
+
+		modal?.addEventListener("click", (e) => {
+			if (e.target === modal) closeModal();
+		});
+
+		btnConfirm?.addEventListener("click", async () => {
+			closeModal();
+			if (this.sourcePickerMode === "start") {
+				await this.startStreaming();
+			} else {
+				this.showSystemNoticeToast({
+					id: `change-source-${Date.now()}`,
+					date: "Agora",
+					title: "Fonte alterada",
+					message: "A nova fonte de captura já está sendo transmitida.",
+					type: "info",
+				});
+			}
+		});
+
+		const grid = document.getElementById("sources-panel-grid");
+		grid?.addEventListener("dblclick", (e) => {
+			const card = (e.target as HTMLElement).closest(".source-card");
+			if (card && btnConfirm && !btnConfirm.disabled) {
+				btnConfirm.click();
+			}
+		});
+	}
+
 	private checkCanStartStream(): void {
 		const btnStart = document.getElementById("btn-start-stream") as HTMLButtonElement | null;
-		const selectedSource = this.leftSourcePicker?.getSelectedSource() ?? this.mainSourcePicker?.getSelectedSource();
-
 		if (!btnStart) return;
 
-		// Sem fonte selecionada, startStreaming usa a primeira disponível: só bloqueia se não houver nenhuma
-		if (selectedSource || this.allSources.length > 0 || this.platformInfo.isWayland) {
+		// Permite abrir o seletor de fontes se o usuário estiver em uma sala
+		if (this.currentRoom) {
 			btnStart.disabled = false;
-			btnStart.title = selectedSource ? "Iniciar transmissão P2P" : "Iniciar transmissão P2P (usa a primeira fonte disponível)";
+			btnStart.title = "Escolha uma tela ou janela e inicie sua transmissão";
 		} else {
 			btnStart.disabled = true;
-			btnStart.title = "Nenhuma fonte de captura encontrada";
+			btnStart.title = "Entre em uma sala para transmitir sua tela";
 		}
 	}
 
 	private async refreshSourcesIfActive(): Promise<void> {
 		if (document.hidden) return;
-		const panelSources = document.getElementById("panel-sources");
-		const isSourcesActive = panelSources && !panelSources.classList.contains("hidden");
+		const modal = document.getElementById("modal-source-picker");
+		const isSourcesActive = modal && !modal.classList.contains("hidden");
 		if (!isSourcesActive && this.allSources.length > 0) return;
 		await this.refreshSources();
 	}
@@ -3532,8 +3648,21 @@ class ShiroApp {
 	}
 
 	private setupStreamButtons(): void {
-		document.getElementById("btn-start-stream")?.addEventListener("click", () => this.startStreaming());
+		document.getElementById("btn-start-stream")?.addEventListener("click", () => {
+			if (!this.currentRoom) {
+				void this.showAlert("Entre em uma sala antes de transmitir.");
+				return;
+			}
+			this.openSourcePickerModal("start");
+		});
+
+		document.getElementById("btn-change-source")?.addEventListener("click", () => {
+			this.openSourcePickerModal("change");
+		});
+
 		document.getElementById("btn-stop-stream")?.addEventListener("click", () => this.stopStreaming());
+
+		this.setupSourcePickerModal();
 	}
 
 	private async startStreaming(): Promise<void> {
@@ -3602,6 +3731,7 @@ class ShiroApp {
 
 		document.getElementById("btn-start-stream")?.classList.add("hidden");
 		document.getElementById("btn-stop-stream")?.classList.remove("hidden");
+		document.getElementById("btn-change-source")?.classList.remove("hidden");
 
 		this.renderLiveStreamsGrid();
 
@@ -3669,6 +3799,7 @@ class ShiroApp {
 
 		document.getElementById("btn-start-stream")?.classList.remove("hidden");
 		document.getElementById("btn-stop-stream")?.classList.add("hidden");
+		document.getElementById("btn-change-source")?.classList.add("hidden");
 
 		this.renderLiveStreamsGrid();
 	}

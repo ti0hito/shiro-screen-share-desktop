@@ -60,10 +60,14 @@ function optimizeSdp(sdp: string): string {
 
 	// 2. Teto de banda de vídeo que ESTE lado aceita receber. Fica no maior preset do app
 	//    (15 Mbps): quem transmite controla o bitrate real via maxBitrate do sender.
+	//    De acordo com a RFC 4566, linhas b= devem aparecer logo após a linha c= da mídia.
 	const resultLines: string[] = [];
+	let inVideo = false;
 	for (const line of lines) {
+		if (line.startsWith("m=")) inVideo = line.startsWith("m=video");
+		if (inVideo && line.startsWith("b=")) continue;
 		resultLines.push(line);
-		if (line.startsWith("m=video")) {
+		if (inVideo && line.startsWith("c=")) {
 			resultLines.push(`b=AS:${MAX_VIDEO_BITRATE_KBPS}`);
 			resultLines.push(`b=TIAS:${MAX_VIDEO_BITRATE_KBPS * 1000}`);
 		}
@@ -255,7 +259,9 @@ export class P2PManager {
 			const matching = transceivers.find((t) => t.receiver.track?.kind === track.kind && t.direction !== "stopped");
 			if (matching) {
 				try {
-					if (!matching.sender.track) {
+					// Só chama addTrack quando o transceiver foi criado por setRemoteDescription (sem sender.track e sem currentDirection),
+					// evitando criar um segundo transceiver duplicado quando o primeiro veio de addTransceiver.
+					if (!matching.sender.track && pc.remoteDescription && matching.currentDirection === null) {
 						try {
 							pc.addTrack(track, this.localStream);
 						} catch {}
@@ -313,14 +319,17 @@ export class P2PManager {
 		for (const kind of ["video", "audio"] as const) {
 			const has = pc.getTransceivers().some((t) => t.receiver.track?.kind === kind && t.direction !== "stopped");
 			if (!has) {
-				pc.addTransceiver(kind, {
-					direction: this.localStream?.getTracks().some((t) => t.kind === kind) ? "sendrecv" : "recvonly",
-				});
+				const localTrack = this.localStream?.getTracks().find((t) => t.kind === kind);
+				if (localTrack && this.localStream) {
+					pc.addTrack(localTrack, this.localStream);
+				} else {
+					pc.addTransceiver(kind, { direction: "recvonly" });
+				}
 			}
 		}
 
-		prioritizeH264(pc);
 		await this.addLocalTracks(pc, targetUserId);
+		prioritizeH264(pc);
 
 		try {
 			const offer = await pc.createOffer();
@@ -471,17 +480,33 @@ export class P2PManager {
 		pc.ontrack = (e) => {
 			if (!isCurrent()) return;
 			console.log(`[P2P] ontrack de ${peerId}: kind=${e.track.kind}, id=${e.track.id}, streams=${e.streams.length}`);
-			let stream = this.remoteStreams.get(peerId);
-			if (!stream) {
-				stream = e.streams[0] || new MediaStream();
+			const emitUpdatedStream = () => {
+				if (!isCurrent()) return;
+				const prev = this.remoteStreams.get(peerId);
+				const tracks = new Map<string, MediaStreamTrack>();
+				if (prev) {
+					for (const t of prev.getTracks()) {
+						if (t.readyState !== "ended") tracks.set(t.kind, t);
+					}
+				}
+				if (e.streams?.[0]) {
+					for (const t of e.streams[0].getTracks()) {
+						if (t.readyState !== "ended") tracks.set(t.kind, t);
+					}
+				}
+				if (e.track.readyState !== "ended") {
+					tracks.set(e.track.kind, e.track);
+				}
+				const stream = new MediaStream(Array.from(tracks.values()));
 				this.remoteStreams.set(peerId, stream);
-			}
-			if (!stream.getTracks().some((t) => t.id === e.track.id)) {
-				stream.addTrack(e.track);
-			}
-			if (this.callbacks.onRemoteStream) {
-				this.callbacks.onRemoteStream(stream, peerId);
-			}
+				this.callbacks.onRemoteStream?.(stream, peerId);
+			};
+
+			emitUpdatedStream();
+			e.track.onunmute = () => {
+				console.log(`[P2P] Faixa ${e.track.kind} de ${peerId} desmutou (recebendo pacotes).`);
+				emitUpdatedStream();
+			};
 		};
 
 		this.peerConnections.set(peerId, pc);
@@ -571,8 +596,8 @@ export class P2PManager {
 		await this.drainPendingCandidates(fromUserId, pc);
 
 		// 2. Anexa faixas locais nos transceivers alinhados (se estiver transmitindo)
-		prioritizeH264(pc);
 		await this.addLocalTracks(pc, fromUserId);
+		prioritizeH264(pc);
 
 		// 3. Gera e envia a resposta
 		const answer = await pc.createAnswer();
