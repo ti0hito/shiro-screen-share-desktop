@@ -728,17 +728,25 @@ class ShiroApp {
 				},
 				onDisconnected: (peerId) => {
 					console.log(`[App] P2P desconectado de ${peerId}`);
+					const basePeerId = peerId.split(":web:")[0];
 					this.remoteStreams.delete(peerId);
+					if (basePeerId !== peerId) this.remoteStreams.delete(basePeerId);
 					this.renderLiveStreamsGrid();
 					if (this.remoteStreams.size === 0 && !this.p2pManager?.getIsStreaming()) {
 						setStreamStatus(false, "Desconectado");
 					}
 					// Se o usuário ainda estiver transmitindo na sala atual, agenda tentativa de reconexão limpa
-					const stillStreaming = this.currentRoom?.activeStreams?.some((s) => s.userId === peerId);
+					const stillStreaming = this.currentRoom?.activeStreams?.some(
+						(s) => s.userId === peerId || s.userId === basePeerId,
+					);
 					if (stillStreaming && this.currentRoom && !this.p2pManager?.isConnecting(peerId, 15_000)) {
 						console.log(`[App] Stream de ${peerId} ainda está ativa na sala. Agendando reconexão em 2.5s...`);
 						setTimeout(() => {
-							if (this.currentRoom?.activeStreams?.some((s) => s.userId === peerId) && !this.remoteStreams.has(peerId)) {
+							if (
+								this.currentRoom?.activeStreams?.some((s) => s.userId === peerId || s.userId === basePeerId) &&
+								!this.remoteStreams.has(peerId) &&
+								!this.remoteStreams.has(basePeerId)
+							) {
 								void this.p2pManager?.renegotiate(peerId, true);
 							}
 						}, 2500);
@@ -774,7 +782,9 @@ class ShiroApp {
 					}
 
 					const username = activeStreamer?.username ?? onlineUser?.username ?? guest?.name ?? peerId;
-					const existing = this.remoteStreams.get(peerId);
+					const canonicalId = activeStreamer?.userId ?? peerId;
+
+					const existing = this.remoteStreams.get(canonicalId) ?? this.remoteStreams.get(peerId);
 					const tracks = new Map<string, MediaStreamTrack>();
 					if (existing) {
 						for (const t of existing.stream.getTracks()) {
@@ -785,7 +795,10 @@ class ShiroApp {
 						if (t.readyState !== "ended") tracks.set(t.kind, t);
 					}
 					const streamToUse = new MediaStream(Array.from(tracks.values()));
-					this.remoteStreams.set(peerId, { stream: streamToUse, username });
+					this.remoteStreams.set(canonicalId, { stream: streamToUse, username });
+					if (canonicalId !== peerId) {
+						this.remoteStreams.delete(peerId);
+					}
 
 					// Se houver janela popout aberta, atualiza a stream do vídeo nela
 					const popout = this.activePopouts.get(peerId);
@@ -1915,6 +1928,17 @@ class ShiroApp {
 		return true;
 	}
 
+	private hasRemoteStream(userIdOrPeerId: string): boolean {
+		if (this.remoteStreams.has(userIdOrPeerId)) return true;
+		const base = userIdOrPeerId.split(":web:")[0];
+		for (const key of this.remoteStreams.keys()) {
+			if (key === userIdOrPeerId || key === base || key.split(":web:")[0] === base) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	private async autoConnectRoomStreams(): Promise<void> {
 		if (!this.currentRoom) return;
 		const currentUser = getUser();
@@ -1922,7 +1946,8 @@ class ShiroApp {
 
 		// 1. Remove qualquer remoteStream que não esteja mais transmitindo nesta sala
 		for (const [peerId] of this.remoteStreams) {
-			const isStillStreaming = activeStreams.some((s) => s.userId === peerId);
+			const basePeerId = peerId.split(":web:")[0];
+			const isStillStreaming = activeStreams.some((s) => s.userId === peerId || s.userId === basePeerId);
 			if (!isStillStreaming) {
 				console.log(`[App] Transmissão de ${peerId} encerrada. Removendo do grid.`);
 				this.closeStreamPopout(peerId);
@@ -1944,7 +1969,7 @@ class ShiroApp {
 		try {
 			for (const streamInfo of activeStreams) {
 				const peerId = streamInfo.userId;
-				if (!peerId || (isLocalDesktopStreaming && peerId === currentUser?.id) || this.remoteStreams.has(peerId)) continue;
+				if (!peerId || (isLocalDesktopStreaming && (peerId === currentUser?.id || streamInfo.username === currentUser?.username)) || this.hasRemoteStream(peerId)) continue;
 
 				// Tentativa recente ainda em andamento ou já conectado: aguarda em vez de reofertar por cima
 				if (this.p2pManager?.isConnecting(peerId, 15_000) || this.p2pManager?.isConnected(peerId)) continue;
@@ -2054,12 +2079,21 @@ class ShiroApp {
 			await leaveRoom(this.currentRoom.roomId);
 			this.p2pManager?.hangupAll();
 			this.remoteStreams.clear();
-			this.maximizedStreamId = null;
-			this.renderLiveStreamsGrid();
 		}
+
+		// Garante que o estado de tela maximizada seja resetado ao trocar ou entrar em sala
+		this.maximizedStreamId = null;
+		const rightSectionEl = document.querySelector(".right-section");
+		rightSectionEl?.classList.remove("maximized-active");
+		const gridEl = document.getElementById("live-streams-grid");
+		gridEl?.classList.remove("maximized-active");
 
 		this.currentRoom = room;
 		console.log(`[App] Entrou na sala: ${room.name} (${room.roomId})`);
+
+		// Renderiza o grid imediatamente para dar feedback visual de conexão instantâneo (0ms)
+		this.renderLiveStreamsGrid();
+
 		if (this.p2pManager?.getIsStreaming()) {
 			await notifyRoomStream(room.roomId, "start").catch((err) =>
 				console.warn("[App] Falha ao anunciar transmissão ao entrar na sala:", err),
@@ -2130,11 +2164,16 @@ class ShiroApp {
 		const myUsername = getUser()?.username;
 		const isLocalDesktopStreaming = Boolean(this.p2pManager?.getIsStreaming());
 		const activeRoomStreams = (this.currentRoom?.activeStreams ?? []).filter(
-			(s) => !(isLocalDesktopStreaming && (s.userId === myId || s.username === myUsername)) && !this.remoteStreams.has(s.userId),
+			(s) => !(isLocalDesktopStreaming && (s.userId === myId || s.username === myUsername)) && !this.hasRemoteStream(s.userId),
 		);
 
 		if (this.remoteStreams.size === 0 && !isLocalStreaming) {
 			if (activeRoomStreams.length > 0) {
+				const rightSectionEl = document.querySelector(".right-section");
+				rightSectionEl?.classList.remove("maximized-active");
+				gridEl.classList.remove("maximized-active");
+				gridEl.dataset.count = activeRoomStreams.length.toString();
+
 				gridEl.innerHTML = activeRoomStreams
 					.map((s) => {
 						const profile = this.getStreamerProfile(s.userId, s.username);
@@ -2186,6 +2225,11 @@ class ShiroApp {
 				this.refreshIcons();
 				return;
 			}
+
+			const rightSectionEl = document.querySelector(".right-section");
+			rightSectionEl?.classList.remove("maximized-active");
+			gridEl.classList.remove("maximized-active");
+			gridEl.dataset.count = "0";
 
 			gridEl.innerHTML = `
 				<div id="main-grid-placeholder" class="main-grid-placeholder">
@@ -2436,7 +2480,7 @@ class ShiroApp {
 		// 3. Remove cards de conexão que já conectaram ou não existem mais
 		gridEl.querySelectorAll<HTMLElement>(".stream-card-connecting").forEach((c) => {
 			const peerId = c.dataset.peerId;
-			if (!peerId || this.remoteStreams.has(peerId) || !activeRoomStreams.some((s) => s.userId === peerId)) {
+			if (!peerId || this.hasRemoteStream(peerId) || !activeRoomStreams.some((s) => s.userId === peerId)) {
 				c.remove();
 			}
 		});
