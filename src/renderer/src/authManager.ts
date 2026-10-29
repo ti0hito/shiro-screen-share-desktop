@@ -340,6 +340,7 @@ export interface RoomInfo {
 	members?: string[];
 	activeStreams: ActiveStreamInfo[];
 	guests?: RoomGuestInfo[];
+	pinnedUntil?: string | Date | null;
 	createdAt?: string;
 }
 
@@ -452,6 +453,7 @@ export async function updateRoomSettings(
 		password?: string | null;
 		maxMembers?: number;
 		regenerateInviteCode?: boolean;
+		pinnedDays?: number | null;
 	},
 ): Promise<{ ok: boolean; error?: string; room?: RoomInfo }> {
 	const token = getToken();

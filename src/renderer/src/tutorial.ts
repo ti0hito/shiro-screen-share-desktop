@@ -186,11 +186,12 @@ export class GuidedTour {
 		}
 
 		this.spotlight.classList.remove("tour-spotlight-full");
+		const MIN_MARGIN = 4;
 		const hole = {
-			left: Math.max(0, rect.left - SPOTLIGHT_PADDING),
-			top: Math.max(0, rect.top - SPOTLIGHT_PADDING),
-			right: Math.min(vw, rect.right + SPOTLIGHT_PADDING),
-			bottom: Math.min(vh, rect.bottom + SPOTLIGHT_PADDING),
+			left: Math.max(MIN_MARGIN, rect.left - SPOTLIGHT_PADDING),
+			top: Math.max(MIN_MARGIN, rect.top - SPOTLIGHT_PADDING),
+			right: Math.min(vw - MIN_MARGIN, rect.right + SPOTLIGHT_PADDING),
+			bottom: Math.min(vh - MIN_MARGIN, rect.bottom + SPOTLIGHT_PADDING),
 		};
 		Object.assign(this.spotlight.style, {
 			left: `${hole.left}px`,

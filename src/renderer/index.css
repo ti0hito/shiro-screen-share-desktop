@@ -5550,7 +5550,7 @@ svg {
   pointer-events: none;
   box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.62);
   outline: 2px solid var(--accent-purple);
-  outline-offset: 0;
+  outline-offset: -2px;
   transition: left 0.25s ease, top 0.25s ease, width 0.25s ease, height 0.25s ease;
   animation: tourPulse 2s ease-in-out infinite;
 }
@@ -6683,4 +6683,147 @@ svg {
   padding: 12px 18px;
   border-top: 1px solid #27272a;
   background: #18181b;
+}
+
+/* Header refinado de salas com botões de ação e recolher */
+.rooms-only-tabs {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px 8px 12px;
+  border-bottom: 1px solid var(--border-color);
+  background: rgba(18, 18, 20, 0.4);
+  min-height: 50px;
+  box-sizing: border-box;
+}
+
+.rooms-only-tabs .rooms-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rooms-only-tabs .rooms-header-actions .btn-header-action {
+  height: 34px;
+  padding: 0 13px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  box-sizing: border-box;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.rooms-only-tabs .rooms-header-actions .btn-header-action svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.rooms-only-tabs .rooms-header-actions .btn-header-action.btn-secondary {
+  background: #18181b;
+  color: #f4f4f5;
+  border: 1px solid #27272a;
+}
+
+.rooms-only-tabs .rooms-header-actions .btn-header-action.btn-secondary:hover {
+  background: #27272a;
+  border-color: #3f3f46;
+}
+
+.rooms-only-tabs .rooms-header-actions .btn-header-action.btn-primary {
+  background: var(--accent-purple, #7c3aed);
+  color: #ffffff;
+  border: 1px solid transparent;
+}
+
+.rooms-only-tabs .rooms-header-actions .btn-header-action.btn-primary:hover {
+  background: #6d28d9;
+  box-shadow: 0 0 12px rgba(124, 58, 237, 0.45);
+}
+
+.rooms-only-tabs .sidebar-collapse-btn {
+  height: 34px;
+  width: 26px;
+  border-radius: 6px;
+  border-left: 1px solid var(--border-color);
+  margin-left: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Modal de fontes - Botões com padrão ShadCN */
+.modal-sources-footer .btn {
+  height: 36px;
+  padding: 0 16px;
+  border-radius: 6px !important;
+  font-size: 13px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  box-shadow: none;
+}
+
+.modal-sources-footer .btn-secondary {
+  background: #27272a;
+  color: #f4f4f5;
+  border: 1px solid #3f3f46;
+}
+
+.modal-sources-footer .btn-secondary:hover {
+  background: #3f3f46;
+}
+
+.modal-sources-footer .btn-primary {
+  background: var(--accent-purple, #7c3aed);
+  color: #fff;
+  border: 1px solid transparent;
+}
+
+.modal-sources-footer .btn-primary:hover:not(:disabled) {
+  background: #6d28d9;
+}
+
+/* Badge de sala fixa */
+.badge-room-pinned {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: rgba(168, 85, 247, 0.15);
+  border: 1px solid rgba(168, 85, 247, 0.35);
+  color: #c084fc;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+/* Painel direito com aba única (fora de sala) */
+.right-panel-tabs.single-tab,
+.right-panel-tabs:has(#panel-tab-users.hidden) {
+  border-bottom: 1px solid var(--border-color);
+  background: rgba(18, 18, 20, 0.4);
+}
+
+.right-panel-tabs.single-tab #panel-tab-friends,
+.right-panel-tabs:has(#panel-tab-users.hidden) #panel-tab-friends {
+  border-bottom-color: transparent !important;
+  cursor: default;
+  justify-content: center;
+  color: var(--text-main);
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: -0.01em;
+}
+
+.right-panel-tabs.single-tab #panel-tab-friends:hover,
+.right-panel-tabs:has(#panel-tab-users.hidden) #panel-tab-friends:hover {
+  color: var(--text-main);
 }
