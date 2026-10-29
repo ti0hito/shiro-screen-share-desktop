@@ -266,19 +266,14 @@
         <!-- ── Painel Esquerdo ── -->
         <aside class="left-panel">
 
-          <!-- Abas: Salas / Fontes -->
-          <div class="panel-tabs">
-            <button id="panel-tab-rooms" class="panel-tab active" title="Salas de transmissão">
-              <i data-lucide="radio"></i>
-              <span>Salas</span>
-            </button>
-            <div class="panel-tab-wrapper" data-tooltip="Entre em uma sala para liberar as fontes">
-              <button id="panel-tab-sources" class="panel-tab disabled" disabled>
-                <i data-lucide="monitor"></i>
-                <span>Fontes</span>
-              </button>
+          <!-- Cabeçalho do Painel: Salas -->
+          <div class="panel-tabs rooms-only-tabs">
+            <div class="panel-tab-title-group">
+              <i data-lucide="radio" class="panel-tab-main-icon"></i>
+              <span class="panel-tab-main-title">Salas</span>
+              <span id="rooms-count-badge" class="badge-count hidden">0</span>
             </div>
-            <button id="btn-toggle-sidebar" class="sidebar-collapse-btn" title="Recolher painel esquerdo">
+            <button id="btn-toggle-sidebar" class="sidebar-collapse-btn" title="Recolher painel de salas">
               <i data-lucide="chevron-left"></i>
             </button>
           </div>
@@ -359,34 +354,6 @@
             </button>
           </div>
 
-          <!-- Sub-painel: Fontes (Janela / Tela) -->
-          <div id="panel-sources" class="panel-section hidden">
-            <div class="sub-tabs-container">
-              <div class="sub-tabs-track">
-                <div class="sub-tabs-indicator"></div>
-                <button id="tab-windows" class="sub-tab-btn active">
-                  <i data-lucide="app-window"></i> <span>Janela</span>
-                </button>
-                <button id="tab-screens" class="sub-tab-btn">
-                  <i data-lucide="screen-share"></i> <span>Tela</span>
-                </button>
-              </div>
-            </div>
-
-            <!-- Grid compacto 2x2 de fontes no painel esquerdo -->
-            <div id="sources-panel-grid" class="sources-panel-grid">
-              <div class="loading-spinner">
-                <i data-lucide="loader-2" class="spin"></i>
-                <span>Carregando...</span>
-              </div>
-            </div>
-
-            <button id="btn-refresh-sources" class="btn btn-ghost btn-sm panel-refresh-btn" title="Atualizar">
-              <i data-lucide="refresh-cw"></i>
-              <span>Atualizar Fontes</span>
-            </button>
-          </div>
-
         </aside>
 
         <!-- ── Área Central: Transmissões ao Vivo ── -->
@@ -422,6 +389,10 @@
               <button id="btn-stop-stream" class="btn btn-danger btn-start hidden">
                 <i data-lucide="square"></i>
                 <span>Encerrar transmissão</span>
+              </button>
+              <button id="btn-change-source" class="btn btn-secondary btn-start hidden" title="Trocar janela ou tela transmitida">
+                <i data-lucide="layers"></i>
+                <span>Trocar Fonte</span>
               </button>
             </div>
 
@@ -673,6 +644,56 @@
     </div><!-- /view-main -->
 
   </div><!-- /app -->
+
+  <!-- ======================================================= -->
+  <!-- MODAL: SELEÇÃO DE FONTE (JANELAS / TELAS)               -->
+  <!-- ======================================================= -->
+  <div id="modal-source-picker" class="modal-overlay hidden">
+    <div class="modal-card modal-sources-card">
+      <div class="modal-header">
+        <div class="modal-header-info">
+          <h3 id="modal-source-picker-title"><i data-lucide="layers" class="text-purple"></i> Selecione o que deseja transmitir</h3>
+          <p class="modal-subtitle">Escolha uma janela ou tela inteira para transmitir</p>
+        </div>
+        <button id="btn-close-source-picker" class="modal-close-btn" type="button" title="Fechar"><i data-lucide="x"></i></button>
+      </div>
+
+      <div class="modal-body modal-sources-body">
+        <div class="source-picker-toolbar">
+          <div class="sub-tabs-container">
+            <div class="sub-tabs-track">
+              <div class="sub-tabs-indicator"></div>
+              <button id="tab-windows" class="sub-tab-btn active" type="button">
+                <i data-lucide="app-window"></i> <span>Janelas</span>
+              </button>
+              <button id="tab-screens" class="sub-tab-btn" type="button">
+                <i data-lucide="screen-share"></i> <span>Telas</span>
+              </button>
+            </div>
+          </div>
+          <button id="btn-refresh-sources" class="btn btn-ghost btn-sm" title="Recarregar fontes" type="button">
+            <i data-lucide="refresh-cw"></i>
+            <span>Recarregar</span>
+          </button>
+        </div>
+
+        <div id="sources-panel-grid" class="sources-modal-grid">
+          <div class="loading-spinner">
+            <i data-lucide="loader-2" class="spin"></i>
+            <span>Carregando fontes disponíveis...</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer modal-sources-footer">
+        <button id="btn-cancel-source-picker" class="btn btn-secondary" type="button">Cancelar</button>
+        <button id="btn-confirm-source-picker" class="btn btn-primary" type="button" disabled>
+          <i data-lucide="play"></i>
+          <span id="btn-confirm-source-label">Iniciar Transmissão</span>
+        </button>
+      </div>
+    </div>
+  </div>
 
   <!-- ======================================================= -->
   <!-- MODAL: CRIAR SALA                                       -->
