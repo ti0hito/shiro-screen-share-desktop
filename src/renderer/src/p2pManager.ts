@@ -138,12 +138,67 @@ export class P2PManager {
 	private peerQueues = new Map<string, Promise<void>>();
 	// Momento em que a tentativa de conexão atual com cada peer começou
 	private connectStartedAt = new Map<string, number>();
+	// Momento da última oferta gerada para cada peer
+	private lastOfferAt = new Map<string, number>();
 	// "disconnected" costuma ser passageiro (oscilação de rede): espera antes de derrubar o vídeo
 	private disconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
+	// Watchdog anti-congelamento (recupera conexões presas em connecting ou sem vídeo)
+	private watchdogTimer: ReturnType<typeof setInterval> | null = null;
 
 	constructor(myUserId: string, callbacks: P2PCallbacks) {
 		this.myUserId = myUserId;
 		this.callbacks = callbacks;
+		this.startWatchdog();
+	}
+
+	private startWatchdog(): void {
+		if (this.watchdogTimer) return;
+		this.watchdogTimer = setInterval(() => this.checkStuckConnections(), 3500);
+	}
+
+	private checkStuckConnections(): void {
+		const now = Date.now();
+		const CONNECT_STUCK_TIMEOUT_MS = 15000;
+		const NO_VIDEO_RENEGOTIATE_MS = 12000;
+
+		for (const [peerId, pc] of this.peerConnections) {
+			if (pc.connectionState === "closed") continue;
+
+			// Ignora caso este peer não seja mais permitido (ex: saiu da sala)
+			if (this.callbacks.isPeerAllowed && !this.callbacks.isPeerAllowed(peerId)) {
+				continue;
+			}
+
+			const startedAt = this.connectStartedAt.get(peerId) ?? 0;
+			const lastOffer = this.lastOfferAt.get(peerId) ?? startedAt;
+			const state = pc.connectionState;
+
+			// 1. Preso em "new" ou "connecting" por muito tempo (sinal ou ICE perdido)
+			if ((state === "new" || state === "connecting") && now - startedAt > CONNECT_STUCK_TIMEOUT_MS) {
+				console.warn(`[P2P Watchdog] Peer ${peerId} preso em ${state} por mais de ${Math.round((now - startedAt) / 1000)}s. Forçando reconexão limpa...`);
+				this.connectStartedAt.set(peerId, now);
+				this.lastOfferAt.set(peerId, now);
+				void this.renegotiate(peerId, true);
+				continue;
+			}
+
+			// 2. Conectado via ICE, mas sem frames de vídeo chegando (se esperamos receber transmissão)
+			const hasActiveStream = this.remoteStreams.has(peerId);
+			const remoteStream = this.remoteStreams.get(peerId);
+			const videoTracks = remoteStream?.getVideoTracks() ?? [];
+			const hasLiveVideo = videoTracks.some((t) => t.readyState === "live" && !t.muted);
+
+			if (
+				(state === "connected" || pc.iceConnectionState === "connected") &&
+				(!hasActiveStream || !hasLiveVideo) &&
+				!this.isStreaming &&
+				now - lastOffer > NO_VIDEO_RENEGOTIATE_MS
+			) {
+				console.warn(`[P2P Watchdog] Peer ${peerId} conectado mas sem vídeo ativo após ${Math.round((now - lastOffer) / 1000)}s. Renegociando...`);
+				this.lastOfferAt.set(peerId, now);
+				void this.renegotiate(peerId, false);
+			}
+		}
 	}
 
 	/** Define o bitrate máximo do vídeo transmitido e aplica na hora às conexões abertas */
@@ -322,12 +377,19 @@ export class P2PManager {
 		}
 
 		await this.addLocalTracks(pc, targetUserId);
+		for (const t of pc.getTransceivers()) {
+			const kind = t.receiver.track?.kind;
+			if (kind !== "audio" && kind !== "video") continue;
+			const hasLocal = !!this.localStream?.getTracks().some((tr) => tr.kind === kind);
+			t.direction = hasLocal ? "sendrecv" : "recvonly";
+		}
 		prioritizeH264(pc);
 
 		try {
 			const offer = await pc.createOffer();
 			const optimizedSdp = optimizeSdp(offer.sdp || "");
 			await pc.setLocalDescription({ type: "offer", sdp: optimizedSdp });
+			this.lastOfferAt.set(targetUserId, Date.now());
 			console.log(`[P2P] Oferta criada e enviada para ${targetUserId}`);
 
 			await this.sendSignal("/api/signal/offer", {
@@ -381,6 +443,10 @@ export class P2PManager {
 	}
 
 	destroy(): void {
+		if (this.watchdogTimer) {
+			clearInterval(this.watchdogTimer);
+			this.watchdogTimer = null;
+		}
 		this.hangupAll();
 		this.sseCleanup?.();
 		this.sseCleanup = null;
@@ -590,6 +656,12 @@ export class P2PManager {
 
 		// 2. Anexa faixas locais nos transceivers alinhados (se estiver transmitindo)
 		await this.addLocalTracks(pc, fromUserId);
+		for (const t of pc.getTransceivers()) {
+			const kind = t.receiver.track?.kind;
+			if (kind !== "audio" && kind !== "video") continue;
+			const hasLocal = !!this.localStream?.getTracks().some((tr) => tr.kind === kind);
+			t.direction = hasLocal ? "sendrecv" : "recvonly";
+		}
 		prioritizeH264(pc);
 
 		// 3. Gera e envia a resposta
@@ -682,6 +754,7 @@ export class P2PManager {
 			this.remoteStreams.delete(peerId);
 			this.pendingCandidates.delete(peerId);
 			this.connectStartedAt.delete(peerId);
+			this.lastOfferAt.delete(peerId);
 			this.callbacks.onDisconnected(peerId);
 			console.log(`[P2P] PeerConnection com ${peerId} encerrada.`);
 		}
