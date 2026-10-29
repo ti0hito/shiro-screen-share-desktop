@@ -317,6 +317,7 @@ class ShiroApp {
 		this.setupCustomTooltips();
 		this.setupStreamDeckBridge();
 		this.setupQuitCleanup();
+		this.setupAboutAndLegalModals();
 		await this.loadAppInfo();
 		await this.setupDeepLinks();
 
@@ -841,28 +842,7 @@ class ShiroApp {
 	 * Como ele está online, o servidor nunca o remove sozinho: sai dessas salas aqui.
 	 */
 	private async leaveStaleRooms(): Promise<void> {
-		const me = getUser();
-		if (!me) return;
-		const stale = this.rooms.filter(
-			(r) =>
-				r.roomId !== this.currentRoom?.roomId &&
-				Array.isArray(r.members) &&
-				r.members.includes(me.username) &&
-				!r.activeStreams?.some(
-					(s) => s.username === me.username || (typeof s.userId === "string" && s.userId.startsWith(`${me.id}:web:`)),
-				),
-		);
-		if (stale.length === 0) return;
-
-		console.log(`[App] Saindo de ${stale.length} sala(s) antiga(s) onde o servidor ainda listava este usuário:`, stale.map((r) => r.roomId));
-		for (const room of stale) {
-			try {
-				await leaveRoom(room.roomId);
-			} catch (err) {
-				console.warn(`[App] Falha ao sair da sala antiga ${room.roomId}:`, err);
-			}
-		}
-		await this.refreshRooms();
+		// Não sai de salas automaticamente no boot. O usuário pode estar ativo no navegador ou em outro dispositivo.
 	}
 
 	/** Carrega versão e plataforma do app (badges do header e modo de captura do Linux) */
@@ -870,10 +850,32 @@ class ShiroApp {
 		try {
 			const settings = await window.api?.getAppSettings?.();
 			if (!settings) return;
-			if (settings.version) {
-				document.querySelectorAll<HTMLElement>(".app-version-badge").forEach((badge) => {
-					badge.textContent = `v${settings.version}`;
-				});
+			const versionStr = settings.version
+				? (settings.version.startsWith("v") ? settings.version : `v${settings.version}`)
+				: "v2.3.2";
+
+			document.querySelectorAll<HTMLElement>(".app-version-badge, .app-version-text").forEach((badge) => {
+				badge.textContent = versionStr;
+			});
+
+			const loginVersionEl = document.getElementById("login-app-version");
+			if (loginVersionEl) {
+				loginVersionEl.textContent = `Shiro Screen Share ${versionStr} — P2P`;
+			}
+
+			const aboutVersionEl = document.getElementById("about-app-version");
+			if (aboutVersionEl) {
+				aboutVersionEl.textContent = versionStr;
+			}
+
+			const toastVersionEl = document.getElementById("toast-update-version");
+			if (toastVersionEl) {
+				toastVersionEl.textContent = versionStr;
+			}
+
+			const mandatoryVersionEl = document.getElementById("mandatory-update-version");
+			if (mandatoryVersionEl) {
+				mandatoryVersionEl.textContent = versionStr;
 			}
 			this.isDev = !!settings.isDev;
 			this.platformInfo = { platform: settings.platform ?? "win32", isWayland: !!settings.isWayland };
@@ -1034,8 +1036,6 @@ class ShiroApp {
 		this.autoConnectRetryInterval = setInterval(() => {
 			if (this.currentRoom?.activeStreams?.length) this.autoConnectRoomStreams();
 		}, 10_000);
-
-		this.thumbnailInterval = setInterval(() => this.updateAllThumbnails(), 300_000); // Atualiza preview estática a cada 5 minutos (baixíssima frequência)
 	}
 
 	private stopPolling(): void {
@@ -1049,10 +1049,6 @@ class ShiroApp {
 		if (this.autoConnectRetryInterval) {
 			clearInterval(this.autoConnectRetryInterval);
 			this.autoConnectRetryInterval = null;
-		}
-		if (this.thumbnailInterval) {
-			clearInterval(this.thumbnailInterval);
-			this.thumbnailInterval = null;
 		}
 	}
 
@@ -1950,12 +1946,12 @@ class ShiroApp {
 				const peerId = streamInfo.userId;
 				if (!peerId || (isLocalDesktopStreaming && peerId === currentUser?.id) || this.remoteStreams.has(peerId)) continue;
 
-				// Tentativa recente ainda em andamento: aguarda em vez de reofertar por cima
-				if (this.p2pManager?.isConnecting(peerId, 20_000)) continue;
+				// Tentativa recente ainda em andamento ou já conectado: aguarda em vez de reofertar por cima
+				if (this.p2pManager?.isConnecting(peerId, 15_000) || this.p2pManager?.isConnected(peerId)) continue;
 
-				// Força reinício limpo para estabelecer nova oferta com transceivers adequados
-				console.log(`[App] Detectada stream ativa de ${streamInfo.username} (${peerId}) fora do grid. Iniciando conexão P2P limpa...`);
-				await this.p2pManager?.renegotiate(peerId, true);
+				// Inicia ou renegocia a conexão P2P sem derrubar conexões ativas
+				console.log(`[App] Detectada stream ativa de ${streamInfo.username} (${peerId}) fora do grid. Iniciando conexão P2P...`);
+				await this.p2pManager?.renegotiate(peerId, false);
 			}
 		} finally {
 			this.autoConnectInFlight = false;
@@ -2132,8 +2128,9 @@ class ShiroApp {
 
 		const myId = getUser()?.id;
 		const myUsername = getUser()?.username;
+		const isLocalDesktopStreaming = Boolean(this.p2pManager?.getIsStreaming());
 		const activeRoomStreams = (this.currentRoom?.activeStreams ?? []).filter(
-			(s) => s.userId !== myId && s.username !== myUsername && !this.remoteStreams.has(s.userId),
+			(s) => !(isLocalDesktopStreaming && (s.userId === myId || s.username === myUsername)) && !this.remoteStreams.has(s.userId),
 		);
 
 		if (this.remoteStreams.size === 0 && !isLocalStreaming) {
@@ -2202,197 +2199,252 @@ class ShiroApp {
 
 		const totalStreams = (isLocalStreaming ? 1 : 0) + this.remoteStreams.size + activeRoomStreams.length;
 		gridEl.dataset.count = totalStreams.toString();
-		gridEl.innerHTML = "";
 
+		// Remove placeholder caso exista
+		document.getElementById("main-grid-placeholder")?.remove();
+
+		// 1. Gerencia o Card de Transmissão Local
+		let localCard = document.getElementById("stream-card-local") as HTMLElement | null;
 		if (isLocalStreaming && this.previewStream) {
 			const isMax = this.maximizedStreamId === "local-preview";
-			const localCard = document.createElement("div");
-			localCard.className = `stream-card ${isMax ? "maximized" : ""}`;
-			localCard.id = "stream-card-local";
+			if (!localCard) {
+				localCard = document.createElement("div");
+				localCard.className = `stream-card ${isMax ? "maximized" : ""}`;
+				localCard.id = "stream-card-local";
 
-			const user = getUser();
-			const userAvatar = user?.avatar;
-			const userName = user?.nickname || user?.username || "Você";
-			const avatarHtml = userAvatar
-				? `<img src="${this.escapeHtml(userAvatar)}" alt="${this.escapeHtml(userName)}" class="stream-card-avatar" />`
-				: `<span class="stream-card-avatar-initial">${this.escapeHtml(((userName || "V")[0] || "V").toUpperCase())}</span>`;
+				const user = getUser();
+				const userAvatar = user?.avatar;
+				const userName = user?.nickname || user?.username || "Você";
+				const avatarHtml = userAvatar
+					? `<img src="${this.escapeHtml(userAvatar)}" alt="${this.escapeHtml(userName)}" class="stream-card-avatar" />`
+					: `<span class="stream-card-avatar-initial">${this.escapeHtml(((userName || "V")[0] || "V").toUpperCase())}</span>`;
 
-			localCard.innerHTML = `
-				<div class="stream-card-header">
-					<div class="stream-card-user">
-						${avatarHtml}
-						<span>${this.escapeHtml(userName)} (Você Transmitindo)</span>
-					</div>
-					<div class="stream-card-actions">
-						${this.popoutButtonHtml("local-preview")}
-						${this.fullscreenButtonHtml()}
-						<span class="badge badge-live">AO VIVO</span>
-					</div>
-				</div>
-				<div class="stream-card-preview-wrap ${isMax ? "hidden" : ""}">
-					<canvas class="stream-card-canvas"></canvas>
-					<div class="stream-card-center-overlay">
-						<div class="stream-card-play-pill">
-							<i data-lucide="play" class="stream-card-play-icon"></i>
-							<span>Abrir Transmissão</span>
+				localCard.innerHTML = `
+					<div class="stream-card-header">
+						<div class="stream-card-user">
+							${avatarHtml}
+							<span>${this.escapeHtml(userName)} (Você Transmitindo)</span>
+						</div>
+						<div class="stream-card-actions">
+							${this.popoutButtonHtml("local-preview")}
+							${this.fullscreenButtonHtml()}
+							<span class="badge badge-live">AO VIVO</span>
 						</div>
 					</div>
-				</div>
-				<video class="stream-card-video ${isMax ? "" : "hidden"}" autoplay playsinline muted></video>`;
+					<div class="stream-card-preview-wrap ${isMax ? "hidden" : ""}">
+						<div class="stream-card-center-overlay">
+							<div class="stream-card-play-pill">
+								<i data-lucide="play" class="stream-card-play-icon"></i>
+								<span>Abrir Transmissão</span>
+							</div>
+						</div>
+					</div>
+					<video class="stream-card-video" autoplay playsinline muted></video>`;
 
-			const videoEl = localCard.querySelector("video") as HTMLVideoElement;
-			const canvasEl = localCard.querySelector("canvas") as HTMLCanvasElement;
-			videoEl.srcObject = this.previewStream;
-			videoEl.muted = true;
-			videoEl.play().catch(() => { });
+				const videoEl = localCard.querySelector("video") as HTMLVideoElement;
+				videoEl.srcObject = this.previewStream;
+				videoEl.muted = true;
+				videoEl.play().catch(() => { });
 
-			this.captureInitialThumbnail(videoEl, canvasEl, "local-preview");
+				localCard.addEventListener("click", () => {
+					if (this.activePopouts.has("local-preview")) return;
+					this.toggleMaximizeStreamCard("local-preview", localCard!);
+				});
+				this.bindFullscreenButton(localCard, "local-preview");
+				this.bindPopoutButton(localCard, "local-preview", user?.username ?? "Você", this.previewStream);
 
-			localCard.addEventListener("click", () => {
-				if (this.activePopouts.has("local-preview")) return;
-				this.toggleMaximizeStreamCard("local-preview", localCard);
-			});
-			this.bindFullscreenButton(localCard, "local-preview");
-			this.bindPopoutButton(localCard, "local-preview", user?.username ?? "Você", this.previewStream);
+				gridEl.appendChild(localCard);
+			} else {
+				const videoEl = localCard.querySelector("video") as HTMLVideoElement | null;
+				if (videoEl && videoEl.srcObject !== this.previewStream) {
+					videoEl.srcObject = this.previewStream;
+					videoEl.muted = true;
+					videoEl.play().catch(() => {});
+				}
+			}
 
 			if (this.activePopouts.has("local-preview")) {
-				localCard.classList.add("is-popped-out");
-				localCard.appendChild(this.createPoppedOverlayElement("local-preview"));
+				if (!localCard.classList.contains("is-popped-out")) {
+					localCard.classList.add("is-popped-out");
+					localCard.appendChild(this.createPoppedOverlayElement("local-preview"));
+				}
 				const popData = this.activePopouts.get("local-preview");
-				if (popData?.win) {
+				const videoEl = localCard.querySelector("video") as HTMLVideoElement | null;
+				if (popData?.win && videoEl) {
 					videoEl.srcObject = null;
 					videoEl.pause();
 				}
+			} else {
+				localCard.classList.remove("is-popped-out");
+				localCard.querySelector(".stream-card-popped-overlay")?.remove();
 			}
-			gridEl.appendChild(localCard);
+		} else if (localCard) {
+			localCard.remove();
 		}
 
+		// 2. Gerencia os Cards de Transmissões Remotas
+		const currentRemotePeerIds = new Set<string>();
 		for (const [peerId, remoteData] of this.remoteStreams) {
+			currentRemotePeerIds.add(peerId);
 			const cardId = `stream-card-${peerId}`;
 			const isMax = this.maximizedStreamId === cardId;
-			const remoteCard = document.createElement("div");
-			remoteCard.className = `stream-card ${isMax ? "maximized" : ""}`;
-			remoteCard.id = cardId;
+			let remoteCard = document.getElementById(cardId) as HTMLElement | null;
 
-			const savedVol = this.getSavedStreamVolume(peerId);
-			const volIcon = savedVol === 0 ? "volume-x" : (savedVol < 50 ? "volume-1" : "volume-2");
+			if (!remoteCard) {
+				remoteCard = document.createElement("div");
+				remoteCard.className = `stream-card ${isMax ? "maximized" : ""}`;
+				remoteCard.id = cardId;
 
-			const profile = this.getStreamerProfile(peerId, remoteData.username);
-			const displayName = profile.nickname || remoteData.username;
-			let avatarHtml = `<i data-lucide="video"></i>`;
-			if (!profile.isGuest) {
-				if (profile.avatar) {
-					avatarHtml = `<img src="${this.escapeHtml(profile.avatar)}" alt="${this.escapeHtml(displayName)}" class="stream-card-avatar" />`;
-				} else {
-					avatarHtml = `<span class="stream-card-avatar-initial">${this.escapeHtml(((displayName || "U")[0] || "U").toUpperCase())}</span>`;
+				const savedVol = this.getSavedStreamVolume(peerId);
+				const volIcon = savedVol === 0 ? "volume-x" : (savedVol < 50 ? "volume-1" : "volume-2");
+
+				const isWebTab = peerId.includes(":web:");
+				const isSelfWeb = isWebTab && (remoteData.username === myUsername || peerId.startsWith(myId + ":web:"));
+				const profile = this.getStreamerProfile(peerId, remoteData.username);
+				const displayName = isSelfWeb ? `${profile.nickname || remoteData.username} (Navegador)` : (profile.nickname || remoteData.username);
+
+				let avatarHtml = `<i data-lucide="video"></i>`;
+				if (!profile.isGuest) {
+					if (profile.avatar) {
+						avatarHtml = `<img src="${this.escapeHtml(profile.avatar)}" alt="${this.escapeHtml(displayName)}" class="stream-card-avatar" />`;
+					} else {
+						avatarHtml = `<span class="stream-card-avatar-initial">${this.escapeHtml(((displayName || "U")[0] || "U").toUpperCase())}</span>`;
+					}
+				}
+
+				remoteCard.innerHTML = `
+					<div class="stream-card-header">
+						<div class="stream-card-user">
+							${avatarHtml}
+							<span>Transmissão de ${this.escapeHtml(displayName)}</span>
+						</div>
+						<div class="stream-card-actions">
+							<div class="stream-volume-control" title="Volume da transmissão">
+								<button class="stream-vol-btn" title="Silenciar / Ativar som" type="button">
+									<i data-lucide="${volIcon}"></i>
+								</button>
+								<input type="range" class="stream-vol-slider" min="0" max="100" value="${savedVol}">
+								<span class="stream-vol-percent">${savedVol}%</span>
+							</div>
+							${this.popoutButtonHtml(peerId)}
+							${this.fullscreenButtonHtml()}
+							<span class="badge badge-live">AO VIVO</span>
+						</div>
+					</div>
+					<div class="stream-card-preview-wrap ${isMax ? "hidden" : ""}">
+						<div class="stream-card-center-overlay">
+							<div class="stream-card-play-pill">
+								<i data-lucide="play" class="stream-card-play-icon"></i>
+								<span>Abrir Transmissão</span>
+							</div>
+						</div>
+					</div>
+					<video class="stream-card-video" autoplay playsinline></video>`;
+
+				const videoEl = remoteCard.querySelector("video") as HTMLVideoElement;
+				const volBtn = remoteCard.querySelector(".stream-vol-btn") as HTMLButtonElement;
+				const volSlider = remoteCard.querySelector(".stream-vol-slider") as HTMLInputElement;
+				const volPercent = remoteCard.querySelector(".stream-vol-percent") as HTMLSpanElement;
+
+				videoEl.srcObject = remoteData.stream;
+				videoEl.volume = savedVol / 100;
+				videoEl.muted = !isMax || savedVol === 0;
+				videoEl.play().catch(() => { });
+
+				const updateVolumeUI = (volume: number) => {
+					const isCurrentMax = this.maximizedStreamId === cardId;
+					videoEl.volume = volume / 100;
+					videoEl.muted = !isCurrentMax || volume === 0;
+					volSlider.value = volume.toString();
+					volPercent.textContent = `${volume}%`;
+					this.setSavedStreamVolume(peerId, volume);
+
+					const currentIcon = volume === 0 ? "volume-x" : (volume < 50 ? "volume-1" : "volume-2");
+					volBtn.innerHTML = `<i data-lucide="${currentIcon}"></i>`;
+					volBtn.title = volume === 0 ? "Ativar som" : "Silenciar";
+					this.refreshIcons();
+				};
+
+				volSlider.addEventListener("click", (e) => e.stopPropagation());
+				volSlider.addEventListener("input", (e) => {
+					e.stopPropagation();
+					const val = parseInt(volSlider.value, 10) || 0;
+					updateVolumeUI(val);
+				});
+
+				volBtn.addEventListener("click", (e) => {
+					e.stopPropagation();
+					const current = parseInt(volSlider.value, 10) || 0;
+					if (current > 0) {
+						remoteCard!.dataset.prevVolume = current.toString();
+						updateVolumeUI(0);
+					} else {
+						const prev = parseInt(remoteCard!.dataset.prevVolume || "100", 10) || 100;
+						updateVolumeUI(prev);
+					}
+				});
+
+				remoteCard.addEventListener("click", () => {
+					if (this.activePopouts.has(peerId)) {
+						const popData = this.activePopouts.get(peerId);
+						if (popData?.win && !popData.win.closed) {
+							popData.win.focus();
+						}
+						return;
+					}
+					this.toggleMaximizeStreamCard(cardId, remoteCard!);
+				});
+				this.bindFullscreenButton(remoteCard, cardId);
+				this.bindPopoutButton(remoteCard, peerId, remoteData.username, remoteData.stream);
+
+				gridEl.appendChild(remoteCard);
+			} else {
+				const videoEl = remoteCard.querySelector("video") as HTMLVideoElement | null;
+				if (videoEl && videoEl.srcObject !== remoteData.stream) {
+					videoEl.srcObject = remoteData.stream;
+					videoEl.play().catch(() => {});
 				}
 			}
 
-			remoteCard.innerHTML = `
-				<div class="stream-card-header">
-					<div class="stream-card-user">
-						${avatarHtml}
-						<span>Transmissão de ${this.escapeHtml(displayName)}</span>
-					</div>
-					<div class="stream-card-actions">
-						<div class="stream-volume-control" title="Volume da transmissão">
-							<button class="stream-vol-btn" title="Silenciar / Ativar som" type="button">
-								<i data-lucide="${volIcon}"></i>
-							</button>
-							<input type="range" class="stream-vol-slider" min="0" max="100" value="${savedVol}">
-							<span class="stream-vol-percent">${savedVol}%</span>
-						</div>
-						${this.popoutButtonHtml(peerId)}
-						${this.fullscreenButtonHtml()}
-						<span class="badge badge-live">AO VIVO</span>
-					</div>
-				</div>
-				<div class="stream-card-preview-wrap ${isMax ? "hidden" : ""}">
-					<canvas class="stream-card-canvas"></canvas>
-					<div class="stream-card-center-overlay">
-						<div class="stream-card-play-pill">
-							<i data-lucide="play" class="stream-card-play-icon"></i>
-							<span>Abrir Transmissão</span>
-						</div>
-					</div>
-				</div>
-				<video class="stream-card-video ${isMax ? "" : "hidden"}" autoplay playsinline></video>`;
-
-			const videoEl = remoteCard.querySelector("video") as HTMLVideoElement;
-			const canvasEl = remoteCard.querySelector("canvas") as HTMLCanvasElement;
-			const volBtn = remoteCard.querySelector(".stream-vol-btn") as HTMLButtonElement;
-			const volSlider = remoteCard.querySelector(".stream-vol-slider") as HTMLInputElement;
-			const volPercent = remoteCard.querySelector(".stream-vol-percent") as HTMLSpanElement;
-
-			videoEl.srcObject = remoteData.stream;
-			videoEl.volume = savedVol / 100;
-			// No modo preview (grid), o áudio fica mutado até o usuário abrir a transmissão
-			videoEl.muted = !isMax || savedVol === 0;
-			videoEl.play().catch(() => { });
-
-			const updateVolumeUI = (volume: number) => {
-				const isCurrentMax = this.maximizedStreamId === cardId;
-				videoEl.volume = volume / 100;
-				// Se a transmissão estiver aberta (maximizada), toca no volume desejado; se não mantém mudo na preview
-				videoEl.muted = !isCurrentMax || volume === 0;
-				volSlider.value = volume.toString();
-				volPercent.textContent = `${volume}%`;
-				this.setSavedStreamVolume(peerId, volume);
-
-				const currentIcon = volume === 0 ? "volume-x" : (volume < 50 ? "volume-1" : "volume-2");
-				volBtn.innerHTML = `<i data-lucide="${currentIcon}"></i>`;
-				volBtn.title = volume === 0 ? "Ativar som" : "Silenciar";
-				this.refreshIcons();
-			};
-
-			volSlider.addEventListener("click", (e) => e.stopPropagation());
-			volSlider.addEventListener("input", (e) => {
-				e.stopPropagation();
-				const val = parseInt(volSlider.value, 10) || 0;
-				updateVolumeUI(val);
-			});
-
-			volBtn.addEventListener("click", (e) => {
-				e.stopPropagation();
-				const current = parseInt(volSlider.value, 10) || 0;
-				if (current > 0) {
-					remoteCard.dataset.prevVolume = current.toString();
-					updateVolumeUI(0);
-				} else {
-					const prev = parseInt(remoteCard.dataset.prevVolume || "100", 10) || 100;
-					updateVolumeUI(prev);
-				}
-			});
-
-			this.captureInitialThumbnail(videoEl, canvasEl, peerId);
-
-			remoteCard.addEventListener("click", () => {
-				if (this.activePopouts.has(peerId)) {
-					const popData = this.activePopouts.get(peerId);
-					if (popData?.win && !popData.win.closed) {
-						popData.win.focus();
-					}
-					return;
-				}
-				this.toggleMaximizeStreamCard(cardId, remoteCard);
-			});
-			this.bindFullscreenButton(remoteCard, cardId);
-			this.bindPopoutButton(remoteCard, peerId, remoteData.username, remoteData.stream);
-
 			if (this.activePopouts.has(peerId)) {
-				remoteCard.classList.add("is-popped-out");
-				remoteCard.appendChild(this.createPoppedOverlayElement(peerId));
+				if (!remoteCard.classList.contains("is-popped-out")) {
+					remoteCard.classList.add("is-popped-out");
+					remoteCard.appendChild(this.createPoppedOverlayElement(peerId));
+				}
 				const popData = this.activePopouts.get(peerId);
-				// Apenas pausa no app se a janela for Document Picture-in-Picture (não PiP nativo que utiliza o mesmo videoEl)
-				if (popData?.win) {
+				const videoEl = remoteCard.querySelector("video") as HTMLVideoElement | null;
+				if (popData?.win && videoEl) {
 					videoEl.srcObject = null;
 					videoEl.pause();
 				}
+			} else {
+				remoteCard.classList.remove("is-popped-out");
+				remoteCard.querySelector(".stream-card-popped-overlay")?.remove();
 			}
-			gridEl.appendChild(remoteCard);
 		}
 
+		// Remove cards remotos que não estão mais ativos
+		gridEl.querySelectorAll<HTMLElement>(".stream-card").forEach((c) => {
+			if (c.id.startsWith("stream-card-") && c.id !== "stream-card-local") {
+				const peerId = c.id.replace("stream-card-", "");
+				if (!currentRemotePeerIds.has(peerId)) {
+					c.remove();
+				}
+			}
+		});
+
+		// 3. Remove cards de conexão que já conectaram ou não existem mais
+		gridEl.querySelectorAll<HTMLElement>(".stream-card-connecting").forEach((c) => {
+			const peerId = c.dataset.peerId;
+			if (!peerId || this.remoteStreams.has(peerId) || !activeRoomStreams.some((s) => s.userId === peerId)) {
+				c.remove();
+			}
+		});
+
+		// Adiciona cards de conexão para streams pendentes
 		for (const s of activeRoomStreams) {
+			if (gridEl.querySelector(`.stream-card-connecting[data-peer-id="${s.userId}"]`)) continue;
+
 			const connCard = document.createElement("div");
 			connCard.className = "stream-card stream-card-connecting";
 			connCard.dataset.peerId = s.userId;
@@ -2462,94 +2514,18 @@ class ShiroApp {
 		}
 
 		this.refreshIcons();
-		this.updateAllThumbnails();
 	}
 
-	private captureInitialThumbnail(videoEl: HTMLVideoElement, canvasEl: HTMLCanvasElement, streamId?: string): void {
-		if (streamId && this.streamThumbnailsCache.has(streamId)) {
-			const cached = this.streamThumbnailsCache.get(streamId)!;
-			if (canvasEl.width !== cached.width || canvasEl.height !== cached.height) {
-				canvasEl.width = cached.width;
-				canvasEl.height = cached.height;
-			}
-			const ctx = canvasEl.getContext("2d");
-			if (ctx) {
-				ctx.putImageData(cached, 0, 0);
-				return;
-			}
-		}
-
-		const tryCapture = (): boolean => {
-			if (videoEl.readyState >= 2 && videoEl.videoWidth > 0 && videoEl.videoHeight > 0) {
-				this.updateCardThumbnail(videoEl, canvasEl, streamId);
-				return true;
-			}
-			return false;
-		};
-
-		if (!tryCapture()) {
-			const events = ["loadedmetadata", "loadeddata", "canplay", "playing", "resize", "timeupdate"] as const;
-			const cleanup = () => {
-				for (const ev of events) {
-					videoEl.removeEventListener(ev, onData);
-				}
-			};
-			const onData = () => {
-				if (tryCapture()) {
-					cleanup();
-				}
-			};
-			for (const ev of events) {
-				videoEl.addEventListener(ev, onData);
-			}
-
-			let attempts = 0;
-			const interval = setInterval(() => {
-				attempts++;
-				if (tryCapture()) {
-					clearInterval(interval);
-					cleanup();
-				} else if (attempts >= 60) {
-					clearInterval(interval);
-				}
-			}, 200);
-		}
+	private captureInitialThumbnail(_videoEl: HTMLVideoElement, _canvasEl?: HTMLCanvasElement, _streamId?: string): void {
+		// Substituído por renderização direta em <video class="stream-card-video"> com aceleração por hardware
 	}
 
 	private updateAllThumbnails(): void {
-		if (document.hidden || this.maximizedStreamId) return;
-		const gridEl = document.getElementById("live-streams-grid");
-		if (!gridEl) return;
-
-		const cards = gridEl.querySelectorAll<HTMLElement>(".stream-card");
-		cards.forEach((card) => {
-			const videoEl = card.querySelector("video") as HTMLVideoElement | null;
-			const canvasEl = card.querySelector("canvas") as HTMLCanvasElement | null;
-			if (videoEl && canvasEl) {
-				const streamId = card.id === "stream-card-local" ? "local-preview" : card.id.replace("stream-card-", "");
-				this.updateCardThumbnail(videoEl, canvasEl, streamId);
-			}
-		});
+		// Substituído por renderização direta em <video class="stream-card-video"> com aceleração por hardware
 	}
 
-	private updateCardThumbnail(videoEl: HTMLVideoElement, canvasEl: HTMLCanvasElement, streamId?: string): void {
-		if (videoEl.readyState >= 2 && videoEl.videoWidth > 0 && videoEl.videoHeight > 0) {
-			if (canvasEl.width !== videoEl.videoWidth || canvasEl.height !== videoEl.videoHeight) {
-				canvasEl.width = videoEl.videoWidth;
-				canvasEl.height = videoEl.videoHeight;
-			}
-			const ctx = canvasEl.getContext("2d");
-			if (ctx) {
-				ctx.drawImage(videoEl, 0, 0, canvasEl.width, canvasEl.height);
-				if (streamId) {
-					try {
-						this.streamThumbnailsCache.set(streamId, ctx.getImageData(0, 0, canvasEl.width, canvasEl.height));
-					} catch {
-						// Ignora no caso de canvas protegido se ocorrer
-					}
-				}
-			}
-		}
+	private updateCardThumbnail(_videoEl: HTMLVideoElement, _canvasEl?: HTMLCanvasElement, _streamId?: string): void {
+		// Substituído por renderização direta em <video class="stream-card-video"> com aceleração por hardware
 	}
 
 	private toggleMaximizeStreamCard(cardId: string, cardEl: HTMLElement): void {
@@ -3160,16 +3136,14 @@ class ShiroApp {
 		if (rightSectionEl) rightSectionEl.classList.add("maximized-active");
 		if (gridEl) gridEl.classList.add("maximized-active");
 
-		document.querySelectorAll<HTMLElement>(".stream-card").forEach((c) => {
+		gridEl?.querySelectorAll<HTMLElement>(".stream-card").forEach((c) => {
 			const previewWrapEl = c.querySelector(".stream-card-preview-wrap");
-			const canvasEl = c.querySelector("canvas");
 			const videoEl = c.querySelector("video");
 
 			if (c === cardEl) {
 				c.classList.add("maximized");
 				c.style.display = "";
 				if (previewWrapEl) previewWrapEl.classList.add("hidden");
-				if (canvasEl) canvasEl.classList.add("hidden");
 				if (videoEl) {
 					videoEl.classList.remove("hidden");
 					const isLocal = cardId === "local-preview" || cardId === "stream-card-local";
@@ -3200,22 +3174,19 @@ class ShiroApp {
 		if (rightSectionEl) rightSectionEl.classList.remove("maximized-active");
 		if (gridEl) gridEl.classList.remove("maximized-active");
 
-		document.querySelectorAll<HTMLElement>(".stream-card").forEach((c) => {
+		gridEl?.querySelectorAll<HTMLElement>(".stream-card").forEach((c) => {
 			c.classList.remove("maximized");
 			c.style.display = "";
 			const previewWrapEl = c.querySelector(".stream-card-preview-wrap");
-			const canvasEl = c.querySelector("canvas");
 			const videoEl = c.querySelector("video");
 
 			if (videoEl) {
 				videoEl.muted = true; // Garante que o áudio seja silenciado ao voltar ao grid
-				videoEl.classList.add("hidden");
+				videoEl.classList.remove("hidden");
+				videoEl.play().catch(() => {});
 			}
 			if (previewWrapEl) previewWrapEl.classList.remove("hidden");
-			if (canvasEl) canvasEl.classList.remove("hidden");
 		});
-
-		this.updateAllThumbnails();
 	}
 
 	private setupSubTabs(): void {
@@ -4783,6 +4754,90 @@ class ShiroApp {
 		document.getElementById("btn-close-app-settings")?.addEventListener("click", closeSettings);
 		settingsModal?.addEventListener("click", (e) => {
 			if (e.target === settingsModal) closeSettings();
+		});
+	}
+
+	private setupAboutAndLegalModals(): void {
+		const aboutModal = document.getElementById("modal-about");
+		const legalModal = document.getElementById("modal-legal");
+
+		const openLegal = (tab: "terms" | "privacy") => {
+			if (!legalModal) return;
+			const isPrivacy = tab === "privacy";
+			const tabTerms = document.getElementById("tab-legal-terms");
+			const tabPrivacy = document.getElementById("tab-legal-privacy");
+			const contentTerms = document.getElementById("legal-content-terms");
+			const contentPrivacy = document.getElementById("legal-content-privacy");
+			const externalLink = document.getElementById("link-legal-external") as HTMLAnchorElement | null;
+
+			tabTerms?.classList.toggle("active", !isPrivacy);
+			tabPrivacy?.classList.toggle("active", isPrivacy);
+			contentTerms?.classList.toggle("hidden", isPrivacy);
+			contentPrivacy?.classList.toggle("hidden", !isPrivacy);
+
+			if (externalLink) {
+				externalLink.href = isPrivacy
+					? "https://share.shirobot.xyz/privacidade"
+					: "https://share.shirobot.xyz/termos";
+			}
+
+			this.showModal(legalModal);
+			this.refreshIcons();
+		};
+
+		// 1. Botões da tela de login
+		document.getElementById("btn-login-terms")?.addEventListener("click", (e) => {
+			e.preventDefault();
+			openLegal("terms");
+		});
+		document.getElementById("btn-login-privacy")?.addEventListener("click", (e) => {
+			e.preventDefault();
+			openLegal("privacy");
+		});
+
+		// 2. Menu "Sobre o App"
+		document.getElementById("btn-open-about")?.addEventListener("click", () => {
+			if (aboutModal) this.showModal(aboutModal);
+			this.refreshIcons();
+		});
+
+		const closeAbout = () => this.hideModalAnimated(aboutModal);
+		document.getElementById("btn-close-about")?.addEventListener("click", closeAbout);
+		aboutModal?.addEventListener("click", (e) => {
+			if (e.target === aboutModal) closeAbout();
+		});
+
+		// Botões dentro do modal Sobre
+		document.getElementById("btn-about-open-terms")?.addEventListener("click", () => {
+			closeAbout();
+			openLegal("terms");
+		});
+		document.getElementById("btn-about-open-privacy")?.addEventListener("click", () => {
+			closeAbout();
+			openLegal("privacy");
+		});
+		document.getElementById("btn-about-open-github")?.addEventListener("click", () => {
+			window.api?.openExternal?.("https://github.com/ti0hito/shiro-screen-share-desktop");
+		});
+
+		// 3. Modal Legal
+		const closeLegal = () => this.hideModalAnimated(legalModal);
+		document.getElementById("btn-close-legal")?.addEventListener("click", closeLegal);
+		document.getElementById("btn-close-legal-footer")?.addEventListener("click", closeLegal);
+		legalModal?.addEventListener("click", (e) => {
+			if (e.target === legalModal) closeLegal();
+		});
+
+		document.getElementById("tab-legal-terms")?.addEventListener("click", () => openLegal("terms"));
+		document.getElementById("tab-legal-privacy")?.addEventListener("click", () => openLegal("privacy"));
+
+		document.getElementById("btn-legal-open-browser")?.addEventListener("click", () => {
+			const tabPrivacy = document.getElementById("tab-legal-privacy");
+			const isPrivacy = tabPrivacy?.classList.contains("active");
+			const url = isPrivacy
+				? "https://share.shirobot.xyz/privacidade"
+				: "https://share.shirobot.xyz/termos";
+			window.api?.openExternal?.(url);
 		});
 	}
 

@@ -94,7 +94,7 @@
             <label class="checkbox-label" for="login-remember-me">
               <input type="checkbox" id="login-remember-me" name="rememberMe" class="custom-checkbox">
               <span class="checkbox-custom"></span>
-              <span class="checkbox-text">Lembrar login por 2 semanas</span>
+              <span class="checkbox-text">Lembrar login por 1 ano</span>
             </label>
           </div>
 
@@ -172,7 +172,16 @@
           </button>
         </form>
 
-        <p class="login-footer-text">Shiro Screen Share v2.1.0 — P2P</p>
+        <div class="login-legal-bar">
+          <span class="login-legal-label">Ao continuar, você concorda com nossos</span>
+          <div class="login-legal-links">
+            <button type="button" class="btn-legal-link" id="btn-login-terms">Termos de Uso</button>
+            <span class="legal-dot">•</span>
+            <button type="button" class="btn-legal-link" id="btn-login-privacy">Privacidade (LGPD)</button>
+          </div>
+        </div>
+
+        <p class="login-footer-text" id="login-app-version">Shiro Screen Share v2.3.2 — P2P</p>
       </div>
     </div>
 
@@ -241,6 +250,10 @@
                 <i data-lucide="refresh-cw" id="icon-check-updates-menu"></i>
                 <span id="text-check-updates-menu">Verificar Atualizações</span>
                 <span id="badge-update-menu" class="account-menu-badge hidden">NOVO</span>
+              </button>
+              <button type="button" id="btn-open-about" class="account-dropdown-item" role="menuitem">
+                <i data-lucide="info"></i>
+                <span>Sobre o App</span>
               </button>
               <div class="account-dropdown-divider"></div>
               <button type="button" id="btn-logout" class="account-dropdown-item account-dropdown-item-danger" role="menuitem">
@@ -1577,6 +1590,194 @@
         <button type="button" id="btn-mandatory-exit" class="btn btn-ghost" style="width: 100%; justify-content: center; font-size: 0.75rem; color: #71717a;">
           <span>Sair do Aplicativo</span>
         </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: SOBRE O APP -->
+  <div id="modal-about" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="about-modal-title">
+    <div class="modal-card modal-about-card">
+      <div class="modal-header">
+        <h3 id="about-modal-title"><i data-lucide="info"></i> Sobre o Shiro Screen Share</h3>
+        <button id="btn-close-about" class="modal-close-btn" type="button" aria-label="Fechar"><i data-lucide="x"></i></button>
+      </div>
+      <div class="modal-body about-modal-body">
+        <div class="about-hero">
+          <div class="about-logo-ring">
+            <img src="icon.ico" alt="Shiro Logo" class="about-logo-img" width="56" height="56">
+          </div>
+          <h2 class="about-app-title">Shiro Screen Share</h2>
+          <div class="about-badges-row">
+            <span class="badge badge-primary app-version-badge" id="about-app-version">v2.3.2</span>
+            <span class="badge badge-secondary">P2P WebRTC</span>
+            <span class="badge badge-secondary">WASAPI Loopback</span>
+          </div>
+          <p class="about-description">
+            Plataforma ultrarrápida de compartilhamento de tela e áudio com baixa latência, arquitetura ponto a ponto e captura isolada de processos.
+          </p>
+        </div>
+
+        <div class="about-info-grid">
+          <div class="about-info-item">
+            <i data-lucide="shield-check" class="about-item-icon"></i>
+            <div>
+              <strong>Privacidade P2P & LGPD</strong>
+              <span>Transmissões diretas criptografadas de ponta a ponta sem servidores gravando sua tela ou áudio.</span>
+            </div>
+          </div>
+          <div class="about-info-item">
+            <i data-lucide="volume-2" class="about-item-icon"></i>
+            <div>
+              <strong>Áudio Isolado por Processo</strong>
+              <span>Captura de som exclusiva do jogo ou janela selecionada, sem ruídos de chamadas ou notificações.</span>
+            </div>
+          </div>
+          <div class="about-info-item">
+            <i data-lucide="monitor" class="about-item-icon"></i>
+            <div>
+              <strong>Multiplataforma</strong>
+              <span>Transmita e assista no Desktop (Windows/Linux) e pelo Navegador (Web App) sem impedimentos.</span>
+            </div>
+          </div>
+          <div class="about-info-item">
+            <i data-lucide="code" class="about-item-icon"></i>
+            <div>
+              <strong>Desenvolvedor & Ecossistema</strong>
+              <span>Desenvolvido por <b>Itsuka Hito</b> · Associado ao ecossistema <b>shirobot.xyz</b>. Grátis e Open Source.</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="about-legal-actions">
+          <button type="button" id="btn-about-open-terms" class="btn btn-secondary btn-sm">
+            <i data-lucide="file-text"></i>
+            <span>Termos de Uso</span>
+          </button>
+          <button type="button" id="btn-about-open-privacy" class="btn btn-secondary btn-sm">
+            <i data-lucide="shield-check"></i>
+            <span>Privacidade (LGPD)</span>
+          </button>
+          <button type="button" id="btn-about-open-github" class="btn btn-ghost btn-sm" title="Abrir repositório no GitHub">
+            <i data-lucide="external-link"></i>
+            <span>GitHub</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: TERMOS DE USO & POLÍTICA DE PRIVACIDADE (LGPD) -->
+  <div id="modal-legal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="legal-modal-title">
+    <div class="modal-card modal-legal-card">
+      <div class="modal-header">
+        <h3 id="legal-modal-title"><i data-lucide="shield-alert"></i> Documentos Legais & Privacidade</h3>
+        <button id="btn-close-legal" class="modal-close-btn" type="button" aria-label="Fechar"><i data-lucide="x"></i></button>
+      </div>
+
+      <div class="legal-nav-bar">
+        <div class="legal-tabs">
+          <button type="button" id="tab-legal-terms" class="legal-tab active">
+            <i data-lucide="file-text"></i>
+            <span>Termos de Uso</span>
+          </button>
+          <button type="button" id="tab-legal-privacy" class="legal-tab">
+            <i data-lucide="shield-check"></i>
+            <span>Privacidade (LGPD)</span>
+          </button>
+        </div>
+        <button type="button" id="btn-legal-open-browser" class="btn-legal-browser-link" title="Abrir página oficial no navegador">
+          <i data-lucide="external-link"></i>
+          <span>Abrir no Navegador</span>
+        </button>
+      </div>
+
+      <div class="modal-body legal-modal-body">
+        <!-- SEÇÃO: TERMOS DE USO -->
+        <div id="legal-content-terms" class="legal-content-section">
+          <div class="legal-doc-header">
+            <h4>Termos de Uso e Condições de Serviço</h4>
+            <span class="legal-update-date">Última atualização: Outubro de 2026</span>
+          </div>
+
+          <div class="legal-block">
+            <h5>1. Objeto e Natureza do Serviço</h5>
+            <p>O Shiro Screen Share é uma aplicação gratuita e de código aberto destinada ao compartilhamento de tela e streaming de baixa latência ponto a ponto (P2P WebRTC) e captura de áudio dedicada de processos para computadores e navegadores.</p>
+          </div>
+
+          <div class="legal-block">
+            <h5>2. Arquitetura P2P e Não Armazenamento de Vídeo/Áudio</h5>
+            <p>As transmissões ocorrem diretamente entre os dispositivos conectados (Peer-to-Peer) com criptografia ponta a ponta (DTLS-SRTP). A Shiro Screen Share não grava, não assiste, não intercepta e não armazena streams de vídeo nem fluxos de áudio em seus servidores.</p>
+          </div>
+
+          <div class="legal-block">
+            <h5>3. Cadastro e Segurança de Credenciais</h5>
+            <p>Ao criar uma conta, o usuário é responsável por manter a confidencialidade de sua senha. Não solicitamos dados civis sensíveis nem informações de pagamento.</p>
+          </div>
+
+          <div class="legal-block">
+            <h5>4. Regras de Conduta e Uso Aceitável</h5>
+            <p>É expressamente proibido transmitir material com pornografia infantil, atos de violência, assédio, ódio, discriminação, malwares ou violação de direitos autorais sem autorização. Infrações acarretam cancelamento sumário da conta e comunicação às autoridades competentes.</p>
+          </div>
+
+          <div class="legal-block">
+            <h5>5. Propriedade Intelectual</h5>
+            <p>A marca Shiro, interface e códigos proprietários pertencem ao projeto Shiro (shirobot.xyz). O usuário retém todos os direitos sobre o conteúdo exibido em sua própria tela.</p>
+          </div>
+
+          <div class="legal-block">
+            <h5>6. Limitação de Responsabilidade</h5>
+            <p>O serviço é fornecido "no estado em que se encontra" (as is), sem garantias implícitas de latência zero ou disponibilidade ininterrupta. Aplicam-se as disposições do Marco Civil da Internet (Lei nº 12.965/2014).</p>
+          </div>
+        </div>
+
+        <!-- SEÇÃO: POLÍTICA DE PRIVACIDADE (LGPD) -->
+        <div id="legal-content-privacy" class="legal-content-section hidden">
+          <div class="legal-doc-header">
+            <h4>Política de Privacidade e Proteção de Dados (LGPD)</h4>
+            <span class="legal-update-date">Em total conformidade com a Lei nº 13.709/2018</span>
+          </div>
+
+          <div class="legal-block">
+            <h5>1. Dados Coletados e Base Legal</h5>
+            <p>Tratamos apenas os dados essenciais para o funcionamento do serviço (Art. 6º, III da LGPD):</p>
+            <ul>
+              <li><strong>Cadastro:</strong> Nome de usuário único, nickname opcional e hash criptografado de senha (bcrypt).</li>
+              <li><strong>Perfil e Presença:</strong> Avatar, insígnias de uso, status online e salas em que participa.</li>
+              <li><strong>Sinalização P2P:</strong> Endereços IP temporários exclusivamente trocados durante a negociação WebRTC (ICE candidates), com destruição programada.</li>
+            </ul>
+            <p class="legal-hint">Base legal: Execução de contrato e procedimentos preliminares (Art. 7º, V da LGPD).</p>
+          </div>
+
+          <div class="legal-block">
+            <h5>2. Privacidade na Transmissão P2P</h5>
+            <p>Os fluxos de vídeo e áudio nunca passam desprotegidos nem são armazenados na nuvem da Shiro. Toda a comunicação de mídia trafega criptografada de ponta a ponta entre os participantes.</p>
+          </div>
+
+          <div class="legal-block">
+            <h5>3. Retenção Mínima de Dados (TTL de 60 Segundos)</h5>
+            <p>Os sinais WebRTC (ofertas SDP e candidatos ICE) são configurados com TTL automático no MongoDB e são permanentemente deletados após 60 segundos.</p>
+          </div>
+
+          <div class="legal-block">
+            <h5>4. Ausência de Comercialização</h5>
+            <p>Não vendemos, não alugamos e não compartilhamos quaisquer dados pessoais com anunciantes, data brokers ou terceiros para fins publicitários.</p>
+          </div>
+
+          <div class="legal-block">
+            <h5>5. Direitos do Titular (Art. 18 da LGPD)</h5>
+            <p>Você pode confirmar a existência de tratamento, acessar seus dados, corrigir informações, revogar consentimentos ou solicitar a exclusão definitiva de sua conta a qualquer momento pelo suporte em <strong>shirobot.xyz</strong>.</p>
+          </div>
+
+          <div class="legal-block">
+            <h5>6. Segurança da Informação</h5>
+            <p>Comunicação HTTPS / TLS 1.3, criptografia DTLS-SRTP em mídia, hashing lento de senhas e proteção ativa contra ataques de força bruta.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer legal-modal-footer">
+        <span class="legal-footer-note">Lei Geral de Proteção de Dados (Lei nº 13.709/2018)</span>
+        <button type="button" id="btn-close-legal-footer" class="btn btn-primary btn-sm">Fechar</button>
       </div>
     </div>
   </div>
