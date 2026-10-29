@@ -48,24 +48,20 @@ const ICE_SERVERS: RTCIceServer[] = [
  * e limitar o bitrate do vídeo para evitar picos brutos não comprimidos.
  */
 function optimizeSdp(sdp: string): string {
-	let lines = sdp.split("\r\n");
-
-	// 1. Otimização de áudio Opus (Stereo, In-Band FEC, CBR e bitrate estável)
-	lines = lines.map((line) => {
-		if (line.startsWith("a=fmtp:") && line.includes("opus/48000")) {
-			return `${line};stereo=1;sprop-stereo=1;maxaveragebitrate=128000;useinbandfec=1;cbr=1`;
-		}
-		return line;
-	});
-
-	// 2. Teto de banda de vídeo que ESTE lado aceita receber. Fica no maior preset do app
-	//    (15 Mbps): quem transmite controla o bitrate real via maxBitrate do sender.
-	//    De acordo com a RFC 4566, linhas b= devem aparecer logo após a linha c= da mídia.
+	const lines = sdp.split("\r\n");
+	const opusPayloads = new Set(
+		lines.map((l) => /^a=rtpmap:(\d+) opus\/48000/i.exec(l)?.[1]).filter((p): p is string => !!p),
+	);
 	const resultLines: string[] = [];
 	let inVideo = false;
 	for (const line of lines) {
 		if (line.startsWith("m=")) inVideo = line.startsWith("m=video");
 		if (inVideo && line.startsWith("b=")) continue;
+		const fmtp = /^a=fmtp:(\d+) /.exec(line);
+		if (fmtp && opusPayloads.has(fmtp[1]) && !line.includes("stereo=1")) {
+			resultLines.push(`${line};stereo=1;sprop-stereo=1;maxaveragebitrate=128000;useinbandfec=1;cbr=1`);
+			continue;
+		}
 		resultLines.push(line);
 		if (inVideo && line.startsWith("c=")) {
 			resultLines.push(`b=AS:${MAX_VIDEO_BITRATE_KBPS}`);
@@ -109,6 +105,8 @@ function configureSenderParameters(pc: RTCPeerConnection, bitrateKbps: number): 
  */
 function prioritizeH264(pc: RTCPeerConnection): void {
 	try {
+		// Não modifica codecs em transceivers de resposta se a descrição remota já foi aplicada
+		if (pc.remoteDescription && pc.signalingState !== "stable") return;
 		const transceivers = pc.getTransceivers();
 		for (const t of transceivers) {
 			if (t.sender.track?.kind === "video" || t.receiver.track?.kind === "video") {
@@ -240,10 +238,12 @@ export class P2PManager {
 		return tail;
 	}
 
-	/** Há uma tentativa de conexão com o peer em andamento, iniciada há menos de withinMs */
+	/** Há uma tentativa de conexão com o peer em andamento ou já conectado com sucesso */
 	isConnecting(peerId: string, withinMs: number): boolean {
 		const pc = this.peerConnections.get(peerId);
-		if (!pc || (pc.connectionState !== "new" && pc.connectionState !== "connecting")) return false;
+		if (!pc) return false;
+		if (pc.connectionState === "connected") return true;
+		if (pc.connectionState !== "new" && pc.connectionState !== "connecting") return false;
 		const startedAt = this.connectStartedAt.get(peerId) ?? 0;
 		return Date.now() - startedAt < withinMs;
 	}
@@ -259,13 +259,6 @@ export class P2PManager {
 			const matching = transceivers.find((t) => t.receiver.track?.kind === track.kind && t.direction !== "stopped");
 			if (matching) {
 				try {
-					// Só chama addTrack quando o transceiver foi criado por setRemoteDescription (sem sender.track e sem currentDirection),
-					// evitando criar um segundo transceiver duplicado quando o primeiro veio de addTransceiver.
-					if (!matching.sender.track && pc.remoteDescription && matching.currentDirection === null) {
-						try {
-							pc.addTrack(track, this.localStream);
-						} catch {}
-					}
 					if (matching.sender.track !== track) {
 						await matching.sender.replaceTrack(track);
 					}
