@@ -4979,6 +4979,144 @@ class ShiroApp {
 		return this.withRefreshSpinner("btn-refresh-friends", () => this.refreshFriendsNow());
 	}
 
+	private async optimisticRemoveFriend(friendId: string): Promise<void> {
+		const previousFriends = [...this.friends];
+		const targetFriend = this.friends.find((f) => f.id === friendId);
+		this.friends = this.friends.filter((f) => f.id !== friendId);
+		this.renderFriendsUI();
+
+		try {
+			const res = await rejectFriend(friendId);
+			if (res && res.ok === false) {
+				throw new Error(res.error || "Não foi possível remover o amigo.");
+			}
+			await this.refreshFriends();
+		} catch (err: any) {
+			console.error("[App] Erro ao remover amigo:", err);
+			this.friends = previousFriends;
+			this.renderFriendsUI();
+			const name = targetFriend?.nickname || targetFriend?.username || "o amigo";
+			void this.showAlert(err?.message || `Não foi possível remover ${name}. Tente novamente.`, "Falha ao remover amigo");
+		}
+	}
+
+	private async optimisticDismissFriendRequest(userId: string): Promise<void> {
+		const previousRequests = [...this.friendRequests];
+		this.friendRequests = this.friendRequests.filter((r) => r.fromUserId !== userId);
+		if (this.activeFriendRequest?.fromUserId === userId) {
+			const toast = document.getElementById("toast-friend-request");
+			if (toast) toast.classList.add("hidden");
+			this.activeFriendRequest = null;
+		}
+		this.renderFriendsUI();
+
+		try {
+			const res = await rejectFriend(userId);
+			if (res && res.ok === false) {
+				throw new Error(res.error || "Não foi possível recusar o pedido.");
+			}
+			await this.refreshFriends();
+		} catch (err: any) {
+			console.error("[App] Erro ao recusar pedido de amizade:", err);
+			this.friendRequests = previousRequests;
+			this.renderFriendsUI();
+			void this.showAlert(err?.message || "Não foi possível recusar o pedido. Tente novamente.", "Falha na notificação");
+		}
+	}
+
+	private async optimisticDismissRoomInvite(inviteId: string): Promise<void> {
+		const previousInvites = [...this.roomInvites];
+		this.roomInvites = this.roomInvites.filter((inv) => inv.id !== inviteId);
+		if (this.activeRoomInvite?.id === inviteId) {
+			const toast = document.getElementById("toast-room-invite");
+			if (toast) toast.classList.add("hidden");
+			this.activeRoomInvite = null;
+		}
+		this.renderFriendsUI();
+
+		try {
+			await dismissRoomInvite(inviteId);
+			await this.refreshFriends();
+		} catch (err: any) {
+			console.error("[App] Erro ao recusar convite de sala:", err);
+			this.roomInvites = previousInvites;
+			this.renderFriendsUI();
+			void this.showAlert(err?.message || "Não foi possível recusar o convite. Tente novamente.", "Falha no convite");
+		}
+	}
+
+	private async optimisticClearAllNotifications(): Promise<void> {
+		const previousRequests = [...this.friendRequests];
+		const previousInvites = [...this.roomInvites];
+		const previousSystemNotices = [...this.systemNotices];
+
+		// 1. Limpa avisos de sistema no localStorage e na memória
+		for (const sys of this.systemNotices) {
+			try {
+				const dismissed: string[] = JSON.parse(localStorage.getItem("shiro_dismissed_notices") || "[]");
+				if (!dismissed.includes(sys.id)) {
+					dismissed.push(sys.id);
+					localStorage.setItem("shiro_dismissed_notices", JSON.stringify(dismissed));
+				}
+			} catch {}
+		}
+		this.systemNotices = [];
+
+		// 2. Limpa pedidos e convites otimisticamente
+		this.friendRequests = [];
+		this.roomInvites = [];
+
+		const toastFriend = document.getElementById("toast-friend-request");
+		if (toastFriend) toastFriend.classList.add("hidden");
+		this.activeFriendRequest = null;
+
+		const toastRoom = document.getElementById("toast-room-invite");
+		if (toastRoom) toastRoom.classList.add("hidden");
+		this.activeRoomInvite = null;
+
+		this.renderFriendsUI();
+
+		// 3. Dispara as chamadas da API em paralelo
+		const promises: Promise<any>[] = [];
+		for (const req of previousRequests) {
+			promises.push(
+				rejectFriend(req.fromUserId).catch((err) => {
+					console.warn(`[App] Falha ao dispensar pedido de ${req.fromUsername}:`, err);
+					return { ok: false };
+				})
+			);
+		}
+		for (const inv of previousInvites) {
+			promises.push(
+				dismissRoomInvite(inv.id).catch((err) => {
+					console.warn(`[App] Falha ao dispensar convite ${inv.id}:`, err);
+					return { ok: false };
+				})
+			);
+		}
+
+		await Promise.all(promises);
+		await this.refreshFriends();
+	}
+
+	private updateFriendsBadgeDot(): void {
+		const dot = document.getElementById("friends-badge-dot");
+		const hasNotif = this.friendRequests.length > 0 || this.roomInvites.length > 0;
+		if (dot) {
+			if (hasNotif) dot.classList.remove("hidden");
+			else dot.classList.add("hidden");
+		}
+	}
+
+	private renderFriendsUI(): void {
+		this.updateFriendsBadgeDot();
+		this.renderFriendRequests();
+		this.renderFriendsList();
+		this.renderNotifications();
+		this.checkRoomInvites();
+		this.checkFriendRequestsToast();
+	}
+
 	private async refreshFriendsNow(): Promise<boolean> {
 		try {
 			const res = await getFriends();
@@ -4992,28 +5130,7 @@ class ShiroApp {
 				console.log(`[App] 📬 ${this.roomInvites.length} convite(s) de sala encontrado(s):`, this.roomInvites);
 			}
 
-			// Atualiza ponto de notificação na aba
-			const dot = document.getElementById("friends-badge-dot");
-			const hasNotif = this.friendRequests.length > 0 || this.roomInvites.length > 0;
-			if (dot) {
-				if (hasNotif) dot.classList.remove("hidden");
-				else dot.classList.add("hidden");
-			}
-
-			// Renderiza pedidos pendentes
-			this.renderFriendRequests();
-
-			// Renderiza lista de amigos
-			this.renderFriendsList();
-
-			// Atualiza notificações na Central de Notificações
-			this.renderNotifications();
-
-			// Verifica se há convite de sala para exibir toast
-			this.checkRoomInvites();
-
-			// Verifica se há pedidos de amizade para exibir toast
-			this.checkFriendRequestsToast();
+			this.renderFriendsUI();
 			return true;
 		} catch (err) {
 			console.warn("[App] Erro ao carregar amigos:", err);
@@ -5088,9 +5205,7 @@ class ShiroApp {
 			btn.addEventListener("click", async (e) => {
 				e.stopPropagation();
 				const userId = btn.dataset.userId!;
-				btn.disabled = true;
-				await rejectFriend(userId);
-				await this.refreshFriends();
+				void this.optimisticDismissFriendRequest(userId);
 			});
 		});
 
@@ -5189,9 +5304,7 @@ class ShiroApp {
 					variant: "danger",
 				});
 				if (!ok) return;
-				btn.disabled = true;
-				await rejectFriend(friendId);
-				await this.refreshFriends();
+				void this.optimisticRemoveFriend(friendId);
 			});
 		});
 
@@ -5541,9 +5654,7 @@ class ShiroApp {
 		btnDismiss?.addEventListener("click", async () => {
 			if (!this.activeRoomInvite) return;
 			const invite = this.activeRoomInvite;
-			if (toast) toast.classList.add("hidden");
-			await dismissRoomInvite(invite.id);
-			this.activeRoomInvite = null;
+			void this.optimisticDismissRoomInvite(invite.id);
 		});
 	}
 
@@ -5620,11 +5731,7 @@ class ShiroApp {
 			e.stopPropagation();
 			if (!this.activeFriendRequest) return;
 			const req = this.activeFriendRequest;
-			if (toast) toast.classList.add("hidden");
-
-			await rejectFriend(req.fromUserId);
-			this.activeFriendRequest = null;
-			await this.refreshFriends();
+			void this.optimisticDismissFriendRequest(req.fromUserId);
 		});
 	}
 
@@ -5705,11 +5812,7 @@ class ShiroApp {
 
 		btnClear?.addEventListener("click", (e) => {
 			e.stopPropagation();
-			for (const sys of this.systemNotices) {
-				this.dismissSystemNotice(sys.id);
-			}
-			this.systemNotices = [];
-			this.renderNotifications();
+			void this.optimisticClearAllNotifications();
 		});
 
 		// Filtros por abas
@@ -5941,9 +6044,7 @@ class ShiroApp {
 		listEl.querySelectorAll<HTMLButtonElement>(".btn-notif-reject-friend").forEach((btn) => {
 			btn.addEventListener("click", async () => {
 				const userId = btn.dataset.userId!;
-				btn.disabled = true;
-				await rejectFriend(userId);
-				await this.refreshFriends();
+				void this.optimisticDismissFriendRequest(userId);
 			});
 		});
 
@@ -5976,9 +6077,7 @@ class ShiroApp {
 		listEl.querySelectorAll<HTMLButtonElement>(".btn-notif-dismiss-invite").forEach((btn) => {
 			btn.addEventListener("click", async () => {
 				const inviteId = btn.dataset.inviteId!;
-				btn.disabled = true;
-				await dismissRoomInvite(inviteId);
-				await this.refreshFriends();
+				void this.optimisticDismissRoomInvite(inviteId);
 			});
 		});
 
@@ -6671,19 +6770,9 @@ class ShiroApp {
 
 				// 2. Ação de Recusar Pedido no perfil
 				document.getElementById("btn-mini-reject-friend")?.addEventListener("click", async () => {
-					const btnAccept = document.getElementById("btn-mini-accept-friend") as HTMLButtonElement | null;
-					const btnReject = document.getElementById("btn-mini-reject-friend") as HTMLButtonElement | null;
-					if (btnReject) {
-						btnReject.disabled = true;
-						btnReject.innerHTML = `<i data-lucide="loader-2" class="spin"></i>`;
-						this.refreshIcons();
-					}
-					if (btnAccept) btnAccept.disabled = true;
-
 					const reqUserId = incomingReq?.fromUserId || userData.id;
-					await rejectFriend(reqUserId);
-					await this.refreshFriends();
 					this.hideUserMiniProfile();
+					void this.optimisticDismissFriendRequest(reqUserId);
 				});
 
 				// 3. Ação de Enviar Pedido de Amizade no perfil
