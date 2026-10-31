@@ -21,9 +21,7 @@ export interface P2PCallbacks {
 const ICE_SERVERS: RTCIceServer[] = [
 	{ urls: "stun:stun.l.google.com:19302" },
 	{ urls: "stun:stun1.l.google.com:19302" },
-	{ urls: "stun:stun2.l.google.com:19302" },
-	{ urls: "stun:stun3.l.google.com:19302" },
-	{ urls: "stun:stun4.l.google.com:19302" },
+	{ urls: "stun:stun.cloudflare.com:3478" },
 	{ urls: "stun:global.stun.twilio.com:3478" },
 	{ urls: "stun:stun.relay.metered.ca:80" },
 	{
@@ -158,8 +156,8 @@ export class P2PManager {
 
 	private checkStuckConnections(): void {
 		const now = Date.now();
-		const CONNECT_STUCK_TIMEOUT_MS = 15000;
-		const NO_VIDEO_RENEGOTIATE_MS = 12000;
+		const CONNECT_STUCK_TIMEOUT_MS = 18000;
+		const NO_VIDEO_RENEGOTIATE_MS = 16000;
 
 		for (const [peerId, pc] of this.peerConnections) {
 			if (pc.connectionState === "closed") continue;
@@ -214,7 +212,6 @@ export class P2PManager {
 		for (const [peerId, pc] of this.peerConnections) {
 			if (pc.connectionState === "closed") continue;
 			prioritizeH264(pc);
-			let needsRenegotiation = false;
 			for (const track of stream.getTracks()) {
 				const transceivers = pc.getTransceivers();
 				const matching = transceivers.find((t) => t.receiver.track?.kind === track.kind && t.direction !== "stopped");
@@ -226,14 +223,8 @@ export class P2PManager {
 					}).catch((err) => console.warn(`[P2P] Erro replaceTrack para ${peerId}:`, err));
 					if (matching.direction !== "sendrecv" && matching.direction !== "sendonly") {
 						matching.direction = "sendrecv";
-						needsRenegotiation = true;
 					}
-				} else {
-					needsRenegotiation = true;
 				}
-			}
-			if (needsRenegotiation) {
-				void this.renegotiate(peerId, false);
 			}
 		}
 	}
@@ -603,28 +594,17 @@ export class P2PManager {
 			isFreshPc = true;
 		}
 
-		// Glare: os dois lados ofertaram ao mesmo tempo. O lado "polite" (menor ID) desfaz a
-		// própria oferta e responde; o "impolite" ignora a oferta recebida e aguarda a resposta.
-		if (pc.signalingState === "have-local-offer") {
-			const polite = this.myUserId < fromUserId;
-			if (!polite) {
-				console.log(`[P2P] Glare com ${fromUserId}: mantendo a própria oferta (impolite).`);
-				return;
-			}
-			console.log(`[P2P] Glare com ${fromUserId}: desfazendo a própria oferta (polite).`);
+		// Se houver oferta local pendente ou sinalização instável, faz rollback para aceitar a oferta remota imediatamente
+		if (pc.signalingState !== "stable") {
+			console.log(`[P2P] Oferta recebida com sinalização ${pc.signalingState} de ${fromUserId}. Fazendo rollback para responder...`);
 			try {
 				await pc.setLocalDescription({ type: "rollback" });
 			} catch (err) {
-				console.warn(`[P2P] Rollback falhou com ${fromUserId}. Recriando conexão...`, err);
+				console.warn(`[P2P] Rollback falhou com ${fromUserId}. Recriando conexão limpa...`, err);
 				this.closePeer(fromUserId);
 				pc = this.createPeerConnection(fromUserId);
 				isFreshPc = true;
 			}
-		} else if (pc.signalingState !== "stable") {
-			console.warn(`[P2P] Estado de sinalização instável (${pc.signalingState}) com ${fromUserId}. Recriando conexão limpa para responder oferta...`);
-			this.closePeer(fromUserId);
-			pc = this.createPeerConnection(fromUserId);
-			isFreshPc = true;
 		}
 
 		try {
