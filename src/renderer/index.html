@@ -171,6 +171,17 @@
             <i data-lucide="loader-2" class="btn-spinner spin" style="display:none"></i>
           </button>
         </form>
+        <div class="auth-divider">
+          <span>ou</span>
+        </div>
+
+        <button type="button" id="btn-login-discord" class="btn btn-discord btn-auth">
+          <svg class="discord-icon" viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+            <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994.021-.041.001-.09-.041-.106a13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.929 1.793 8.18 1.793 12.061 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.894.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.028zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/>
+          </svg>
+          <span>Entrar com Discord</span>
+        </button>
+
 
         <div class="login-legal-bar">
           <span class="login-legal-label">Ao continuar, você concorda com nossos</span>
@@ -366,6 +377,9 @@
           </div>
 
         </aside>
+
+        <!-- Divisor redimensionável da sidebar esquerda -->
+        <div id="resizer-left" class="sidebar-resizer sidebar-resizer-left" title="Arrastar para redimensionar painel lateral (duplo-clique para resetar)"></div>
 
         <!-- ── Área Central: Transmissões ao Vivo ── -->
         <section class="right-section">
@@ -578,6 +592,9 @@
 
         </section>
 
+        <!-- Divisor redimensionável da sidebar direita -->
+        <div id="resizer-right" class="sidebar-resizer sidebar-resizer-right" title="Arrastar para redimensionar painel lateral (duplo-clique para resetar)"></div>
+
         <!-- ── Painel Direito (Amigos & Membros da Sala) ── -->
         <aside class="right-panel">
 
@@ -586,15 +603,20 @@
             <button id="btn-toggle-right-sidebar" class="sidebar-collapse-btn right-collapse-btn" title="Recolher painel direito">
               <i data-lucide="chevron-right"></i>
             </button>
-            <button id="panel-tab-friends" class="panel-tab active" title="Amigos & Convites">
+            <button id="panel-tab-friends" class="panel-tab active" title="Amigos" data-tooltip="Amigos">
               <i data-lucide="user-check"></i>
-              <span>Amigos</span>
+              <span class="panel-tab-label">Amigos</span>
               <span id="friends-badge-dot" class="tab-badge-dot hidden"></span>
             </button>
-            <button id="panel-tab-users" class="panel-tab hidden" title="Membros na sala atual">
+            <button id="panel-tab-users" class="panel-tab hidden" title="Na Sala" data-tooltip="Membros na Sala">
               <i data-lucide="users"></i>
-              <span>Na Sala</span>
+              <span class="panel-tab-label">Na Sala</span>
               <span id="room-users-count-badge" class="tab-count-pill">0</span>
+            </button>
+            <button id="panel-tab-chat" class="panel-tab hidden" title="Chat" data-tooltip="Chat da Sala">
+              <i data-lucide="message-square"></i>
+              <span class="panel-tab-label">Chat</span>
+              <span id="chat-unread-badge" class="tab-count-pill hidden">0</span>
             </button>
           </div>
 
@@ -650,6 +672,78 @@
             </button>
           </div>
 
+          <!-- Sub-painel: Chat da Sala (Efêmero, Zero DB, Suporte a GIFs) -->
+          <div id="panel-chat" class="panel-section panel-chat hidden">
+            <div class="chat-header">
+              <div class="chat-header-title">
+                <i data-lucide="message-square" class="chat-icon"></i>
+                <span>Chat</span>
+                <span id="chat-leader-badge" class="badge-leader hidden" title="Você é o guardião e herdeiro temporário do histórico desta sala">
+                  <i data-lucide="crown"></i> Líder
+                </span>
+              </div>
+              <button id="btn-clear-chat-view" class="btn btn-ghost btn-xs" title="Limpar histórico na minha tela">
+                <i data-lucide="trash-2"></i>
+              </button>
+            </div>
+
+            <!-- Lista de Mensagens -->
+            <div id="chat-messages-list" class="chat-messages-list">
+              <div class="chat-empty-state" id="chat-empty-state">
+                <i data-lucide="sparkles" class="chat-empty-icon"></i>
+                <span class="chat-empty-title">Nenhuma mensagem ainda</span>
+                <span class="chat-empty-desc">Envie uma mensagem ou GIF. O histórico é efêmero e não fica salvo no banco de dados.</span>
+              </div>
+            </div>
+
+            <!-- Popover de GIFs -->
+            <div id="chat-gif-popover" class="chat-gif-popover hidden">
+              <div class="gif-popover-header">
+                <div class="input-wrapper">
+                  <i data-lucide="search" class="input-icon"></i>
+                  <input type="text" id="chat-gif-search-input" class="search-input" placeholder="Buscar GIFs..." autocomplete="off">
+                </div>
+                <button id="btn-close-gif-popover" class="modal-close-btn" type="button" title="Fechar"><i data-lucide="x"></i></button>
+              </div>
+              <!-- Abas do Popover de GIFs -->
+              <div class="gif-popover-tabs">
+                <button type="button" id="tab-gif-trending" class="gif-tab-btn active" title="GIFs em alta">
+                  <i data-lucide="flame"></i>
+                  <span>Em Alta</span>
+                </button>
+                <button type="button" id="tab-gif-favorites" class="gif-tab-btn" title="Meus GIFs favoritos">
+                  <i data-lucide="star"></i>
+                  <span>Favoritos</span>
+                  <span id="gif-favorites-count-badge" class="gif-fav-badge hidden">0</span>
+                </button>
+              </div>
+              <div id="chat-gif-grid" class="chat-gif-grid">
+                <div class="loading-spinner">
+                  <i data-lucide="loader-2" class="spin"></i>
+                  <span>Carregando GIFs...</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Barra de Envio -->
+            <form id="form-chat" class="chat-input-bar">
+              <button type="button" id="btn-toggle-gif-picker" class="btn-chat-addon" title="Buscar e enviar GIF">
+                <span class="gif-tag">GIF</span>
+              </button>
+              <input
+                type="text"
+                id="input-chat-message"
+                class="chat-text-input"
+                placeholder="Enviar mensagem na sala..."
+                maxlength="1000"
+                autocomplete="off"
+              />
+              <button type="submit" id="btn-send-chat-message" class="btn-chat-send" title="Enviar mensagem">
+                <i data-lucide="send"></i>
+              </button>
+            </form>
+          </div>
+
         </aside>
       </main>
     </div><!-- /view-main -->
@@ -664,7 +758,7 @@
       <div class="modal-header">
         <div class="modal-header-info">
           <h3 id="modal-source-picker-title"><i data-lucide="layers" class="text-purple"></i> Selecione o que deseja transmitir</h3>
-          <p class="modal-subtitle">Escolha uma janela ou tela inteira para transmitir</p>
+          <p class="modal-subtitle">Escolha uma janela, tela inteira ou câmera para transmitir</p>
         </div>
         <button id="btn-close-source-picker" class="modal-close-btn" type="button" title="Fechar"><i data-lucide="x"></i></button>
       </div>
@@ -679,6 +773,9 @@
               </button>
               <button id="tab-screens" class="sub-tab-btn" type="button">
                 <i data-lucide="screen-share"></i> <span>Telas</span>
+              </button>
+              <button id="tab-cameras" class="sub-tab-btn" type="button">
+                <i data-lucide="camera"></i> <span>Câmeras</span>
               </button>
             </div>
           </div>
@@ -1020,6 +1117,19 @@
             <span class="checkbox-text"><i data-lucide="refresh-cw"></i> Atualizações Automáticas</span>
           </label>
         </div>
+        <div class="setting-divider"></div>
+        <div class="setting-section-header">
+          <div class="setting-section-title">
+            <svg class="discord-icon" viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+            <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994.021-.041.001-.09-.041-.106a13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.929 1.793 8.18 1.793 12.061 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.894.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.028zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/>
+          </svg>
+            <span>Conta do Discord</span>
+          </div>
+        </div>
+        <div id="discord-app-settings-container" class="discord-settings-card">
+          <!-- Renderizado dinamicamente em app.ts -->
+        </div>
+
       </div>
     </div>
   </div>
@@ -1096,6 +1206,23 @@
           </div>
           <div class="profile-card-footer">
             <span class="profile-card-hint">Clique no nome, na foto ou no banner para editar</span>
+        <div id="discord-profile-actions" class="discord-profile-actions hidden">
+          <div class="discord-profile-actions-header">
+            <svg class="discord-icon" viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+            <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994.021-.041.001-.09-.041-.106a13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.929 1.793 8.18 1.793 12.061 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.894.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.028zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/>
+          </svg>
+            <span id="discord-profile-tag">Discord Vinculado</span>
+          </div>
+          <div class="discord-profile-btns">
+            <button type="button" id="btn-use-discord-avatar" class="btn btn-secondary btn-xs" title="Usar sua foto de perfil do Discord">
+              <span>Usar Foto do Discord</span>
+            </button>
+            <button type="button" id="btn-use-discord-banner" class="btn btn-secondary btn-xs" title="Usar seu banner do Discord">
+              <span>Usar Banner do Discord</span>
+            </button>
+          </div>
+        </div>
+
             <span id="nickname-rate-badge" class="nickname-rate-badge" title="Trocas de apelido restantes nesta hora">
               <i data-lucide="clock" class="rate-icon"></i>
               <span id="nickname-rate-text">6/6 trocas de apelido</span>

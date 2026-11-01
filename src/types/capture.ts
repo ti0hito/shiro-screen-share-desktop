@@ -1,4 +1,4 @@
-export type SourceType = "window" | "screen";
+export type SourceType = "window" | "screen" | "camera";
 
 export interface WindowSource {
 	id: string; // Electron DesktopCapturer source ID (e.g. "window:131232:0")

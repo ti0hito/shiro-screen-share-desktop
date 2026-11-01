@@ -1,6 +1,6 @@
 import http from "node:http";
 import https from "node:https";
-import { app, type BrowserWindow, ipcMain, nativeImage, shell } from "electron";
+import { app, BrowserWindow, ipcMain, nativeImage, shell } from "electron";
 import type { AudioCaptureConfig } from "../types/capture";
 import type { ApiRequestOptions, ApiRequestResult } from "../types/ipc";
 import type { AudioCaptureEngine } from "./audioEngine";
@@ -54,7 +54,7 @@ type SourceEntry = {
 	id: string;
 	name: string;
 	processName: string;
-	sourceType: "window" | "screen";
+	sourceType: "window" | "screen" | "camera";
 	thumbnailUrl: string;
 };
 
@@ -229,6 +229,10 @@ export function setupIpcHandlers(
 
 const DEFAULT_API_URL = "https://share.shirobot.xyz";
 
+	ipcMain.handle("get-api-url", () => {
+		return process.env.SHIRO_API_URL || DEFAULT_API_URL;
+	});
+
 	/**
 	 * Chave da API: .env (desenvolvimento) ou a embutida no build por scripts/build-main.mjs.
 	 * Não fica no código-fonte (repositório público). Embaralhada no binário, não criptografada:
@@ -260,6 +264,62 @@ const DEFAULT_API_URL = "https://share.shirobot.xyz";
 	);
 
 	// Abre links externos no navegador padrão (apenas domínios permitidos)
+	
+	// Autenticação / Vínculo com Discord via BrowserWindow pop-up
+	ipcMain.handle("auth:discord", async (_event, { action, token }: { action: "login" | "link"; token?: string }) => {
+		const baseUrl = process.env.SHIRO_API_URL || DEFAULT_API_URL;
+		const authUrl = `${baseUrl}/api/auth/discord/authorize?action=${action || "login"}${token ? `&token=${encodeURIComponent(token)}` : ""}&platform=desktop`;
+
+		return new Promise((resolve) => {
+			let completed = false;
+			const authWin = new BrowserWindow({
+				width: 520,
+				height: 750,
+				parent: window,
+				modal: true,
+				title: "Conectar com Discord — Shiro Screen Share",
+				autoHideMenuBar: true,
+				backgroundColor: "#09090b",
+				webPreferences: {
+					nodeIntegration: false,
+					contextIsolation: true,
+				},
+			});
+
+			const checkResult = async () => {
+				if (completed) return;
+				try {
+					const res = await authWin.webContents.executeJavaScript("window.__shiro_auth_result || null");
+					if (res && res.success !== undefined) {
+						completed = true;
+						authWin.close();
+						resolve({
+							ok: !!res.success,
+							token: res.data?.token,
+							user: res.data?.user,
+							error: res.success ? undefined : (res.message || "Falha na autenticação"),
+						});
+					}
+				} catch {
+					// Ignora até o script estar pronto
+				}
+			};
+
+			authWin.webContents.on("did-finish-load", () => {
+				checkResult();
+			});
+
+			authWin.on("closed", () => {
+				if (!completed) {
+					completed = true;
+					resolve({ ok: false, error: "Janela fechada pelo usuário." });
+				}
+			});
+
+			authWin.loadURL(authUrl);
+		});
+	});
+
 	ipcMain.handle("open-external", async (_event, rawUrl: string) => {
 		try {
 			const url = new URL(rawUrl);
@@ -326,7 +386,7 @@ const DEFAULT_API_URL = "https://share.shirobot.xyz";
 				id: string;
 				name: string;
 				processName: string;
-				sourceType: "window" | "screen";
+				sourceType: "window" | "screen" | "camera";
 				thumbnailUrl: string;
 			}>,
 			selectedIndex: number,
@@ -347,7 +407,7 @@ const DEFAULT_API_URL = "https://share.shirobot.xyz";
 				id: string;
 				name: string;
 				processName: string;
-				sourceType: "window" | "screen";
+				sourceType: "window" | "screen" | "camera";
 				thumbnailUrl: string;
 			}>,
 			selectedIndex: number,

@@ -1,6 +1,6 @@
 import path from "node:path";
 import dotenv from "dotenv";
-import { app, BrowserWindow, ipcMain, Menu, nativeImage, protocol, Tray } from "electron";
+import { app, BrowserWindow, ipcMain, Menu, nativeImage, protocol, session, Tray } from "electron";
 import { autoUpdater } from "electron-updater";
 import { AudioCaptureEngine } from "./audioEngine";
 import { setupIpcHandlers } from "./ipcHandlers";
@@ -401,6 +401,14 @@ function setupAutoUpdater(): void {
 }
 
 app.whenReady().then(() => {
+	session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
+		if (permission === "media") return callback(true);
+		callback(true);
+	});
+	session.defaultSession.setPermissionCheckHandler((_wc, permission) => {
+		if (permission === "media") return true;
+		return true;
+	});
 	createWindow();
 	handleArgvDeepLink(process.argv);
 	setupAutoUpdater();

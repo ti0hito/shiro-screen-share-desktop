@@ -25,6 +25,8 @@ const api: ElectronAPI = {
 		return ipcRenderer.invoke("api-request", opts);
 	},
 
+	discordAuth: (action: "login" | "link", token?: string) =>
+		ipcRenderer.invoke("auth:discord", { action, token }),
 	openExternal: (url: string): Promise<boolean> => {
 		return ipcRenderer.invoke("open-external", url);
 	},
@@ -35,6 +37,10 @@ const api: ElectronAPI = {
 
 	getAppSettings: (): Promise<AppSettings> => {
 		return ipcRenderer.invoke("get-app-settings");
+	},
+
+	getApiUrl: (): Promise<string> => {
+		return ipcRenderer.invoke("get-api-url");
 	},
 
 	setOpenAtLogin: (enabled: boolean): Promise<boolean> => {
@@ -171,7 +177,7 @@ const api: ElectronAPI = {
 			id: string;
 			name: string;
 			processName: string;
-			sourceType: "window" | "screen";
+			sourceType: "window" | "screen" | "camera";
 			thumbnailUrl: string;
 		}>,
 		selectedIndex: number,
@@ -183,7 +189,7 @@ const api: ElectronAPI = {
 			id: string;
 			name: string;
 			processName: string;
-			sourceType: "window" | "screen";
+			sourceType: "window" | "screen" | "camera";
 			thumbnailUrl: string;
 		}>,
 		selectedIndex: number,

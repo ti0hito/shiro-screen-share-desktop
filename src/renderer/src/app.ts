@@ -15,6 +15,8 @@ import {
 	Clock,
 	CodeXml,
 	Copy,
+	Crown,
+	MessageSquare,
 	createIcons,
 	ExternalLink,
 	FlaskConical,
@@ -76,12 +78,16 @@ import {
 	X,
 	Zap,
 } from "lucide";
+import { ChatManager } from "./chatManager";
 import type {
 	AudioCaptureMode,
+	SourceType,
 	StreamQualityOptions,
 	WindowSource,
 } from "../../types/capture";
 import {
+	unlinkDiscordAccount,
+	updateUserSession,
 	acceptFriendRequest,
 	type BadgeId,
 	type BadgeStats,
@@ -256,6 +262,7 @@ class ShiroApp {
 	private streamThumbnailsCache = new Map<string, ImageData>();
 
 	private leftSourcePicker: SourcePicker | null = null;
+	private chatManager = new ChatManager();
 	private mainSourcePicker: SourcePicker | null = null;
 
 	private audioPipeline: AudioPipeline = new AudioPipeline();
@@ -575,6 +582,21 @@ class ShiroApp {
 
 		setupEye("toggle-login-password", "login-password");
 		setupEye("toggle-reg-password", "reg-password");
+
+		// Login com Discord
+		document.getElementById("btn-login-discord")?.addEventListener("click", async () => {
+			const errorEl = document.getElementById("login-error");
+			if (errorEl) errorEl.textContent = "";
+			this.setAuthLoading("btn-login-discord", true);
+			const res = await window.api.discordAuth("login");
+			this.setAuthLoading("btn-login-discord", false);
+			if (res.ok && res.token && res.user) {
+				saveRememberSession(res.token, res.user, true);
+				await this.showMainView();
+			} else if (res.error) {
+				if (errorEl) errorEl.textContent = res.error;
+			}
+		});
 
 		document.getElementById("form-login")?.addEventListener("submit", async (e) => {
 			e.preventDefault();
@@ -960,6 +982,7 @@ class ShiroApp {
 			["profileSettings", () => this.setupProfileSettings()],
 			["miniProfilePopover", () => this.setupMiniProfilePopover()],
 			["panelTabs", () => this.setupPanelTabs()],
+			["sidebarResizers", () => this.setupSidebarResizers()],
 			["friendsSystem", () => this.setupFriendsSystem()],
 			["roomSettingsModal", () => this.setupRoomSettingsModal()],
 			["joinByInviteModal", () => this.setupJoinByInviteModal()],
@@ -1319,6 +1342,7 @@ class ShiroApp {
 		const tabSources = document.getElementById("panel-tab-sources");
 		const tabFriends = document.getElementById("panel-tab-friends");
 		const tabUsers = document.getElementById("panel-tab-users");
+		const tabChat = document.getElementById("panel-tab-chat");
 		const btnToggleSidebar = document.getElementById("btn-toggle-sidebar");
 		const btnToggleRightSidebar = document.getElementById("btn-toggle-right-sidebar");
 
@@ -1326,6 +1350,7 @@ class ShiroApp {
 		const panelSources = document.getElementById("panel-sources");
 		const panelFriends = document.getElementById("panel-friends");
 		const panelUsers = document.getElementById("panel-users");
+		const panelChat = document.getElementById("panel-chat");
 
 		// Abas da Sidebar Esquerda: Salas e Fontes
 		const activateLeft = (activeTab: HTMLElement | null, activePanel: HTMLElement | null) => {
@@ -1337,13 +1362,14 @@ class ShiroApp {
 			this.refreshIcons();
 		};
 
-		// Abas da Sidebar Direita: Amigos e Na Sala (Membros da Sala)
+		// Abas da Sidebar Direita: Amigos, Na Sala e Chat
 		const activateRight = (activeTab: HTMLElement | null, activePanel: HTMLElement | null) => {
-			[tabFriends, tabUsers].forEach((t) => t?.classList.remove("active"));
-			[panelFriends, panelUsers].forEach((p) => p?.classList.add("hidden"));
+			[tabFriends, tabUsers, tabChat].forEach((t) => t?.classList.remove("active"));
+			[panelFriends, panelUsers, panelChat].forEach((p) => p?.classList.add("hidden"));
 
 			activeTab?.classList.add("active");
 			activePanel?.classList.remove("hidden");
+			this.chatManager.setTabActive(activeTab === tabChat);
 			this.refreshIcons();
 		};
 
@@ -1360,6 +1386,10 @@ class ShiroApp {
 		tabUsers?.addEventListener("click", () => {
 			if (!this.currentRoom) return;
 			activateRight(tabUsers, panelUsers);
+		});
+		tabChat?.addEventListener("click", () => {
+			if (!this.currentRoom) return;
+			activateRight(tabChat, panelChat);
 		});
 
 		const toggleLeftSidebar = () => {
@@ -1379,6 +1409,113 @@ class ShiroApp {
 		btnToggleRightSidebar?.addEventListener("click", toggleRightSidebar);
 		document.getElementById("btn-expand-right-sidebar-floating")?.addEventListener("click", toggleRightSidebar);
 	}
+	/**
+	 * Gerencia o redimensionamento das sidebars esquerda e direita arrastando as bordas.
+	 * Ambas têm limites mínimos garantidos (310px para esquerda, 270px para direita)
+	 * e salvam a preferência do usuário no localStorage.
+	 */
+	private setupSidebarResizers(): void {
+		const resizerLeft = document.getElementById("resizer-left");
+		const resizerRight = document.getElementById("resizer-right");
+
+		const MIN_LEFT = 310;
+		const MIN_RIGHT = 270;
+
+		// Carrega larguras salvas do localStorage
+		const savedLeft = parseInt(localStorage.getItem("shiro_left_sidebar_width") || "", 10);
+		if (!isNaN(savedLeft) && savedLeft >= MIN_LEFT) {
+			document.documentElement.style.setProperty("--left-sidebar-width", `${savedLeft}px`);
+		}
+		const savedRight = parseInt(localStorage.getItem("shiro_right_sidebar_width") || "", 10);
+		if (!isNaN(savedRight) && savedRight >= MIN_RIGHT) {
+			document.documentElement.style.setProperty("--right-sidebar-width", `${savedRight}px`);
+		}
+
+		// Redimensionamento da Sidebar Esquerda
+		if (resizerLeft) {
+			resizerLeft.addEventListener("mousedown", (e) => {
+				e.preventDefault();
+				document.body.classList.add("is-resizing-sidebars");
+				resizerLeft.classList.add("is-resizing");
+				document.body.style.cursor = "col-resize";
+				document.body.style.userSelect = "none";
+
+				const onMouseMove = (moveEvent: MouseEvent) => {
+					const maxLeft = Math.min(650, Math.floor(window.innerWidth * 0.45));
+					const newWidth = Math.max(MIN_LEFT, Math.min(moveEvent.clientX, maxLeft));
+					document.documentElement.style.setProperty("--left-sidebar-width", `${newWidth}px`);
+				};
+
+				const onMouseUp = () => {
+					document.body.classList.remove("is-resizing-sidebars");
+					resizerLeft.classList.remove("is-resizing");
+					document.body.style.cursor = "";
+					document.body.style.userSelect = "";
+					window.removeEventListener("mousemove", onMouseMove);
+					window.removeEventListener("mouseup", onMouseUp);
+					window.removeEventListener("blur", onMouseUp);
+
+					const currentVal = parseInt(getComputedStyle(document.documentElement).getPropertyValue("--left-sidebar-width"), 10);
+					if (!isNaN(currentVal)) {
+						localStorage.setItem("shiro_left_sidebar_width", String(currentVal));
+					}
+				};
+
+				window.addEventListener("mousemove", onMouseMove);
+				window.addEventListener("mouseup", onMouseUp);
+				window.addEventListener("blur", onMouseUp);
+			});
+
+			// Duplo-clique reseta para o tamanho padrão mínimo
+			resizerLeft.addEventListener("dblclick", () => {
+				document.documentElement.style.setProperty("--left-sidebar-width", `${MIN_LEFT}px`);
+				localStorage.setItem("shiro_left_sidebar_width", String(MIN_LEFT));
+			});
+		}
+
+		// Redimensionamento da Sidebar Direita
+		if (resizerRight) {
+			resizerRight.addEventListener("mousedown", (e) => {
+				e.preventDefault();
+				document.body.classList.add("is-resizing-sidebars");
+				resizerRight.classList.add("is-resizing");
+				document.body.style.cursor = "col-resize";
+				document.body.style.userSelect = "none";
+
+				const onMouseMove = (moveEvent: MouseEvent) => {
+					const maxRight = Math.min(650, Math.floor(window.innerWidth * 0.45));
+					const newWidth = Math.max(MIN_RIGHT, Math.min(window.innerWidth - moveEvent.clientX, maxRight));
+					document.documentElement.style.setProperty("--right-sidebar-width", `${newWidth}px`);
+				};
+
+				const onMouseUp = () => {
+					document.body.classList.remove("is-resizing-sidebars");
+					resizerRight.classList.remove("is-resizing");
+					document.body.style.cursor = "";
+					document.body.style.userSelect = "";
+					window.removeEventListener("mousemove", onMouseMove);
+					window.removeEventListener("mouseup", onMouseUp);
+					window.removeEventListener("blur", onMouseUp);
+
+					const currentVal = parseInt(getComputedStyle(document.documentElement).getPropertyValue("--right-sidebar-width"), 10);
+					if (!isNaN(currentVal)) {
+						localStorage.setItem("shiro_right_sidebar_width", String(currentVal));
+					}
+				};
+
+				window.addEventListener("mousemove", onMouseMove);
+				window.addEventListener("mouseup", onMouseUp);
+				window.addEventListener("blur", onMouseUp);
+			});
+
+			// Duplo-clique reseta para o tamanho padrão mínimo
+			resizerRight.addEventListener("dblclick", () => {
+				document.documentElement.style.setProperty("--right-sidebar-width", `${MIN_RIGHT}px`);
+				localStorage.setItem("shiro_right_sidebar_width", String(MIN_RIGHT));
+			});
+		}
+	}
+
 
 	// ------------------------------------------------------------------------------------------------------------------------------
 	//  ROOMS, MODALS & SEARCH
@@ -1668,7 +1805,7 @@ class ShiroApp {
 
 	private getRoomMembersCount(room?: any): number {
 		if (!room) return 1;
-		const isCurrent = this.currentRoom?.roomId === room.roomId;
+		const isCurrent = this.currentRoom?.roomId === room.roomId || (this.currentRoom && (this.currentRoom.id === room.id || this.currentRoom.id === room.roomId || this.currentRoom.roomId === room.id));
 		// Visitantes do navegador contam como pessoas na sala
 		const count = this.getRoomUsersCount(room) + (Array.isArray(room.guests) ? room.guests.length : 0);
 		return isCurrent ? Math.max(1, count) : count;
@@ -1715,20 +1852,28 @@ class ShiroApp {
 		const panelUsers = document.getElementById("panel-users");
 		const tabFriends = document.getElementById("panel-tab-friends");
 		const panelFriends = document.getElementById("panel-friends");
+		const tabChat = document.getElementById("panel-tab-chat");
+		const panelChat = document.getElementById("panel-chat");
 
 		const rightPanelTabs = document.querySelector(".right-panel-tabs");
 		if (this.currentRoom) {
 			tabUsers?.classList.remove("hidden");
+			tabChat?.classList.remove("hidden");
 			rightPanelTabs?.classList.remove("single-tab");
 		} else {
 			tabUsers?.classList.add("hidden");
+			tabChat?.classList.add("hidden");
 			rightPanelTabs?.classList.add("single-tab");
-			if (tabUsers?.classList.contains("active")) {
-				tabUsers.classList.remove("active");
+			if (tabUsers?.classList.contains("active") || tabChat?.classList.contains("active")) {
+				tabUsers?.classList.remove("active");
+				tabChat?.classList.remove("active");
 				panelUsers?.classList.add("hidden");
+				panelChat?.classList.add("hidden");
 				tabFriends?.classList.add("active");
 				panelFriends?.classList.remove("hidden");
+				this.chatManager.setTabActive(false);
 			}
+			this.chatManager.leaveRoom();
 		}
 
 		// Toda troca de sala passa por aqui: mantém o painel de membros filtrado pela sala atual
@@ -2009,7 +2154,7 @@ class ShiroApp {
 			.map((r) => {
 				const isActive = this.currentRoom?.roomId === r.roomId;
 				const streamCount = Array.isArray(r.activeStreams) ? r.activeStreams.length : 0;
-				const membersCount = this.getRoomMembersCount(r);
+				const membersCount = isActive ? Math.max(1, this.getRoomMembersCount(r)) : this.getRoomMembersCount(r);
 				const maxMembers = r.maxMembers || 15;
 				const isGlobal = r.roomId === "GERAL";
 
@@ -2090,6 +2235,16 @@ class ShiroApp {
 
 		this.currentRoom = room;
 		console.log(`[App] Entrou na sala: ${room.name} (${room.roomId})`);
+
+		const me = getUser();
+		if (me) {
+			void this.chatManager.joinRoom(room.roomId, {
+				id: me.id,
+				username: me.username,
+				nickname: me.nickname,
+				avatar: me.avatar,
+			});
+		}
 
 		// Renderiza o grid imediatamente para dar feedback visual de conexão instantâneo (0ms)
 		this.renderLiveStreamsGrid();
@@ -3236,29 +3391,24 @@ class ShiroApp {
 	private setupSubTabs(): void {
 		const tabWindows = document.getElementById("tab-windows");
 		const tabScreens = document.getElementById("tab-screens");
+		const tabCameras = document.getElementById("tab-cameras");
 
 		if (this.platformInfo.isWayland) {
 			tabWindows?.closest<HTMLElement>(".sub-tabs-container")?.classList.add("hidden");
 			return;
 		}
 
-		if (tabWindows && tabScreens) {
-			tabWindows.addEventListener("click", () => {
-				tabWindows.classList.add("active");
-				tabScreens.classList.remove("active");
-				this.leftSourcePicker?.setFilter("window");
-				this.mainSourcePicker?.setFilter("window");
-				this.refreshIcons();
-			});
+		const setTab = (filter: SourceType, activeTab: HTMLElement | null) => {
+			[tabWindows, tabScreens, tabCameras].forEach((t) => t?.classList.remove("active"));
+			activeTab?.classList.add("active");
+			this.leftSourcePicker?.setFilter(filter);
+			this.mainSourcePicker?.setFilter(filter);
+			this.refreshIcons();
+		};
 
-			tabScreens.addEventListener("click", () => {
-				tabScreens.classList.add("active");
-				tabWindows.classList.remove("active");
-				this.leftSourcePicker?.setFilter("screen");
-				this.mainSourcePicker?.setFilter("screen");
-				this.refreshIcons();
-			});
-		}
+		tabWindows?.addEventListener("click", () => setTab("window", tabWindows));
+		tabScreens?.addEventListener("click", () => setTab("screen", tabScreens));
+		tabCameras?.addEventListener("click", () => setTab("camera", tabCameras));
 	}
 
 	private setupSourcePicker(): void {
@@ -3465,21 +3615,37 @@ class ShiroApp {
 				this.previewStream.getTracks().forEach((t) => t.stop());
 			}
 
-			const stream = await (navigator.mediaDevices as any).getUserMedia({
-				audio: false,
-				video: {
-					mandatory: {
-						chromeMediaSource: "desktop",
-						chromeMediaSourceId: source.id,
-						minWidth: quality.width,
-						maxWidth: quality.width,
-						minHeight: quality.height,
-						maxHeight: quality.height,
-						minFrameRate: Math.min(30, quality.fps),
-						maxFrameRate: quality.fps,
+			let stream: MediaStream;
+			if (source.sourceType === "camera") {
+				const videoConstraints: MediaTrackConstraints = {
+					width: { ideal: quality.width },
+					height: { ideal: quality.height },
+					frameRate: { ideal: quality.fps, max: quality.fps },
+				};
+				if (source.id && !source.id.startsWith("camera-")) {
+					videoConstraints.deviceId = { ideal: source.id };
+				}
+				stream = await navigator.mediaDevices.getUserMedia({
+					audio: false,
+					video: videoConstraints,
+				});
+			} else {
+				stream = await (navigator.mediaDevices as any).getUserMedia({
+					audio: false,
+					video: {
+						mandatory: {
+							chromeMediaSource: "desktop",
+							chromeMediaSourceId: source.id,
+							minWidth: quality.width,
+							maxWidth: quality.width,
+							minHeight: quality.height,
+							maxHeight: quality.height,
+							minFrameRate: Math.min(30, quality.fps),
+							maxFrameRate: quality.fps,
+						},
 					},
-				},
-			});
+				});
+			}
 
 			this.previewStream = stream;
 			this.currentVideoTrack = stream.getVideoTracks()[0];
@@ -3488,14 +3654,14 @@ class ShiroApp {
 			capturedTrack?.addEventListener("ended", () => void this.onCaptureEnded(capturedTrack, source));
 
 			if (this.currentVideoTrack && "contentHint" in this.currentVideoTrack) {
-				(this.currentVideoTrack as any).contentHint = "detail";
+				(this.currentVideoTrack as any).contentHint = source.sourceType === "camera" ? "motion" : "detail";
 			}
 
 			if (this.p2pManager?.getIsStreaming() && this.currentVideoTrack) {
 				console.log("[App] Trocando fonte de transmissão em tempo real...");
 
 				const audioMode = this.getSelectedAudioMode();
-				if (audioMode === "process" && window.api?.startAudioCapture) {
+				if (source.sourceType !== "camera" && audioMode === "process" && window.api?.startAudioCapture) {
 					await window.api.startAudioCapture({
 						mode: "process",
 						targetPid: source.pid,
@@ -3503,7 +3669,23 @@ class ShiroApp {
 					});
 				}
 
-				const audioTrack = this.audioPipeline.getAudioTrack() ?? this.audioPipeline.initialize();
+				let audioTrack = this.audioPipeline.getAudioTrack();
+				if (source.sourceType === "camera" && audioMode !== "disabled") {
+					try {
+						const micStream = await navigator.mediaDevices.getUserMedia({
+							audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+							video: false,
+						});
+						const micTrack = micStream.getAudioTracks()[0];
+						if (micTrack) audioTrack = micTrack;
+					} catch (micErr) {
+						console.warn("[App] Microfone para câmera indisponível:", micErr);
+					}
+				}
+				if (!audioTrack && audioMode !== "disabled") {
+					audioTrack = this.audioPipeline.initialize();
+				}
+
 				const liveTracks: MediaStreamTrack[] = [this.currentVideoTrack];
 				if (audioTrack) liveTracks.push(audioTrack);
 				const liveStream = new MediaStream(liveTracks);
@@ -3633,6 +3815,16 @@ class ShiroApp {
 		}
 	}
 
+	private createCameraThumbnailSvg(): string {
+		const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180" viewBox="0 0 320 180" fill="none">
+			<rect width="320" height="180" rx="8" fill="#0d0f17"/>
+			<circle cx="160" cy="90" r="38" fill="#7c3aed" fill-opacity="0.14" stroke="#a855f7" stroke-width="1.8"/>
+			<path d="M144 80c0-2.2 1.8-4 4-4h5c1.1 0 2.1-.6 2.6-1.6l1.4-2.8c.5-1 1.5-1.6 2.6-1.6h8.8c1.1 0 2.1.6 2.6 1.6l1.4 2.8c.5 1 1.5 1.6 2.6 1.6h5c2.2 0 4 1.8 4 4v22c0 2.2-1.8 4-4 4h-28c-2.2 0-4-1.8-4-4V80z" stroke="#c084fc" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+			<circle cx="160" cy="92" r="6.5" stroke="#c084fc" stroke-width="2.2"/>
+		</svg>`;
+		return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+	}
+
 	private async refreshSourcesIfActive(): Promise<void> {
 		if (document.hidden) return;
 		const modal = document.getElementById("modal-source-picker");
@@ -3655,9 +3847,33 @@ class ShiroApp {
 			return;
 		}
 		const sources = await window.api.getAvailableSources();
-		this.allSources = sources;
-		this.leftSourcePicker?.setSources(sources);
-		this.mainSourcePicker?.setSources(sources);
+
+		// Enumera câmeras conectadas
+		const cameraSources: WindowSource[] = [];
+		try {
+			if (navigator.mediaDevices?.enumerateDevices) {
+				const devices = await navigator.mediaDevices.enumerateDevices();
+				const videoDevices = devices.filter((d) => d.kind === "videoinput");
+				videoDevices.forEach((dev, idx) => {
+					const label = dev.label && dev.label.trim() ? dev.label : `Câmera ${idx + 1}`;
+					cameraSources.push({
+						id: dev.deviceId || `camera-${idx}`,
+						name: label,
+						sourceType: "camera",
+						pid: 0,
+						hwnd: 0,
+						processName: "Câmera",
+						thumbnailUrl: this.createCameraThumbnailSvg(),
+					});
+				});
+			}
+		} catch (camErr) {
+			console.warn("[App] Não foi possível enumerar câmeras:", camErr);
+		}
+
+		this.allSources = [...sources, ...cameraSources];
+		this.leftSourcePicker?.setSources(this.allSources);
+		this.mainSourcePicker?.setSources(this.allSources);
 
 		const selected = this.leftSourcePicker?.getSelectedSource();
 		if (selected) {
@@ -3732,22 +3948,38 @@ class ShiroApp {
 
 		if (audioMode !== "disabled") {
 			const activeSource = this.leftSourcePicker?.getSelectedSource() ?? this.mainSourcePicker?.getSelectedSource();
-			if (window.api?.startAudioCapture) {
-				const audioStatus = await window.api.startAudioCapture({
-					mode: audioMode,
-					targetPid: activeSource?.pid,
-					targetProcessName: activeSource?.processName,
-				});
-				console.log("[App] Audio status:", audioStatus);
+
+			if (activeSource?.sourceType === "camera") {
+				try {
+					const micStream = await navigator.mediaDevices.getUserMedia({
+						audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+						video: false,
+					});
+					const micTrack = micStream.getAudioTracks()[0];
+					if (micTrack) audioTrack = micTrack;
+				} catch (micErr) {
+					console.warn("[App] Microfone para câmera indisponível:", micErr);
+				}
 			}
 
-			audioTrack = this.audioPipeline.initialize();
+			if (!audioTrack) {
+				if (window.api?.startAudioCapture) {
+					const audioStatus = await window.api.startAudioCapture({
+						mode: activeSource?.sourceType === "camera" ? "system" : audioMode,
+						targetPid: activeSource?.pid,
+						targetProcessName: activeSource?.processName,
+					});
+					console.log("[App] Audio status:", audioStatus);
+				}
+
+				audioTrack = this.audioPipeline.initialize();
+			}
 			const analyser = this.audioPipeline.getAnalyser();
 			if (analyser) {
 				this.audioVisualizer.start(analyser);
 				const vuStatus = document.getElementById("vu-status-text");
 				if (vuStatus) {
-					vuStatus.innerText = "Recebendo áudio nativo";
+					vuStatus.innerText = activeSource?.sourceType === "camera" && audioTrack ? "Recebendo microfone" : "Recebendo áudio nativo";
 					vuStatus.style.color = "#10b981";
 				}
 			}
@@ -4157,6 +4389,66 @@ class ShiroApp {
 		});
 
 		this.setupAutoUpdateSystem(chkAutoUpdate);
+		this.renderDiscordSettings();
+	}
+
+	private renderDiscordSettings(): void {
+		const container = document.getElementById("discord-app-settings-container");
+		if (!container) return;
+		const user = getUser();
+		if (!user) return;
+
+		if (user.discordId) {
+			const avatarHtml = user.discordAvatar
+				? `<img src="${user.discordAvatar}" style="width:28px;height:28px;border-radius:50%;object-fit:cover;" />`
+				: `<i data-lucide="user-check" style="width:20px;height:20px;color:#5865F2;"></i>`;
+			container.innerHTML = `
+				<div class="discord-card-connected">
+					<div class="discord-card-info">
+						${avatarHtml}
+						<div class="discord-card-texts">
+							<span class="discord-card-tag">${this.escapeHtml(user.discordUsername || "Conta Conectada")}</span>
+							<span class="discord-card-sub">Vinculada ao Discord</span>
+						</div>
+					</div>
+					<button id="btn-unlink-discord" class="btn btn-secondary btn-sm" type="button" style="color:#ef4444;">
+						<i data-lucide="trash-2"></i>
+						<span>Desvincular</span>
+					</button>
+				</div>
+			`;
+			document.getElementById("btn-unlink-discord")?.addEventListener("click", async () => {
+				const confirmed = confirm("Deseja realmente desvincular sua conta do Discord?");
+				if (!confirmed) return;
+				const res = await unlinkDiscordAccount();
+				if (res.ok && res.user) {
+					this.renderDiscordSettings();
+					this.updateHeaderUserInfo();
+				}
+			});
+		} else {
+			container.innerHTML = `
+				<div class="discord-card-unconnected">
+					<p>Vincule seu Discord para login rápido com um clique e sincronizar seu avatar e banner.</p>
+					<button id="btn-link-discord" class="btn btn-discord btn-sm" type="button">
+						<svg class="discord-icon" viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+							<path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994.021-.041.001-.09-.041-.106a13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.929 1.793 8.18 1.793 12.061 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.894.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.028zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/>
+						</svg>
+						<span>Vincular Discord</span>
+					</button>
+				</div>
+			`;
+			document.getElementById("btn-link-discord")?.addEventListener("click", async () => {
+				const token = getToken();
+				const res = await window.api.discordAuth("link", token || undefined);
+				if (res.ok && res.user) {
+					updateUserSession(res.user);
+					this.renderDiscordSettings();
+					this.updateHeaderUserInfo();
+				}
+			});
+		}
+		this.refreshIcons();
 	}
 
 	private setupAutoUpdateSystem(chkAutoUpdate: HTMLInputElement | null): void {
@@ -6472,6 +6764,15 @@ class ShiroApp {
 			if (inputAvatar) inputAvatar.value = user.avatar || "";
 			if (inputBanner) inputBanner.value = user.banner || "";
 
+			const discordActions = document.getElementById("discord-profile-actions");
+			if (discordActions) {
+				if (user.discordId) {
+					discordActions.classList.remove("hidden");
+				} else {
+					discordActions.classList.add("hidden");
+				}
+			}
+
 			updateLivePreview();
 			renderBadges();
 			this.showModal(modal);
@@ -6503,6 +6804,36 @@ class ShiroApp {
 		document.getElementById("btn-open-profile")?.addEventListener("click", openModal);
 		btnClose?.addEventListener("click", closeModal);
 		btnCancel?.addEventListener("click", closeModal);
+
+		document.getElementById("btn-use-discord-avatar")?.addEventListener("click", () => {
+			const user = getUser();
+			if (user?.discordAvatar && inputAvatar) {
+				inputAvatar.value = user.discordAvatar;
+				updateLivePreview();
+			}
+		});
+
+		document.getElementById("btn-use-discord-banner")?.addEventListener("click", () => {
+			const user = getUser();
+			if (user?.discordBanner && inputBanner) {
+				inputBanner.value = user.discordBanner;
+				updateLivePreview();
+			}
+		});
+
+		document.getElementById("btn-remove-avatar")?.addEventListener("click", () => {
+			if (inputAvatar) {
+				inputAvatar.value = "";
+				updateLivePreview();
+			}
+		});
+
+		document.getElementById("btn-remove-banner")?.addEventListener("click", () => {
+			if (inputBanner) {
+				inputBanner.value = "";
+				updateLivePreview();
+			}
+		});
 
 		form?.addEventListener("submit", async (e) => {
 			e.preventDefault();
@@ -7135,7 +7466,7 @@ class ShiroApp {
 					AppWindow, ScreenShare, Video, PlayCircle, Volume1, Volume2, ShieldAlert, ShieldCheck,
 					VolumeX, MicOff, Radio, CheckCircle2, Play, Plus, Square, Loader2,
 					Settings, X, Power, User, Users, Lock, Eye, EyeOff, LogOut, Search,
-					ChevronLeft, ChevronRight, Check, Copy, RotateCw, Sparkles, Globe,
+					ChevronLeft, ChevronRight, Check, Copy, Crown, MessageSquare, RotateCw, Sparkles, Globe,
 					UserCog, BadgeCheck, Camera, Image, Trash2, Clock,
 					UserCheck, UserPlus, Bell, BellOff, LogIn, KeyRound, Hash, CheckCheck,
 					Megaphone, AlertTriangle, Send, Info, Cat, ExternalLink, CircleHelp, GraduationCap, ChevronDown, Pencil, Link,

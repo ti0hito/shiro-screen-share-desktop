@@ -34,6 +34,10 @@ export interface ShiroUser {
 	createdAt: string;
 	badges?: BadgeId[];
 	badgeStats?: BadgeStats;
+	discordId?: string;
+	discordUsername?: string;
+	discordAvatar?: string;
+	discordBanner?: string;
 }
 
 export interface AuthResult {
@@ -776,4 +780,21 @@ export async function dismissRoomInvite(inviteId: string): Promise<void> {
 		token,
 		body: { inviteId },
 	});
+}
+
+/** Desvincula a conta do Discord */
+export async function unlinkDiscordAccount(): Promise<{ ok: boolean; user?: ShiroUser; error?: string }> {
+	const token = getToken();
+	if (!token || !window.api?.apiRequest) return { ok: false, error: 'Não autenticado.' };
+	const res = await window.api.apiRequest({
+		endpoint: '/api/auth/discord/unlink',
+		method: 'POST',
+		token,
+	});
+	const data = res.data as any;
+	if (res.ok && data?.user) {
+		updateUserSession(data.user);
+		return { ok: true, user: data.user };
+	}
+	return { ok: false, error: data?.error || 'Erro ao desvincular Discord.' };
 }

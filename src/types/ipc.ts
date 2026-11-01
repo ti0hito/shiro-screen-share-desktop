@@ -44,8 +44,15 @@ export interface ElectronAPI {
 	apiRequest: (opts: ApiRequestOptions) => Promise<ApiRequestResult>;
 	/** Abre URL no navegador padrão (somente domínios shirobot.xyz) */
 	openExternal: (url: string) => Promise<boolean>;
+	discordAuth: (action: "login" | "link", token?: string) => Promise<{
+		ok: boolean;
+		token?: string;
+		user?: any;
+		error?: string;
+	}>;
 	getResourcesPath: () => Promise<string>;
 	getAppSettings: () => Promise<AppSettings>;
+	getApiUrl?: () => Promise<string>;
 	setOpenAtLogin: (enabled: boolean) => Promise<boolean>;
 	setAutoUpdate: (enabled: boolean) => Promise<boolean>;
 	installUpdate: () => Promise<void>;
@@ -88,7 +95,7 @@ export interface ElectronAPI {
 			id: string;
 			name: string;
 			processName: string;
-			sourceType: "window" | "screen";
+			sourceType: "window" | "screen" | "camera";
 			thumbnailUrl: string;
 		}>,
 		selectedIndex: number,
@@ -98,7 +105,7 @@ export interface ElectronAPI {
 			id: string;
 			name: string;
 			processName: string;
-			sourceType: "window" | "screen";
+			sourceType: "window" | "screen" | "camera";
 			thumbnailUrl: string;
 		}>,
 		selectedIndex: number,

@@ -11,7 +11,7 @@ export type SourceInfo = {
 	id: string;
 	name: string;
 	processName: string;
-	sourceType: "window" | "screen";
+	sourceType: "window" | "screen" | "camera";
 	thumbnailUrl: string;
 };
 

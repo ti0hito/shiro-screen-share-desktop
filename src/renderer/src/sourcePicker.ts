@@ -90,7 +90,8 @@ export class SourcePicker {
 		if (filtered.length === 0) {
 			const emptyState = document.createElement("div");
 			emptyState.className = "empty-sources-state";
-			emptyState.innerHTML = `<p style="padding: 20px; text-align: center; color: var(--text-muted); grid-column: span 2;">Nenhuma ${this.currentFilter === "window" ? "janela" : "tela"} encontrada.</p>`;
+			const filterName = this.currentFilter === "window" ? "janela" : this.currentFilter === "screen" ? "tela" : "câmera";
+			emptyState.innerHTML = `<p style="padding: 20px; text-align: center; color: var(--text-muted); grid-column: span 2;">Nenhuma ${filterName} encontrada.</p>`;
 			this.containerElement.appendChild(emptyState);
 			return;
 		}
