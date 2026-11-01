@@ -344,6 +344,18 @@ export class ChatManager {
 			input.value = "";
 		});
 
+		
+		// Fecha o popover de GIFs ao clicar em qualquer lugar fora dele
+		document.addEventListener("mousedown", (e) => {
+			const popover = document.getElementById("chat-gif-popover");
+			const btnToggle = document.getElementById("btn-toggle-gif-picker");
+			if (!popover || popover.classList.contains("hidden")) return;
+			const target = e.target as Node;
+			if (!popover.contains(target) && !btnToggle?.contains(target)) {
+				this.closeGifPopover();
+			}
+		});
+
 		btnToggleGif?.addEventListener("click", () => {
 			this.toggleGifPopover();
 		});
