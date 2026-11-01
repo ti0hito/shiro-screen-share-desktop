@@ -1464,6 +1464,7 @@ class ShiroApp {
 				window.addEventListener("mousemove", onMouseMove);
 				window.addEventListener("mouseup", onMouseUp);
 				window.addEventListener("blur", onMouseUp);
+				document.addEventListener("mouseup", onMouseUp);
 			});
 
 			// Duplo-clique reseta para o tamanho padrão mínimo
@@ -1506,6 +1507,7 @@ class ShiroApp {
 				window.addEventListener("mousemove", onMouseMove);
 				window.addEventListener("mouseup", onMouseUp);
 				window.addEventListener("blur", onMouseUp);
+				document.addEventListener("mouseup", onMouseUp);
 			});
 
 			// Duplo-clique reseta para o tamanho padrão mínimo

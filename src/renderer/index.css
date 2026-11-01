@@ -1,3 +1,36 @@
+
+/* ══════════════════════════════════════════════════════════
+   SCROLLBAR GLOBAL MODERNA E ESCURA
+   ══════════════════════════════════════════════════════════ */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #3f3f46 #141417;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #141417;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #3f3f46;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #52525b;
+}
+
+::-webkit-scrollbar-button {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
 /* ══════════════════════════════════════════════════════════
    SHIRO SCREEN SHARE — Design
    ══════════════════════════════════════════════════════════ */
@@ -1020,7 +1053,7 @@ svg {
 
 .main-content {
   display: grid;
-  grid-template-columns: var(--left-sidebar-width, 310px) 1fr var(--right-sidebar-width, 270px);
+  grid-template-columns: minmax(310px, var(--left-sidebar-width, 310px)) 1fr minmax(270px, var(--right-sidebar-width, 270px));
   flex: 1;
   overflow: hidden;
   height: calc(100vh - 38px);
@@ -1029,11 +1062,11 @@ svg {
 }
 
 .main-content.sidebar-collapsed {
-  grid-template-columns: 0px 1fr var(--right-sidebar-width, 270px);
+  grid-template-columns: 0px 1fr minmax(270px, var(--right-sidebar-width, 270px));
 }
 
 .main-content.right-sidebar-collapsed {
-  grid-template-columns: var(--left-sidebar-width, 310px) 1fr 0px;
+  grid-template-columns: minmax(310px, var(--left-sidebar-width, 310px)) 1fr 0px;
 }
 
 .main-content.sidebar-collapsed.right-sidebar-collapsed {
@@ -1055,7 +1088,8 @@ body.is-resizing-sidebars .right-panel {
   flex-direction: column;
   overflow: hidden;
   width: 100%;
-  min-width: 0;
+  min-width: 310px;
+  max-width: 650px;
   box-sizing: border-box;
   transition: opacity 0.24s cubic-bezier(0.4, 0, 0.2, 1),
     border-color 0.24s ease;
@@ -1066,6 +1100,9 @@ body.is-resizing-sidebars .right-panel {
   pointer-events: none;
   visibility: hidden;
   border-right-color: transparent;
+  min-width: 0 !important;
+  max-width: 0 !important;
+  width: 0 !important;
 }
 
 /* ── Painel Direito (Amigos & Membros da Sala) ── */
@@ -1076,7 +1113,8 @@ body.is-resizing-sidebars .right-panel {
   flex-direction: column;
   overflow: hidden;
   width: 100%;
-  min-width: 0;
+  min-width: 270px;
+  max-width: 650px;
   box-sizing: border-box;
   transition: opacity 0.24s cubic-bezier(0.4, 0, 0.2, 1),
     border-color 0.24s ease;
@@ -1087,6 +1125,9 @@ body.is-resizing-sidebars .right-panel {
   pointer-events: none;
   visibility: hidden;
   border-left-color: transparent;
+  min-width: 0 !important;
+  max-width: 0 !important;
+  width: 0 !important;
 }
 
 .sidebar-collapse-btn {
@@ -7618,17 +7659,18 @@ body.is-resizing-sidebars .right-panel {
   height: 34px;
   width: 34px;
   min-width: 34px;
+  max-width: 34px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
+  border-radius: 6px !important;
   background: var(--accent-purple);
   border: none;
   color: #fff;
   cursor: pointer;
   flex-shrink: 0;
   box-sizing: border-box;
-  margin-right: 2px;
+  margin-right: 0 !important;
   transition: all 0.15s ease;
 }
 
