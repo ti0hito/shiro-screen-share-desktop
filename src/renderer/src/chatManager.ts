@@ -15,7 +15,6 @@
  *    - Aba dedicada de Favoritos no popover com visualização e remoção imediata.
  */
 
-import { io, Socket } from "socket.io-client";
 import { getToken } from "./authManager";
 
 export interface ChatUser {
@@ -43,7 +42,8 @@ export interface FavoriteGif {
 }
 
 export class ChatManager {
-	private socket: Socket | null = null;
+	private readonly instanceId = `app_${Math.random().toString(36).slice(2, 10)}`;
+	private historyRetryTimer: ReturnType<typeof setTimeout> | null = null;
 	private currentRoomId: string | null = null;
 	private currentUser: ChatUser | null = null;
 	private messages: ChatMessage[] = [];
@@ -68,14 +68,47 @@ export class ChatManager {
 		this.initSseSignalListener();
 	}
 
+	private sameRoom(id?: string): boolean {
+		return !!id && !!this.currentRoomId && id.toUpperCase() === this.currentRoomId.toUpperCase();
+	}
+
+	/** Pede o histórico aos demais clientes da sala (app/web). Eles respondem via SSE. */
+	private requestHistory(): void {
+		const token = getToken();
+		if (!token || !this.currentRoomId || !window.api?.apiRequest) return;
+		window.api
+			.apiRequest({
+				endpoint: "/api/signal/chat/history",
+				method: "POST",
+				body: { roomId: this.currentRoomId, action: "request", instanceId: this.instanceId },
+				token,
+			})
+			.catch(() => {});
+	}
+
+	private mergeMessages(incoming: ChatMessage[]): boolean {
+		const seen = new Set(this.messages.map((m) => m.id));
+		let added = false;
+		for (const m of incoming) {
+			if (m && m.id && !seen.has(m.id)) {
+				this.messages.push(m);
+				seen.add(m.id);
+				added = true;
+			}
+		}
+		if (added) this.messages.sort((a, b) => a.timestamp - b.timestamp);
+		return added;
+	}
+
 	private initSseSignalListener(): void {
 		if (!window.api?.onSseSignal) return;
 		window.api.onSseSignal((event: string, data: any) => {
-			if (event === "chat:new_message") {
+			if (event === "hello") {
+				// SSE (re)conectou: pode ter perdido mensagens, sincroniza o histórico
+				if (this.currentRoomId) this.requestHistory();
+			} else if (event === "chat:new_message") {
 				const msg = data as ChatMessage;
-				if (!msg || !this.currentRoomId || msg.roomId !== this.currentRoomId) return;
-
-				// Se já temos a mensagem (ex: otimista do próprio usuário), ignora duplicata
+				if (!msg || !this.sameRoom(msg.roomId)) return;
 				if (this.messages.some((m) => m.id === msg.id)) return;
 
 				this.messages.push(msg);
@@ -86,14 +119,16 @@ export class ChatManager {
 					this.updateUnreadBadge();
 					this.onUnreadCountChanged?.(this.unreadCount);
 				}
-
 				this.scrollToBottom();
 			} else if (event === "chat:request_history") {
-				const req = data as { forUserId: string; roomId: string };
-				if (!req || req.roomId !== this.currentRoomId) return;
+				const req = data as { forUserId: string; roomId: string; instanceId?: string };
+				if (!req || !this.sameRoom(req.roomId)) return;
+				if (req.instanceId === this.instanceId) return; // meu próprio pedido
+				if (this.messages.length === 0) return;
 				const token = getToken();
-				if (token && window.api?.apiRequest && this.messages.length > 0) {
-					window.api.apiRequest({
+				if (!token || !window.api?.apiRequest) return;
+				window.api
+					.apiRequest({
 						endpoint: "/api/signal/chat/history",
 						method: "POST",
 						body: {
@@ -103,19 +138,12 @@ export class ChatManager {
 							messages: this.messages,
 						},
 						token,
-					}).catch(() => {});
-				}
+					})
+					.catch(() => {});
 			} else if (event === "chat:history_received") {
-				const hist = data as { messages: ChatMessage[] };
-				if (Array.isArray(hist?.messages) && hist.messages.length > 0) {
-					const seen = new Set(this.messages.map((m) => m.id));
-					for (const m of hist.messages) {
-						if (!seen.has(m.id)) {
-							this.messages.push(m);
-							seen.add(m.id);
-						}
-					}
-					this.messages.sort((a, b) => a.timestamp - b.timestamp);
+				const hist = data as { roomId?: string; messages: ChatMessage[] };
+				if (hist?.roomId && !this.sameRoom(hist.roomId)) return;
+				if (Array.isArray(hist?.messages) && this.mergeMessages(hist.messages)) {
 					this.renderMessages();
 				}
 			}
@@ -167,7 +195,7 @@ export class ChatManager {
 	}
 
 	public async joinRoom(roomId: string, user: ChatUser): Promise<void> {
-		if (this.currentRoomId === roomId.toUpperCase() && this.socket?.connected) {
+		if (this.currentRoomId === roomId.toUpperCase()) {
 			return;
 		}
 
@@ -181,105 +209,18 @@ export class ChatManager {
 		this.onUnreadCountChanged?.(0);
 		this.renderMessages();
 
-		try {
-			await this.init();
-
-			// Solicita histórico via sinal efêmero (Vercel / SSE)
-			const token = getToken();
-			if (token && window.api?.apiRequest) {
-				window.api.apiRequest({
-					endpoint: "/api/signal/chat/history",
-					method: "POST",
-					body: {
-						roomId: this.currentRoomId,
-						action: "request",
-					},
-					token,
-				}).catch(() => {});
-			}
-
-			this.socket = io(this.apiUrl, {
-				transports: ["websocket", "polling"],
-				timeout: 10000,
-				reconnection: true,
-				reconnectionAttempts: 5,
-				reconnectionDelay: 1000,
-			});
-
-			this.socket.on("connect", () => {
-				console.log(`[Chat] Conectado ao servidor de chat Socket.IO (${this.socket?.id})`);
-				this.socket?.emit("chat:join", {
-					roomId: this.currentRoomId,
-					user: this.currentUser,
-				});
-			});
-
-			// O servidor informa se este cliente é o líder da sala
-			this.socket.on("chat:leader_elected", (data: { isLeader: boolean }) => {
-				this.isLeader = !!data.isLeader;
-				console.log(`[Chat] Status de liderança: ${this.isLeader ? "👑 LÍDER (Guardião do Histórico)" : "Membro"}`);
-				this.updateLeaderBadge();
-			});
-
-			// Quando um novo membro entra, o servidor pede o histórico ao Líder
-			this.socket.on("chat:request_history", (data: { forSocketId: string }) => {
-				if (!this.isLeader) return;
-				console.log(`[Chat Líder] Replicando histórico (${this.messages.length} msgs) para o socket ${data.forSocketId}`);
-				this.socket?.emit("chat:deliver_history", {
-					targetSocketId: data.forSocketId,
-					messages: this.messages,
-				});
-			});
-
-			// Novo membro recebe o histórico replicado pelo Líder
-			this.socket.on("chat:history_received", (data: { messages: ChatMessage[] }) => {
-				if (Array.isArray(data.messages) && data.messages.length > 0) {
-					console.log(`[Chat] Histórico recebido do Líder da sala: ${data.messages.length} mensagens`);
-					// Mescla sem duplicatas
-					const seenIds = new Set(this.messages.map((m) => m.id));
-					for (const msg of data.messages) {
-						if (!seenIds.has(msg.id)) {
-							this.messages.push(msg);
-							seenIds.add(msg.id);
-						}
-					}
-					this.messages.sort((a, b) => a.timestamp - b.timestamp);
-					this.renderMessages();
-				}
-			});
-
-			// Nova mensagem enviada na sala
-			this.socket.on("chat:new_message", (msg: ChatMessage) => {
-				// Evita duplicata se já recebido
-				if (this.messages.some((m) => m.id === msg.id)) return;
-
-				this.messages.push(msg);
-				this.appendMessageElement(msg);
-
-				if (!this.isTabActive) {
-					this.unreadCount++;
-					this.updateUnreadBadge();
-					this.onUnreadCountChanged?.(this.unreadCount);
-				}
-
-				this.scrollToBottom();
-			});
-
-			this.socket.on("disconnect", () => {
-				console.log("[Chat] Desconectado do servidor de chat.");
-				this.isLeader = false;
-				this.updateLeaderBadge();
-			});
-		} catch (err) {
-			console.error("[Chat] Erro ao conectar ao Socket.IO:", err);
-		}
+		await this.init();
+		this.requestHistory();
+		// Se ninguém respondeu ainda (SSE conectando / ninguém com histórico), tenta de novo
+		this.historyRetryTimer = setTimeout(() => {
+			if (this.messages.length === 0) this.requestHistory();
+		}, 3000);
 	}
 
 	public leaveRoom(): void {
-		if (this.socket) {
-			this.socket.emit("chat:leave");
-			this.socket.disconnect();
-			this.socket = null;
+		if (this.historyRetryTimer) {
+			clearTimeout(this.historyRetryTimer);
+			this.historyRetryTimer = null;
 		}
 		this.currentRoomId = null;
 		this.messages = [];
@@ -313,15 +254,6 @@ export class ChatManager {
 		this.messages.push(message);
 		this.appendMessageElement(message);
 		this.scrollToBottom();
-
-		// 2. Envio via Socket.IO se conectado
-		if (this.socket?.connected) {
-			this.socket.emit("chat:send_message", {
-				roomId: this.currentRoomId,
-				content: text,
-				gifUrl: gifUrl || undefined,
-			});
-		}
 
 		// 3. Envio via sinalização efêmera SSE/HTTP (Vercel Serverless / produção)
 		const token = getToken();

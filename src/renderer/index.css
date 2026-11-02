@@ -7406,8 +7406,22 @@ body.is-resizing-sidebars .right-panel {
   color: inherit;
 }
 
-/* Badge numérico de membros ou mensagens não lidas */
-.right-panel-tabs .panel-tab .tab-count-pill,
+/* Somente ícones: o nome aparece apenas na aba ativa (nas demais, via tooltip) */
+.right-panel-tabs .panel-tab:not(.active) .panel-tab-label {
+  display: none;
+}
+
+.right-panel-tabs .panel-tab:not(.active) {
+  flex: 0 0 auto;
+  min-width: 44px;
+  justify-content: center;
+}
+
+.right-panel-tabs .panel-tab.active {
+  flex: 1 1 auto;
+}
+
+/* Badge numérico de membros ou mensagens não lidas */.right-panel-tabs .panel-tab .tab-count-pill,
 .right-panel-tabs .panel-tab .tab-badge-dot {
   margin-left: 2px;
   flex-shrink: 0;
