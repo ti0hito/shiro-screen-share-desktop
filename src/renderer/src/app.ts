@@ -325,6 +325,7 @@ class ShiroApp {
 		this.setupStreamDeckBridge();
 		this.setupQuitCleanup();
 		this.setupAboutAndLegalModals();
+		this.setupBetaFeaturesHelper();
 		await this.loadAppInfo();
 		await this.setupDeepLinks();
 
@@ -707,6 +708,7 @@ class ShiroApp {
 
 		if (viewLogin) viewLogin.classList.add("hidden");
 		if (viewMain) viewMain.classList.remove("hidden");
+		this.updateBetaFeatures();
 
 		const user = getUser();
 		if (user) {
@@ -926,6 +928,7 @@ class ShiroApp {
 				mandatoryVersionEl.textContent = versionStr;
 			}
 			this.isDev = !!settings.isDev;
+			this.updateBetaFeatures();
 			this.platformInfo = { platform: settings.platform ?? "win32", isWayland: !!settings.isWayland };
 			document.documentElement.classList.toggle("platform-linux", settings.platform === "linux");
 			document.documentElement.classList.toggle("is-wayland", !!settings.isWayland);
@@ -7359,9 +7362,65 @@ class ShiroApp {
 		popover.style.top = `${top}px`;
 	}
 
+	private setupBetaFeaturesHelper(): void {
+		(window as any).setShiroTestMode = (enable: boolean) => {
+			try {
+				if (enable) localStorage.setItem("shiro_test_mode", "true");
+				else localStorage.removeItem("shiro_test_mode");
+			} catch {}
+			this.updateBetaFeatures();
+			console.log(`[Shiro] Modo Teste / Beta ${enable ? "ATIVADO" : "DESATIVADO"}`);
+		};
+		this.updateBetaFeatures();
+	}
+
 	private isViewerDeveloper(): boolean {
 		const me = getUser();
 		return !!me && DEVELOPER_IDS.includes(me.id);
+	}
+
+	/**
+	 * Retorna se o usuário/ambiente está em modo de teste/dev (onde recursos beta são liberados).
+	 */
+	public isTestMode(): boolean {
+		if (this.isDev) return true;
+		if (this.isViewerDeveloper()) return true;
+		try {
+			if (localStorage.getItem("shiro_test_mode") === "true") return true;
+		} catch {}
+		return false;
+	}
+
+	/**
+	 * Atualiza elementos vinculados ao sistema de recursos Beta / Modo Teste.
+	 * Elementos com [data-beta-feature] ficam bloqueados no build final para usuários comuns,
+	 * exibindo a tarja flutuante "Em breve" ao passar o mouse.
+	 * No modo dev, a tarja some e o recurso funciona normalmente.
+	 */
+	public updateBetaFeatures(): void {
+		const inTestMode = this.isTestMode();
+		const betaElements = document.querySelectorAll<HTMLElement>("[data-beta-feature]");
+		for (const el of betaElements) {
+			if (inTestMode) {
+				el.classList.remove("feature-beta-locked");
+				el.removeAttribute("disabled");
+				el.removeAttribute("aria-disabled");
+				const originalTitle = el.getAttribute("data-original-title");
+				if (originalTitle) {
+					el.setAttribute("title", originalTitle);
+					el.removeAttribute("data-original-title");
+				}
+			} else {
+				el.classList.add("feature-beta-locked");
+				el.setAttribute("aria-disabled", "true");
+				const currentTitle = el.getAttribute("title");
+				if (currentTitle) {
+					el.setAttribute("data-original-title", currentTitle);
+					el.removeAttribute("title");
+					el.removeAttribute("data-tooltip");
+				}
+			}
+		}
 	}
 
 	/** HTML das insígnias de um perfil (tooltip mostra a última contagem das estatísticas) */

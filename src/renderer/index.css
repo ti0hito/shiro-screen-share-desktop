@@ -7680,6 +7680,75 @@ body.is-resizing-sidebars .right-panel {
   border-color: var(--accent-purple);
 }
 
+/* ==========================================================================
+   RECURSOS EM MODO TESTE / BETA (TARJA "EM BREVE")
+   ========================================================================== */
+.feature-beta-locked {
+  position: relative !important;
+  opacity: 0.45 !important;
+  cursor: not-allowed !important;
+  filter: grayscale(35%);
+}
+
+.feature-beta-locked:hover {
+  background: #27272a !important;
+  border-color: #3f3f46 !important;
+}
+
+.feature-beta-locked * {
+  pointer-events: none;
+}
+
+/* Tarja flutuante elegante 'Em breve' exibida ao passar o mouse */
+.feature-beta-locked::after {
+  content: "Em breve";
+  position: absolute;
+  bottom: calc(100% + 7px);
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  background: linear-gradient(135deg, #7c3aed, #4f46e5);
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+  letter-spacing: 0.4px;
+  box-shadow: 0 4px 14px rgba(124, 58, 237, 0.45), 0 1px 3px rgba(0, 0, 0, 0.3);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.15s cubic-bezier(0.16, 1, 0.3, 1), transform 0.15s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.15s;
+  z-index: 99999;
+}
+
+.feature-beta-locked::before {
+  content: "";
+  position: absolute;
+  bottom: calc(100% + 2px);
+  left: 50%;
+  transform: translateX(-50%);
+  border-width: 5px 5px 0 5px;
+  border-style: solid;
+  border-color: #4f46e5 transparent transparent transparent;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.15s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.15s;
+  z-index: 99999;
+}
+
+.feature-beta-locked:hover::after {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
+}
+
+.feature-beta-locked:hover::before {
+  opacity: 1;
+  visibility: visible;
+}
+
 .gif-tag {
   font-size: 10px;
   font-weight: 800;

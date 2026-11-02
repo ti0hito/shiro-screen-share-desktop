@@ -441,6 +441,7 @@ export class ChatManager {
 		});
 
 		btnToggleGif?.addEventListener("click", () => {
+			if (btnToggleGif.classList.contains("feature-beta-locked")) return;
 			this.toggleGifPopover();
 		});
 
