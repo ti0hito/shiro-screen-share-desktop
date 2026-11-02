@@ -53,6 +53,7 @@ export class Poller {
 	start(runNow = false): void {
 		if (this.running) return;
 		this.running = true;
+		this.lastRunAt = Date.now();
 		document.addEventListener("visibilitychange", this.onVisibilityChange);
 		if (runNow) this.trigger();
 		else this.schedule();

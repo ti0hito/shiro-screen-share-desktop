@@ -868,11 +868,14 @@ class ShiroApp {
 		this.usersLoaded = false;
 		this.lastUsersRenderKey = "";
 
-		await this.refreshRooms();
-		await this.leaveStaleRooms();
 		await this.refreshSources();
-		await this.refreshFriends();
-		await this.refreshUsersList();
+
+		// Se os snapshots push do SSE não chegarem após 2.5s (ex.: modo offline), busca via HTTP
+		setTimeout(async () => {
+			if (!this.roomsLoaded) await this.refreshRooms();
+			if (this.friends.length === 0) await this.refreshFriends();
+			if (!this.usersLoaded) await this.refreshUsersList();
+		}, 2500);
 
 		this.startPolling();
 		this.mainViewReady = true;
@@ -1542,7 +1545,9 @@ class ShiroApp {
 		});
 		tabFriends?.addEventListener("click", () => {
 			activateRight(tabFriends, panelFriends);
-			this.refreshFriends();
+			if (this.friends.length === 0 && !this.serverSupportsEvents) {
+				this.refreshFriends();
+			}
 		});
 		tabUsers?.addEventListener("click", () => {
 			if (!this.currentRoom) return;
@@ -2426,9 +2431,6 @@ class ShiroApp {
 
 		// Auto-conecta as transmissões ativas já em andamento na sala
 		await this.autoConnectRoomStreams();
-		// Confere na hora quem está transmitindo (a sala recebida no join pode estar desatualizada)
-		this.streamsPoller?.trigger();
-		await this.refreshRooms();
 	}
 
 	private getStreamerProfile(peerId: string, username: string): { avatar?: string | null; nickname?: string; isGuest?: boolean } {

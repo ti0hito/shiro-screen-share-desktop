@@ -56,6 +56,8 @@ export class ChatManager {
 	// Gerenciamento de GIFs & Favoritos
 	private activeGifTab: "trending" | "favorites" = "trending";
 	private favoriteGifs: FavoriteGif[] = [];
+	private cachedTrending: Array<{ id: string; title: string; url: string; previewUrl: string }> | null = null;
+	private cachedSearches = new Map<string, Array<{ id: string; title: string; url: string; previewUrl: string }>>();
 
 	// Callbacks para sincronizar com app.ts
 	public onUnreadCountChanged?: (count: number) => void;
@@ -477,13 +479,13 @@ export class ChatManager {
 						this.renderFavoritesGifs();
 					}
 				} else {
-					if (q) {
+					if (q.length >= 2) {
 						this.searchGifs(q);
-					} else {
+					} else if (!q) {
 						this.loadTrendingGifs();
 					}
 				}
-			}, 350);
+			}, 400); // Atraso de 400ms para economizar requisições na API de GIFs
 		});
 	}
 
@@ -561,6 +563,10 @@ export class ChatManager {
 	}
 
 	private async loadTrendingGifs(): Promise<void> {
+		if (this.cachedTrending && this.cachedTrending.length > 0) {
+			this.renderGifGrid(this.cachedTrending, false);
+			return;
+		}
 		const grid = document.getElementById("chat-gif-grid");
 		if (!grid) return;
 		grid.innerHTML = `
@@ -578,7 +584,8 @@ export class ChatManager {
 			});
 
 			if (res?.ok && Array.isArray((res.data as any)?.gifs)) {
-				this.renderGifGrid((res.data as any).gifs, false);
+				this.cachedTrending = (res.data as any).gifs;
+				this.renderGifGrid(this.cachedTrending!, false);
 			} else {
 				grid.innerHTML = `<p class="gif-empty">Não foi possível carregar os GIFs.</p>`;
 			}
@@ -588,6 +595,11 @@ export class ChatManager {
 	}
 
 	private async searchGifs(query: string): Promise<void> {
+		const norm = query.toLowerCase().trim();
+		if (this.cachedSearches.has(norm)) {
+			this.renderGifGrid(this.cachedSearches.get(norm)!, false);
+			return;
+		}
 		const grid = document.getElementById("chat-gif-grid");
 		if (!grid) return;
 		grid.innerHTML = `
@@ -605,7 +617,9 @@ export class ChatManager {
 			});
 
 			if (res?.ok && Array.isArray((res.data as any)?.gifs)) {
-				this.renderGifGrid((res.data as any).gifs, false);
+				const gifs = (res.data as any).gifs;
+				this.cachedSearches.set(norm, gifs);
+				this.renderGifGrid(gifs, false);
 			} else {
 				grid.innerHTML = `<p class="gif-empty">Nenhum GIF encontrado.</p>`;
 			}
