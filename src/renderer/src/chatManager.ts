@@ -135,7 +135,10 @@ export class ChatManager {
 							roomId: req.roomId,
 							action: "deliver",
 							targetUserId: req.forUserId,
-							messages: this.messages,
+							messages: this.messages.slice(-150).map((m) => ({
+								...m,
+								sender: { ...m.sender, avatar: null },
+							})),
 						},
 						token,
 					})
