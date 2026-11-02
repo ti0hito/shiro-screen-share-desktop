@@ -2407,6 +2407,8 @@ body.is-resizing-sidebars .right-panel {
   padding: 3px 8px;
   border-radius: 12px;
   font-weight: 500;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .badge-offline {
@@ -2427,6 +2429,8 @@ body.is-resizing-sidebars .right-panel {
   gap: 7px;
   font-weight: 700;
   letter-spacing: 0.5px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .badge-live::before {
@@ -2814,9 +2818,13 @@ body.is-resizing-sidebars .right-panel {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px;
+  padding: 8px 10px;
   background: linear-gradient(180deg, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0) 100%);
   pointer-events: none;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  gap: 8px;
 }
 
 .stream-card-actions {
@@ -2824,6 +2832,7 @@ body.is-resizing-sidebars .right-panel {
   align-items: center;
   gap: 6px;
   pointer-events: auto;
+  flex-shrink: 0;
 }
 
 /* No modo grid (quadrados), esconde botões secundários para manter o card limpo */
@@ -2843,6 +2852,21 @@ body.is-resizing-sidebars .right-panel {
   display: inline-flex !important;
 }
 
+/* Ajustes compactos nos cards da grade para não estourar o layout */
+.stream-card:not(.maximized) .stream-volume-control {
+  padding: 2px 6px;
+  gap: 4px;
+}
+
+.stream-card:not(.maximized) .stream-vol-slider {
+  width: 42px;
+}
+
+.stream-card:not(.maximized) .stream-vol-percent {
+  font-size: 9px;
+  min-width: 22px;
+}
+
 .stream-volume-control {
   display: inline-flex;
   align-items: center;
@@ -2852,6 +2876,7 @@ body.is-resizing-sidebars .right-panel {
   padding: 3px 8px;
   border-radius: var(--radius-sm);
   pointer-events: auto;
+  flex-shrink: 0;
 }
 
 .stream-vol-btn {
@@ -2898,6 +2923,17 @@ body.is-resizing-sidebars .right-panel {
   font-size: 11px;
   font-weight: 600;
   text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.stream-card-user span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  display: block;
 }
 
 .stream-card-avatar {

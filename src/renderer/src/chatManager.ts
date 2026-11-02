@@ -60,10 +60,79 @@ export class ChatManager {
 	// Callbacks para sincronizar com app.ts
 	public onUnreadCountChanged?: (count: number) => void;
 	public onRefreshIcons?: () => void;
+	public onBroadcastP2PMessage?: (msg: ChatMessage) => void;
 
 	constructor() {
 		this.loadFavoriteGifs();
 		this.initElements();
+		this.initSseSignalListener();
+	}
+
+	private initSseSignalListener(): void {
+		if (!window.api?.onSseSignal) return;
+		window.api.onSseSignal((event: string, data: any) => {
+			if (event === "chat:new_message") {
+				const msg = data as ChatMessage;
+				if (!msg || !this.currentRoomId || msg.roomId !== this.currentRoomId) return;
+
+				// Se já temos a mensagem (ex: otimista do próprio usuário), ignora duplicata
+				if (this.messages.some((m) => m.id === msg.id)) return;
+
+				this.messages.push(msg);
+				this.appendMessageElement(msg);
+
+				if (!this.isTabActive) {
+					this.unreadCount++;
+					this.updateUnreadBadge();
+					this.onUnreadCountChanged?.(this.unreadCount);
+				}
+
+				this.scrollToBottom();
+			} else if (event === "chat:request_history") {
+				const req = data as { forUserId: string; roomId: string };
+				if (!req || req.roomId !== this.currentRoomId) return;
+				const token = getToken();
+				if (token && window.api?.apiRequest && this.messages.length > 0) {
+					window.api.apiRequest({
+						endpoint: "/api/signal/chat/history",
+						method: "POST",
+						body: {
+							roomId: req.roomId,
+							action: "deliver",
+							targetUserId: req.forUserId,
+							messages: this.messages,
+						},
+						token,
+					}).catch(() => {});
+				}
+			} else if (event === "chat:history_received") {
+				const hist = data as { messages: ChatMessage[] };
+				if (Array.isArray(hist?.messages) && hist.messages.length > 0) {
+					const seen = new Set(this.messages.map((m) => m.id));
+					for (const m of hist.messages) {
+						if (!seen.has(m.id)) {
+							this.messages.push(m);
+							seen.add(m.id);
+						}
+					}
+					this.messages.sort((a, b) => a.timestamp - b.timestamp);
+					this.renderMessages();
+				}
+			}
+		});
+	}
+
+	public receiveP2PMessage(msg: ChatMessage): void {
+		if (!msg || !this.currentRoomId || msg.roomId !== this.currentRoomId) return;
+		if (this.messages.some((m) => m.id === msg.id)) return;
+		this.messages.push(msg);
+		this.appendMessageElement(msg);
+		if (!this.isTabActive) {
+			this.unreadCount++;
+			this.updateUnreadBadge();
+			this.onUnreadCountChanged?.(this.unreadCount);
+		}
+		this.scrollToBottom();
 	}
 
 	public async init(): Promise<void> {
@@ -80,8 +149,20 @@ export class ChatManager {
 		this.isTabActive = active;
 		if (active) {
 			this.unreadCount = 0;
+			this.updateUnreadBadge();
 			this.onUnreadCountChanged?.(0);
 			this.scrollToBottom();
+		}
+	}
+
+	private updateUnreadBadge(): void {
+		const badge = document.getElementById("chat-unread-badge");
+		if (!badge) return;
+		badge.textContent = String(this.unreadCount);
+		if (this.unreadCount > 0 && !this.isTabActive) {
+			badge.classList.remove("hidden");
+		} else {
+			badge.classList.add("hidden");
 		}
 	}
 
@@ -96,11 +177,26 @@ export class ChatManager {
 		this.messages = [];
 		this.isLeader = false;
 		this.unreadCount = 0;
+		this.updateUnreadBadge();
 		this.onUnreadCountChanged?.(0);
 		this.renderMessages();
 
 		try {
 			await this.init();
+
+			// Solicita histórico via sinal efêmero (Vercel / SSE)
+			const token = getToken();
+			if (token && window.api?.apiRequest) {
+				window.api.apiRequest({
+					endpoint: "/api/signal/chat/history",
+					method: "POST",
+					body: {
+						roomId: this.currentRoomId,
+						action: "request",
+					},
+					token,
+				}).catch(() => {});
+			}
 
 			this.socket = io(this.apiUrl, {
 				transports: ["websocket", "polling"],
@@ -162,6 +258,7 @@ export class ChatManager {
 
 				if (!this.isTabActive) {
 					this.unreadCount++;
+					this.updateUnreadBadge();
 					this.onUnreadCountChanged?.(this.unreadCount);
 				}
 
@@ -188,6 +285,7 @@ export class ChatManager {
 		this.messages = [];
 		this.isLeader = false;
 		this.unreadCount = 0;
+		this.updateUnreadBadge();
 		this.onUnreadCountChanged?.(0);
 		this.updateLeaderBadge();
 		this.renderMessages();
@@ -196,13 +294,53 @@ export class ChatManager {
 	public sendMessage(content: string, gifUrl?: string): void {
 		const text = (content || "").trim();
 		if (!text && !gifUrl) return;
-		if (!this.socket?.connected || !this.currentRoomId) return;
+		if (!this.currentRoomId) return;
 
-		this.socket.emit("chat:send_message", {
+		const tempId = `msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+		const message: ChatMessage = {
+			id: tempId,
 			roomId: this.currentRoomId,
+			sender: this.currentUser || {
+				id: "me",
+				username: "Você",
+			},
 			content: text,
 			gifUrl: gifUrl || undefined,
-		});
+			timestamp: Date.now(),
+		};
+
+		// 1. Atualização Otimista Imediata na UI (0ms)
+		this.messages.push(message);
+		this.appendMessageElement(message);
+		this.scrollToBottom();
+
+		// 2. Envio via Socket.IO se conectado
+		if (this.socket?.connected) {
+			this.socket.emit("chat:send_message", {
+				roomId: this.currentRoomId,
+				content: text,
+				gifUrl: gifUrl || undefined,
+			});
+		}
+
+		// 3. Envio via sinalização efêmera SSE/HTTP (Vercel Serverless / produção)
+		const token = getToken();
+		if (token && window.api?.apiRequest) {
+			window.api.apiRequest({
+				endpoint: "/api/signal/chat",
+				method: "POST",
+				body: {
+					roomId: this.currentRoomId,
+					content: text,
+					gifUrl: gifUrl || undefined,
+					tempId,
+				},
+				token,
+			}).catch((err) => console.warn("[Chat] Erro ao enviar mensagem via sinal:", err));
+		}
+
+		// 4. Dispara broadcast direto via P2P DataChannel caso haja canal aberto
+		this.onBroadcastP2PMessage?.(message);
 	}
 
 	private updateLeaderBadge(): void {

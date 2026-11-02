@@ -712,6 +712,13 @@ class ShiroApp {
 		if (user) {
 			this.updateHeaderUserInfo();
 			this.startSessionWatcher();
+			void getProfile().then((res) => {
+				if (res.ok && res.user) {
+					updateUserSession(res.user);
+					this.updateHeaderUserInfo();
+					this.renderDiscordSettings();
+				}
+			});
 		}
 
 		if (user) {
@@ -840,7 +847,13 @@ class ShiroApp {
 					this.addSystemNotice(notice);
 					this.showSystemNoticeToast(notice);
 				},
+				onChatMessage: (msg) => {
+					this.chatManager.receiveP2PMessage(msg);
+				},
 			});
+			this.chatManager.onBroadcastP2PMessage = (msg) => {
+				this.p2pManager?.broadcastChatMessage(msg);
+			};
 			this.p2pManager.startSignaling();
 		}
 
@@ -4394,9 +4407,19 @@ class ShiroApp {
 		this.renderDiscordSettings();
 	}
 
-	private renderDiscordSettings(): void {
+	private async renderDiscordSettings(): Promise<void> {
 		const container = document.getElementById("discord-app-settings-container");
 		if (!container) return;
+
+		// Sincroniza dados atualizados do servidor para refletir vínculos feitos na web ou no navegador
+		try {
+			const profile = await getProfile();
+			if (profile.ok && profile.user) {
+				updateUserSession(profile.user);
+				this.updateHeaderUserInfo();
+			}
+		} catch {}
+
 		const user = getUser();
 		if (!user) return;
 
@@ -5087,6 +5110,7 @@ class ShiroApp {
 
 		const closeSettings = () => this.hideModalAnimated(settingsModal);
 		document.getElementById("btn-open-app-settings")?.addEventListener("click", () => {
+			void this.renderDiscordSettings();
 			this.showModal(settingsModal);
 		});
 		document.getElementById("btn-close-app-settings")?.addEventListener("click", closeSettings);

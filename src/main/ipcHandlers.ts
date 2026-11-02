@@ -265,58 +265,119 @@ const DEFAULT_API_URL = "https://share.shirobot.xyz";
 
 	// Abre links externos no navegador padrão (apenas domínios permitidos)
 	
-	// Autenticação / Vínculo com Discord via BrowserWindow pop-up
+	// Autenticação / Vínculo com Discord abrindo diretamente no navegador padrão do sistema (onde o usuário já está logado)
 	ipcMain.handle("auth:discord", async (_event, { action, token }: { action: "login" | "link"; token?: string }) => {
-		const baseUrl = process.env.SHIRO_API_URL || DEFAULT_API_URL;
-		const authUrl = `${baseUrl}/api/auth/discord/authorize?action=${action || "login"}${token ? `&token=${encodeURIComponent(token)}` : ""}&platform=desktop`;
-
 		return new Promise((resolve) => {
 			let completed = false;
-			const authWin = new BrowserWindow({
-				width: 520,
-				height: 750,
-				parent: window,
-				modal: true,
-				title: "Conectar com Discord — Shiro Screen Share",
-				autoHideMenuBar: true,
-				backgroundColor: "#09090b",
-				webPreferences: {
-					nodeIntegration: false,
-					contextIsolation: true,
-				},
-			});
+			let timeoutTimer: NodeJS.Timeout | null = null;
 
-			const checkResult = async () => {
-				if (completed) return;
-				try {
-					const res = await authWin.webContents.executeJavaScript("window.__shiro_auth_result || null");
-					if (res && res.success !== undefined) {
+			const server = http.createServer((req, res) => {
+				const reqUrl = new URL(req.url || "", `http://${req.headers.host || "127.0.0.1"}`);
+				if (reqUrl.pathname === "/callback") {
+					const tokenParam = reqUrl.searchParams.get("token");
+					const userParam = reqUrl.searchParams.get("user");
+					const errorParam = reqUrl.searchParams.get("error");
+
+					res.writeHead(200, {
+						"Content-Type": "text/html; charset=utf-8",
+						"Access-Control-Allow-Origin": "*",
+					});
+					res.end(`<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <title>Shiro Screen Share — Conectado</title>
+  <style>
+    body {
+      background: #09090b;
+      color: #f4f4f5;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      margin: 0;
+      text-align: center;
+    }
+    .card {
+      background: #18181b;
+      border: 1px solid #27272a;
+      border-radius: 12px;
+      padding: 32px 28px;
+      max-width: 360px;
+      box-shadow: 0 16px 40px rgba(0,0,0,0.6);
+    }
+    h2 { color: #a855f7; margin: 0 0 8px 0; font-size: 18px; }
+    p { color: #a1a1aa; font-size: 13px; margin: 0; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>✨ Conectado com sucesso!</h2>
+    <p>Você já pode fechar esta aba e voltar para o aplicativo Shiro Screen Share.</p>
+  </div>
+  <script>setTimeout(function() { window.close(); }, 1200);</script>
+</body>
+</html>`);
+
+					if (!completed) {
 						completed = true;
-						authWin.close();
-						resolve({
-							ok: !!res.success,
-							token: res.data?.token,
-							user: res.data?.user,
-							error: res.success ? undefined : (res.message || "Falha na autenticação"),
-						});
-					}
-				} catch {
-					// Ignora até o script estar pronto
-				}
-			};
+						if (timeoutTimer) clearTimeout(timeoutTimer);
+						server.close();
 
-			authWin.webContents.on("did-finish-load", () => {
-				checkResult();
+						if (window && !window.isDestroyed()) {
+							window.show();
+							window.focus();
+						}
+
+						if (errorParam) {
+							resolve({ ok: false, error: errorParam });
+						} else if (userParam) {
+							try {
+								const user = JSON.parse(userParam);
+								resolve({ ok: true, token: tokenParam || undefined, user });
+							} catch {
+								resolve({ ok: true, token: tokenParam || undefined });
+							}
+						} else {
+							resolve({ ok: true, token: tokenParam || undefined });
+						}
+					}
+				} else {
+					res.writeHead(404);
+					res.end();
+				}
 			});
 
-			authWin.on("closed", () => {
+			server.listen(0, "127.0.0.1", () => {
+				const addr = server.address() as any;
+				const port = addr?.port;
+				if (!port) {
+					resolve({ ok: false, error: "Falha ao iniciar servidor local de autenticação." });
+					return;
+				}
+
+				const baseUrl = process.env.SHIRO_API_URL || DEFAULT_API_URL;
+				const authUrl = `${baseUrl}/api/auth/discord/authorize?action=${action || "login"}${token ? `&token=${encodeURIComponent(token)}` : ""}&platform=desktop&port=${port}`;
+
+				shell.openExternal(authUrl);
+
+				timeoutTimer = setTimeout(() => {
+					if (!completed) {
+						completed = true;
+						try { server.close(); } catch {}
+						resolve({ ok: false, error: "Tempo limite para autenticação excedido." });
+					}
+				}, 180000); // 3 minutos de timeout
+			});
+
+			server.on("error", (err) => {
 				if (!completed) {
 					completed = true;
-					resolve({ ok: false, error: "Janela fechada pelo usuário." });
+					if (timeoutTimer) clearTimeout(timeoutTimer);
+					resolve({ ok: false, error: `Erro no servidor de autenticação: ${err.message}` });
 				}
 			});
-
-			authWin.loadURL(authUrl);
 		});
 	});
 

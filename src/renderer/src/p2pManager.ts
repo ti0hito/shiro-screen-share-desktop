@@ -16,6 +16,7 @@ export interface P2PCallbacks {
 	onRemoteStream?: (stream: MediaStream, peerId: string) => void;
 	isPeerAllowed?: (peerId: string) => boolean;
 	onSystemNotice?: (notice: any) => void;
+	onChatMessage?: (msg: any) => void;
 }
 
 const ICE_SERVERS: RTCIceServer[] = [
@@ -747,6 +748,9 @@ export class P2PManager {
 				if (data.type === "system-notice" && data.notice) {
 					console.log(`[P2P] Aviso recebido via DataChannel de ${peerId}:`, data.notice);
 					this.callbacks.onSystemNotice?.(data.notice);
+				} else if (data.type === "chat:message" && data.message) {
+					console.log(`[P2P] Mensagem de chat recebida via DataChannel de ${peerId}`);
+					this.callbacks.onChatMessage?.(data.message);
 				}
 			} catch (err) {
 				console.warn("[P2P] Erro ao parsear mensagem DataChannel:", err);
@@ -756,6 +760,20 @@ export class P2PManager {
 			this.dataChannels.delete(peerId);
 		};
 		this.dataChannels.set(peerId, dc);
+	}
+
+	broadcastChatMessage(message: any): void {
+		const payload = JSON.stringify({ type: "chat:message", message });
+		for (const [peerId, dc] of this.dataChannels) {
+			if (dc.readyState === "open") {
+				try {
+					dc.send(payload);
+					console.log(`[P2P] Mensagem de chat transmitida via DataChannel para ${peerId}`);
+				} catch (err) {
+					console.warn(`[P2P] Falha ao enviar chat para ${peerId}:`, err);
+				}
+			}
+		}
 	}
 
 	broadcastNotice(notice: any): void {
