@@ -121,10 +121,12 @@ export class ChatManager {
 				}
 				this.scrollToBottom();
 			} else if (event === "chat:request_history") {
-				const req = data as { forUserId: string; roomId: string; instanceId?: string };
+				const req = data as { forUserId?: string; fromUserId?: string; roomId: string; instanceId?: string };
 				if (!req || !this.sameRoom(req.roomId)) return;
 				if (req.instanceId === this.instanceId) return; // meu próprio pedido
 				if (this.messages.length === 0) return;
+				const target = req.forUserId || req.fromUserId;
+				if (!target) return;
 				const token = getToken();
 				if (!token || !window.api?.apiRequest) return;
 				window.api
@@ -134,7 +136,8 @@ export class ChatManager {
 						body: {
 							roomId: req.roomId,
 							action: "deliver",
-							targetUserId: req.forUserId,
+							targetUserId: target,
+							forUserId: target,
 							messages: this.messages.slice(-150).map((m) => ({
 								...m,
 								sender: { ...m.sender, avatar: null },
@@ -183,6 +186,9 @@ export class ChatManager {
 			this.updateUnreadBadge();
 			this.onUnreadCountChanged?.(0);
 			this.scrollToBottom();
+			if (this.messages.length === 0 && this.currentRoomId) {
+				this.requestHistory();
+			}
 		}
 	}
 
@@ -216,8 +222,13 @@ export class ChatManager {
 		this.requestHistory();
 		// Se ninguém respondeu ainda (SSE conectando / ninguém com histórico), tenta de novo
 		this.historyRetryTimer = setTimeout(() => {
-			if (this.messages.length === 0) this.requestHistory();
-		}, 3000);
+			if (this.messages.length === 0) {
+				this.requestHistory();
+				this.historyRetryTimer = setTimeout(() => {
+					if (this.messages.length === 0) this.requestHistory();
+				}, 2000);
+			}
+		}, 1500);
 	}
 
 	public leaveRoom(): void {

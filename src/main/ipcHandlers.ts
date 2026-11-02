@@ -504,7 +504,9 @@ const DEFAULT_API_URL = "https://share.shirobot.xyz";
 	function connectSse(userToken: string): void {
 		if (activeSseRequest) {
 			try {
-				activeSseRequest.destroy();
+				const reqToDestroy = activeSseRequest;
+				activeSseRequest = null;
+				reqToDestroy.destroy();
 			} catch {}
 			activeSseRequest = null;
 		}
@@ -623,12 +625,14 @@ const DEFAULT_API_URL = "https://share.shirobot.xyz";
 			});
 
 			res.on("error", (err) => {
+				if (req.destroyed) return;
 				console.error("[SSE] Erro na stream de resposta:", err.message);
 				scheduleReconnect();
 			});
 		});
 
 		req.on("error", (err) => {
+			if (req.destroyed) return;
 			console.error("[SSE] Erro na requisicao:", err.message);
 			if (!window.isDestroyed()) {
 				window.webContents.send("sse-error", err.message);
@@ -656,7 +660,9 @@ const DEFAULT_API_URL = "https://share.shirobot.xyz";
 		}
 		if (activeSseRequest) {
 			try {
-				activeSseRequest.destroy();
+				const reqToDestroy = activeSseRequest;
+				activeSseRequest = null;
+				reqToDestroy.destroy();
 			} catch {}
 			activeSseRequest = null;
 			console.log("[SSE] Conexao encerrada pelo renderer.");

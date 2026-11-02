@@ -54,12 +54,12 @@ export interface SavedSessionResult {
 
 /** Retorna o token JWT salvo na sessão, ou null */
 export function getToken(): string | null {
-	return sessionStorage.getItem(SESSION_KEY);
+	return sessionStorage.getItem(SESSION_KEY) || localStorage.getItem(REMEMBER_JWT);
 }
 
 /** Retorna o usuário logado, ou null */
 export function getUser(): ShiroUser | null {
-	const raw = sessionStorage.getItem(USER_KEY);
+	const raw = sessionStorage.getItem(USER_KEY) || localStorage.getItem(REMEMBER_USER);
 	if (!raw) return null;
 	try {
 		return JSON.parse(raw) as ShiroUser;
@@ -89,6 +89,8 @@ export function logout(): void {
 
 /** Salva ou limpa os dados de 'Lembrar Login' */
 export function saveRememberSession(token: string, user: ShiroUser, rememberMe: boolean): void {
+	sessionStorage.setItem(SESSION_KEY, token);
+	sessionStorage.setItem(USER_KEY, JSON.stringify(user));
 	if (rememberMe) {
 		localStorage.setItem(REMEMBER_KEY, "true");
 		localStorage.setItem(REMEMBER_JWT, token);
