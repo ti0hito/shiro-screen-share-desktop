@@ -246,7 +246,7 @@ class ShiroApp {
 	private systemNotices: SystemNotice[] = [
 		{
 			id: "sys-v21",
-			title: "Shiro Screen Share v3.2.3",
+			title: "Shiro Screen Share v2.3.3",
 			message: "Nova arquitetura WebRTC P2P multi-stream ativa com isolamento de áudio.",
 			type: "info",
 			date: "Sistema",
