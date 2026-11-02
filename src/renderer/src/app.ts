@@ -158,9 +158,9 @@ interface PollIntervals {
 const POLL_INTERVALS: { fallback: PollIntervals; withServerEvents: PollIntervals } = {
 	// Servidor sem avisos em tempo real: polling é a única fonte de atualização
 	fallback: { heartbeat: 60_000, rooms: 15_000, friends: 15_000, users: 30_000 },
-	// Servidor envia avisos pelo SSE (que também mantém a presença online):
-	// Heartbeat a cada 45s para manter lastSeen sempre fresco e evitar queda de streams em background.
-	withServerEvents: { heartbeat: 45_000, rooms: 45_000, friends: 180_000, users: 180_000 },
+	// Servidor envia push completo pelo SSE (snapshots e deltas instantâneos em memória):
+	// Intervalos estendidos (apenas salvaguarda); zero polling repetitivo por HTTP GET.
+	withServerEvents: { heartbeat: 45_000, rooms: 600_000, friends: 600_000, users: 600_000 },
 };
 
 export const DEV_ADMIN_ID = "6ab1e7120ee994421cd420be";
@@ -1115,27 +1115,170 @@ class ShiroApp {
 						this.serverSupportsEvents = true;
 						this.applyPollIntervals(POLL_INTERVALS.withServerEvents);
 					}
-					// Reconexão do SSE: avisos podem ter sido perdidos enquanto estava fora
-					if (this.serverEventsHelloCount++ > 0) {
-						this.roomsPoller?.trigger();
-						this.friendsPoller?.trigger();
-						this.usersPoller?.trigger();
+					// Reconexão do SSE: o servidor já envia rooms:snapshot, friends:snapshot e users:online logo após o hello!
+					break;
+				}
+				case "rooms:snapshot": {
+					const rooms = (data as { rooms?: RoomInfo[] } | null)?.rooms;
+					if (Array.isArray(rooms)) {
+						this.handleRoomsSnapshot(rooms);
+					}
+					break;
+				}
+				case "room:update": {
+					const room = (data as { room?: RoomInfo } | null)?.room;
+					if (room) {
+						this.handleRoomUpdate(room);
+					}
+					break;
+				}
+				case "room:deleted": {
+					const roomId = (data as { roomId?: string } | null)?.roomId;
+					if (roomId) {
+						this.handleRoomDeleted(roomId);
+					}
+					break;
+				}
+				case "friends:snapshot":
+				case "friends:update": {
+					if (data && typeof data === "object") {
+						this.handleFriendsSnapshot(data as any);
+					}
+					break;
+				}
+				case "users:online": {
+					const users = (data as { users?: ShiroUser[] } | null)?.users;
+					if (Array.isArray(users)) {
+						this.handleOnlineUsers(users);
+					}
+					break;
+				}
+				case "presence:update": {
+					if (data && typeof data === "object") {
+						this.handlePresenceUpdate(data as any);
 					}
 					break;
 				}
 				case "rooms-changed":
 				case "room-changed":
-					this.scheduleServerRefresh("rooms-changed", this.roomsPoller);
-					this.scheduleServerRefresh("streams-changed", this.streamsPoller);
+					if (!data || Object.keys(data).length === 0) {
+						this.scheduleServerRefresh("rooms-changed", this.roomsPoller);
+						this.scheduleServerRefresh("streams-changed", this.streamsPoller);
+					}
 					break;
 				case "friends-changed":
-					this.scheduleServerRefresh(event, this.friendsPoller);
+					if (!data || Object.keys(data).length === 0) {
+						this.scheduleServerRefresh(event, this.friendsPoller);
+					}
 					break;
 				case "users-changed":
-					this.scheduleServerRefresh(event, this.usersPoller);
+					if (!data || Object.keys(data).length === 0) {
+						this.scheduleServerRefresh(event, this.usersPoller);
+					}
 					break;
 			}
 		});
+	}
+
+	private handleRoomsSnapshot(rooms: RoomInfo[]): void {
+		this.rooms = rooms;
+		this.roomsLoaded = true;
+		const searchInput = document.getElementById("input-search-rooms") as HTMLInputElement | null;
+		const query = searchInput?.value.toLowerCase() ?? "";
+		this.renderRoomsList(query);
+
+		if (this.currentRoom) {
+			const updated = this.rooms.find((r) => r.roomId === this.currentRoom!.roomId);
+			if (updated) {
+				this.currentRoom = updated;
+				this.autoConnectRoomStreams();
+			}
+		}
+		this.updateCurrentRoomBanner();
+	}
+
+	private handleRoomUpdate(updatedRoom: RoomInfo): void {
+		if (!updatedRoom || !updatedRoom.roomId) return;
+		const idx = this.rooms.findIndex((r) => r.roomId === updatedRoom.roomId);
+		if (idx >= 0) {
+			this.rooms[idx] = updatedRoom;
+		} else {
+			this.rooms.unshift(updatedRoom);
+		}
+		this.roomsLoaded = true;
+		const searchInput = document.getElementById("input-search-rooms") as HTMLInputElement | null;
+		const query = searchInput?.value.toLowerCase() ?? "";
+		this.renderRoomsList(query);
+
+		if (this.currentRoom && this.currentRoom.roomId === updatedRoom.roomId) {
+			this.currentRoom = updatedRoom;
+			this.autoConnectRoomStreams();
+		}
+		this.updateCurrentRoomBanner();
+	}
+
+	private async handleRoomDeleted(roomId: string): Promise<void> {
+		if (!roomId) return;
+		this.rooms = this.rooms.filter((r) => r.roomId !== roomId);
+		const searchInput = document.getElementById("input-search-rooms") as HTMLInputElement | null;
+		const query = searchInput?.value.toLowerCase() ?? "";
+		this.renderRoomsList(query);
+
+		if (this.currentRoom && this.currentRoom.roomId === roomId) {
+			if (this.p2pManager?.getIsStreaming()) {
+				await this.stopStreaming();
+			}
+			this.p2pManager?.hangupAll();
+			this.remoteStreams.clear();
+			this.currentRoom = null;
+			this.maximizedStreamId = null;
+			this.chatManager?.leaveRoom();
+			this.checkCanStartStream();
+		}
+		this.updateCurrentRoomBanner();
+	}
+
+	private handleFriendsSnapshot(data: { friends?: FriendInfo[]; friendRequests?: FriendRequest[]; roomInvites?: RoomInvite[] }): void {
+		if (Array.isArray(data.friends)) this.friends = data.friends;
+		if (Array.isArray(data.friendRequests)) this.friendRequests = data.friendRequests;
+		if (Array.isArray(data.roomInvites)) this.roomInvites = data.roomInvites;
+		this.renderFriendsUI();
+	}
+
+	private handleOnlineUsers(users: ShiroUser[]): void {
+		if (!Array.isArray(users)) return;
+		this.usersLoaded = true;
+		this.onlineUsers = users;
+		this.renderUsersList();
+	}
+
+	private handlePresenceUpdate(data: { userId?: string; username?: string; nickname?: string; avatar?: string; banner?: string; online?: boolean; lastSeen?: string | Date }): void {
+		if (!data.userId) return;
+		const idx = this.onlineUsers.findIndex((u) => u.id === data.userId || (data.username && u.username === data.username));
+		if (data.online === false) {
+			if (idx >= 0) this.onlineUsers.splice(idx, 1);
+		} else {
+			if (idx >= 0) {
+				this.onlineUsers[idx] = { ...this.onlineUsers[idx], ...data } as ShiroUser;
+			} else if (data.username) {
+				this.onlineUsers.push({
+					id: data.userId,
+					username: data.username,
+					nickname: data.nickname || data.username,
+					avatar: data.avatar || null,
+					banner: data.banner || null,
+					lastSeen: data.lastSeen ? new Date(data.lastSeen).toISOString() : new Date().toISOString(),
+				} as unknown as ShiroUser);
+			}
+		}
+		this.renderUsersList();
+
+		const fIdx = this.friends.findIndex((f) => f.id === data.userId || (data.username && f.username === data.username));
+		if (fIdx >= 0) {
+			this.friends[fIdx].isOnline = Boolean(data.online);
+			if (data.lastSeen) this.friends[fIdx].lastSeen = new Date(data.lastSeen).toISOString();
+			this.renderFriendsList();
+		}
 	}
 
 	/**
@@ -1159,6 +1302,9 @@ class ShiroApp {
 		this.roomsPoller?.setIntervalMs(intervals.rooms);
 		this.friendsPoller?.setIntervalMs(intervals.friends);
 		this.usersPoller?.setIntervalMs(intervals.users);
+		if (this.serverSupportsEvents) {
+			this.streamsPoller?.setIntervalMs(60_000);
+		}
 	}
 
 	// ------------------------------------------------------------------------------------------------------------------------------
