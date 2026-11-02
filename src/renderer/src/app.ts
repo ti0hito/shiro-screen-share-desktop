@@ -1161,19 +1161,18 @@ class ShiroApp {
 				}
 				case "rooms-changed":
 				case "room-changed":
-					if (!data || Object.keys(data).length === 0) {
-						this.scheduleServerRefresh("rooms-changed", this.roomsPoller);
-						this.scheduleServerRefresh("streams-changed", this.streamsPoller);
-					}
-					break;
 				case "friends-changed":
-					if (!data || Object.keys(data).length === 0) {
-						this.scheduleServerRefresh(event, this.friendsPoller);
-					}
-					break;
 				case "users-changed":
-					if (!data || Object.keys(data).length === 0) {
-						this.scheduleServerRefresh(event, this.usersPoller);
+					// Se o servidor suporta eventos SSE/push, os dados já chegam via snapshots/deltas (zero requisições GET)
+					if (!this.serverSupportsEvents) {
+						if (event.includes("room")) {
+							this.scheduleServerRefresh("rooms-changed", this.roomsPoller);
+							this.scheduleServerRefresh("streams-changed", this.streamsPoller);
+						} else if (event === "friends-changed") {
+							this.scheduleServerRefresh(event, this.friendsPoller);
+						} else if (event === "users-changed") {
+							this.scheduleServerRefresh(event, this.usersPoller);
+						}
 					}
 					break;
 			}
