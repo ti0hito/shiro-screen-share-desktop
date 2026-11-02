@@ -259,7 +259,6 @@ export class P2PManager {
 
 		this.sseCleanup = () => {
 			unsubscribe?.();
-			(window.api as any)?.stopSseSignaling?.();
 		};
 
 		console.log("[P2P] Sinalização SSE iniciada.");

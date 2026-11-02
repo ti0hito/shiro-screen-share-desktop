@@ -156,8 +156,8 @@ interface PollIntervals {
 }
 
 const POLL_INTERVALS: { fallback: PollIntervals; withServerEvents: PollIntervals } = {
-	// Servidor sem avisos em tempo real: polling é a única fonte de atualização
-	fallback: { heartbeat: 60_000, rooms: 15_000, friends: 15_000, users: 30_000 },
+	// Servidor sem avisos em tempo real (fallback lento de salvaguarda, sem sobrecarregar a API)
+	fallback: { heartbeat: 45_000, rooms: 120_000, friends: 120_000, users: 120_000 },
 	// Servidor envia push completo pelo SSE (snapshots e deltas instantâneos em memória):
 	// Intervalos estendidos (apenas salvaguarda); zero polling repetitivo por HTTP GET.
 	withServerEvents: { heartbeat: 45_000, rooms: 600_000, friends: 600_000, users: 600_000 },
@@ -246,7 +246,7 @@ class ShiroApp {
 	private systemNotices: SystemNotice[] = [
 		{
 			id: "sys-v21",
-			title: "Shiro Screen Share v2.2.0",
+			title: "Shiro Screen Share v3.2.3",
 			message: "Nova arquitetura WebRTC P2P multi-stream ativa com isolamento de áudio.",
 			type: "info",
 			date: "Sistema",
@@ -281,8 +281,8 @@ class ShiroApp {
 	private friendsPoller: Poller | null = null;
 	private usersPoller: Poller | null = null;
 	private streamsPoller: Poller | null = null;
-	// O servidor confirmou (evento SSE "hello") que envia avisos de mudança
-	private serverSupportsEvents = false;
+	// O servidor suporta eventos SSE/push por padrão na arquitetura moderna
+	private serverSupportsEvents = true;
 	private serverEventTimers = new Map<string, ReturnType<typeof setTimeout>>();
 	private autoConnectRetryInterval: ReturnType<typeof setInterval> | null = null;
 	private serverEventsHelloCount = 0;
@@ -304,6 +304,7 @@ class ShiroApp {
 	// Indicam se já houve ao menos um carregamento bem-sucedido (para não trocar dados bons por "vazio" em falhas)
 	private roomsLoaded = false;
 	private usersLoaded = false;
+	private friendsLoaded = false;
 
 	private rooms: RoomInfo[] = [];
 	private onlineUsers: ShiroUser[] = [];
@@ -873,7 +874,7 @@ class ShiroApp {
 		// Se os snapshots push do SSE não chegarem após 2.5s (ex.: modo offline), busca via HTTP
 		setTimeout(async () => {
 			if (!this.roomsLoaded) await this.refreshRooms();
-			if (this.friends.length === 0) await this.refreshFriends();
+			if (!this.friendsLoaded) await this.refreshFriends();
 			if (!this.usersLoaded) await this.refreshUsersList();
 		}, 2500);
 
@@ -1196,7 +1197,9 @@ class ShiroApp {
 			const updated = this.rooms.find((r) => r.roomId === this.currentRoom!.roomId);
 			if (updated) {
 				this.currentRoom = updated;
+				this.renderLiveStreamsGrid();
 				this.autoConnectRoomStreams();
+				this.checkCanStartStream();
 			}
 		}
 		this.updateCurrentRoomBanner();
@@ -1217,7 +1220,9 @@ class ShiroApp {
 
 		if (this.currentRoom && this.currentRoom.roomId === updatedRoom.roomId) {
 			this.currentRoom = updatedRoom;
+			this.renderLiveStreamsGrid();
 			this.autoConnectRoomStreams();
+			this.checkCanStartStream();
 		}
 		this.updateCurrentRoomBanner();
 	}
@@ -1247,6 +1252,7 @@ class ShiroApp {
 		if (Array.isArray(data.friends)) this.friends = data.friends;
 		if (Array.isArray(data.friendRequests)) this.friendRequests = data.friendRequests;
 		if (Array.isArray(data.roomInvites)) this.roomInvites = data.roomInvites;
+		this.friendsLoaded = true;
 		this.renderFriendsUI();
 	}
 
@@ -2284,8 +2290,8 @@ class ShiroApp {
 				const peerId = streamInfo.userId;
 				if (!peerId || (isLocalDesktopStreaming && (peerId === currentUser?.id || streamInfo.username === currentUser?.username)) || this.hasRemoteStream(peerId)) continue;
 
-				// Tentativa recente ainda em andamento ou já conectado: aguarda em vez de reofertar por cima
-				if (this.p2pManager?.isConnecting(peerId, 15_000) || this.p2pManager?.isConnected(peerId)) continue;
+				// Tentativa recente ainda em andamento: aguarda em vez de reofertar sem parar (5s)
+				if (this.p2pManager?.isConnecting(peerId, 5_000)) continue;
 
 				// Inicia ou renegocia a conexão P2P sem derrubar conexões ativas
 				console.log(`[App] Detectada stream ativa de ${streamInfo.username} (${peerId}) fora do grid. Iniciando conexão P2P...`);
@@ -4169,6 +4175,20 @@ class ShiroApp {
 		try {
 			if (this.currentRoom) {
 				await notifyRoomStream(this.currentRoom.roomId, "start");
+				// Dispara renegociação com todos os outros membros e visitantes presentes para enviar o feed de vídeo na hora (0ms)
+				const myId = getUser()?.id;
+				const targetPeers = new Set<string>();
+				for (const m of this.currentRoom.members ?? []) {
+					const memberUser = this.onlineUsers.find((u) => u.username === m || u.id === m);
+					const targetId = memberUser?.id || m;
+					if (targetId && targetId !== myId) targetPeers.add(targetId);
+				}
+				for (const g of this.currentRoom.guests ?? []) {
+					if (g.id && g.id !== myId) targetPeers.add(g.id);
+				}
+				for (const targetId of targetPeers) {
+					void this.p2pManager?.renegotiate(targetId, false);
+				}
 			}
 		} catch (err: any) {
 			console.error("[App] Erro ao notificar sala:", err);
@@ -4258,6 +4278,7 @@ class ShiroApp {
 			this.updateCurrentRoomBanner();
 			this.audioPipeline.stop();
 			this.stopPolling();
+			(window.api as any)?.stopSseSignaling?.();
 			this.serverSupportsEvents = false;
 			this.serverEventsHelloCount = 0;
 
@@ -5451,6 +5472,7 @@ class ShiroApp {
 		const previousFriends = [...this.friends];
 		const targetFriend = this.friends.find((f) => f.id === friendId);
 		this.friends = this.friends.filter((f) => f.id !== friendId);
+		this.friendsLoaded = true;
 		this.renderFriendsUI();
 
 		try {
@@ -5462,7 +5484,8 @@ class ShiroApp {
 		} catch (err: any) {
 			console.error("[App] Erro ao remover amigo:", err);
 			this.friends = previousFriends;
-			this.renderFriendsUI();
+			this.friendsLoaded = true;
+		this.renderFriendsUI();
 			const name = targetFriend?.nickname || targetFriend?.username || "o amigo";
 			void this.showAlert(err?.message || `Não foi possível remover ${name}. Tente novamente.`, "Falha ao remover amigo");
 		}
@@ -5476,6 +5499,7 @@ class ShiroApp {
 			if (toast) toast.classList.add("hidden");
 			this.activeFriendRequest = null;
 		}
+		this.friendsLoaded = true;
 		this.renderFriendsUI();
 
 		try {
@@ -5487,7 +5511,8 @@ class ShiroApp {
 		} catch (err: any) {
 			console.error("[App] Erro ao recusar pedido de amizade:", err);
 			this.friendRequests = previousRequests;
-			this.renderFriendsUI();
+			this.friendsLoaded = true;
+		this.renderFriendsUI();
 			void this.showAlert(err?.message || "Não foi possível recusar o pedido. Tente novamente.", "Falha na notificação");
 		}
 	}
@@ -5500,6 +5525,7 @@ class ShiroApp {
 			if (toast) toast.classList.add("hidden");
 			this.activeRoomInvite = null;
 		}
+		this.friendsLoaded = true;
 		this.renderFriendsUI();
 
 		try {
@@ -5508,7 +5534,8 @@ class ShiroApp {
 		} catch (err: any) {
 			console.error("[App] Erro ao recusar convite de sala:", err);
 			this.roomInvites = previousInvites;
-			this.renderFriendsUI();
+			this.friendsLoaded = true;
+		this.renderFriendsUI();
 			void this.showAlert(err?.message || "Não foi possível recusar o convite. Tente novamente.", "Falha no convite");
 		}
 	}
@@ -5542,6 +5569,7 @@ class ShiroApp {
 		if (toastRoom) toastRoom.classList.add("hidden");
 		this.activeRoomInvite = null;
 
+		this.friendsLoaded = true;
 		this.renderFriendsUI();
 
 		// 3. Dispara as chamadas da API em paralelo
@@ -5598,7 +5626,8 @@ class ShiroApp {
 				console.log(`[App] 📬 ${this.roomInvites.length} convite(s) de sala encontrado(s):`, this.roomInvites);
 			}
 
-			this.renderFriendsUI();
+			this.friendsLoaded = true;
+		this.renderFriendsUI();
 			return true;
 		} catch (err) {
 			console.warn("[App] Erro ao carregar amigos:", err);
@@ -7386,7 +7415,6 @@ class ShiroApp {
 	 */
 	public isTestMode(): boolean {
 		if (this.isDev) return true;
-		if (this.isViewerDeveloper()) return true;
 		try {
 			if (localStorage.getItem("shiro_test_mode") === "true") return true;
 		} catch {}
