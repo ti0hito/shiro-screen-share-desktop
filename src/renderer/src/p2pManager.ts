@@ -15,11 +15,12 @@ export interface P2PCallbacks {
 	onError: (err: string) => void;
 	onRemoteStream?: (stream: MediaStream, peerId: string) => void;
 	isPeerAllowed?: (peerId: string) => boolean;
+	isExpectingRemoteStream?: (peerId: string) => boolean;
 	onSystemNotice?: (notice: any) => void;
 	onChatMessage?: (msg: any) => void;
 }
 
-const ICE_SERVERS: RTCIceServer[] = [
+const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
 	{ urls: "stun:stun.l.google.com:19302" },
 	{ urls: "stun:stun1.l.google.com:19302" },
 	{ urls: "stun:stun.cloudflare.com:3478" },
@@ -41,6 +42,24 @@ const ICE_SERVERS: RTCIceServer[] = [
 		credential: "openrelay",
 	},
 ];
+
+let resolvedIceServers: RTCIceServer[] = DEFAULT_ICE_SERVERS;
+let iceFetchPromise: Promise<void> | null = null;
+
+function ensureIceServersLoaded(): Promise<void> {
+	if (iceFetchPromise) return iceFetchPromise;
+	if (!window.api?.apiRequest) return Promise.resolve();
+	iceFetchPromise = window.api
+		.apiRequest({ endpoint: "/api/signal/ice-servers", method: "GET" })
+		.then((res) => {
+			const data = res?.data as { ok?: boolean; iceServers?: RTCIceServer[] } | undefined;
+			if (res?.ok && data?.ok && Array.isArray(data.iceServers) && data.iceServers.length > 0) {
+				resolvedIceServers = data.iceServers;
+			}
+		})
+		.catch(() => {});
+	return iceFetchPromise;
+}
 
 /**
  * Otimiza o SDP para melhorar a qualidade de áudio (Opus com FEC e estéreo)
@@ -91,7 +110,7 @@ function configureSenderParameters(pc: RTCPeerConnection, bitrateKbps: number): 
 					params.encodings[0].maxBitrate = bitrateKbps * 1000;
 					params.encodings[0].networkPriority = "high";
 					params.encodings[0].priority = "high";
-					params.degradationPreference = "maintain-resolution";
+					params.degradationPreference = "balanced";
 					sender.setParameters(params).catch(() => {});
 				}
 			}
@@ -147,6 +166,7 @@ export class P2PManager {
 	constructor(myUserId: string, callbacks: P2PCallbacks) {
 		this.myUserId = myUserId;
 		this.callbacks = callbacks;
+		void ensureIceServersLoaded();
 		this.startWatchdog();
 	}
 
@@ -181,16 +201,18 @@ export class P2PManager {
 				continue;
 			}
 
-			// 2. Conectado via ICE, mas sem frames de vídeo chegando (se esperamos receber transmissão)
-			const hasActiveStream = this.remoteStreams.has(peerId);
+			// 2. Conectado via ICE, mas sem frames de vídeo chegando (apenas se esperamos receber transmissão deste peer)
+			const expectingStream = this.callbacks.isExpectingRemoteStream
+				? this.callbacks.isExpectingRemoteStream(peerId)
+				: !this.isStreaming;
 			const remoteStream = this.remoteStreams.get(peerId);
 			const videoTracks = remoteStream?.getVideoTracks() ?? [];
-			const hasLiveVideo = videoTracks.some((t) => t.readyState === "live" && !t.muted);
+			const hasLiveVideo = videoTracks.some((t) => t.readyState === "live");
 
 			if (
-				(state === "connected" || pc.iceConnectionState === "connected") &&
-				(!hasActiveStream || !hasLiveVideo) &&
-				!this.isStreaming &&
+				expectingStream &&
+				(state === "connected" || pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed") &&
+				(!remoteStream || !hasLiveVideo) &&
 				now - lastOffer > NO_VIDEO_RENEGOTIATE_MS
 			) {
 				console.warn(`[P2P Watchdog] Peer ${peerId} conectado mas sem vídeo ativo após ${Math.round((now - lastOffer) / 1000)}s. Renegociando...`);
@@ -268,8 +290,8 @@ export class P2PManager {
 		await this.renegotiate(targetUserId, forceRestart);
 	}
 
-	async renegotiate(targetUserId: string, forceRestart = false): Promise<void> {
-		await this.enqueue(targetUserId, () => this.doRenegotiate(targetUserId, forceRestart));
+	async renegotiate(targetUserId: string, forceRestart = false, iceRestart = false): Promise<void> {
+		await this.enqueue(targetUserId, () => this.doRenegotiate(targetUserId, forceRestart, iceRestart));
 	}
 
 	/** Executa tarefas do mesmo peer em sequência (evita ofertas/respostas concorrentes) */
@@ -337,7 +359,8 @@ export class P2PManager {
 		configureSenderParameters(pc, this.videoBitrateKbps);
 	}
 
-	private async doRenegotiate(targetUserId: string, forceRestart: boolean): Promise<void> {
+	private async doRenegotiate(targetUserId: string, forceRestart: boolean, iceRestart = false): Promise<void> {
+		await ensureIceServersLoaded();
 		let pc = this.peerConnections.get(targetUserId);
 
 		if (pc) {
@@ -346,6 +369,9 @@ export class P2PManager {
 				console.log(`[P2P] Reiniciando conexão com ${targetUserId} (estado: ${pc.connectionState})...`);
 				this.closePeer(targetUserId);
 				pc = undefined;
+			} else if (pc.signalingState !== "stable") {
+				console.log(`[P2P] Renegociação adiada para ${targetUserId}: sinalização ocupada (${pc.signalingState}).`);
+				return;
 			}
 		}
 
@@ -377,7 +403,7 @@ export class P2PManager {
 		prioritizeH264(pc);
 
 		try {
-			const offer = await pc.createOffer();
+			const offer = await pc.createOffer(iceRestart ? { iceRestart: true } : undefined);
 			const optimizedSdp = optimizeSdp(offer.sdp || "");
 			await pc.setLocalDescription({ type: "offer", sdp: optimizedSdp });
 			this.lastOfferAt.set(targetUserId, Date.now());
@@ -462,7 +488,7 @@ export class P2PManager {
 
 	private createPeerConnection(peerId: string): RTCPeerConnection {
 		const pc = new RTCPeerConnection({
-			iceServers: ICE_SERVERS,
+			iceServers: resolvedIceServers,
 			iceCandidatePoolSize: 2,
 		});
 
@@ -530,32 +556,56 @@ export class P2PManager {
 		pc.ontrack = (e) => {
 			if (!isCurrent()) return;
 			console.log(`[P2P] ontrack de ${peerId}: kind=${e.track.kind}, id=${e.track.id}, streams=${e.streams.length}`);
-			const emitUpdatedStream = () => {
+			const syncStream = (notify: boolean) => {
 				if (!isCurrent()) return;
-				const prev = this.remoteStreams.get(peerId);
-				const tracks = new Map<string, MediaStreamTrack>();
-				if (prev) {
-					for (const t of prev.getTracks()) {
-						if (t.readyState !== "ended") tracks.set(t.kind, t);
+				const desired = new Map<string, MediaStreamTrack>();
+				for (const r of pc.getReceivers()) {
+					if (r.track && r.track.readyState !== "ended") {
+						desired.set(r.track.kind, r.track);
 					}
 				}
 				if (e.streams?.[0]) {
 					for (const t of e.streams[0].getTracks()) {
-						if (t.readyState !== "ended") tracks.set(t.kind, t);
+						if (t.readyState !== "ended") desired.set(t.kind, t);
 					}
 				}
 				if (e.track.readyState !== "ended") {
-					tracks.set(e.track.kind, e.track);
+					desired.set(e.track.kind, e.track);
 				}
-				const stream = new MediaStream(Array.from(tracks.values()));
-				this.remoteStreams.set(peerId, stream);
-				this.callbacks.onRemoteStream?.(stream, peerId);
+
+				const desiredTracks = Array.from(desired.values());
+				let stream = this.remoteStreams.get(peerId);
+				let changed = false;
+
+				if (!stream) {
+					stream = new MediaStream(desiredTracks);
+					this.remoteStreams.set(peerId, stream);
+					changed = true;
+				} else {
+					const existing = stream.getTracks();
+					for (const t of desiredTracks) {
+						if (!existing.includes(t)) {
+							stream.addTrack(t);
+							changed = true;
+						}
+					}
+					for (const t of existing) {
+						if (!desiredTracks.includes(t)) {
+							stream.removeTrack(t);
+							changed = true;
+						}
+					}
+				}
+
+				if (notify || changed) {
+					this.callbacks.onRemoteStream?.(stream, peerId);
+				}
 			};
 
-			emitUpdatedStream();
+			syncStream(true);
 			e.track.onunmute = () => {
 				console.log(`[P2P] Faixa ${e.track.kind} de ${peerId} desmutou (recebendo pacotes).`);
-				emitUpdatedStream();
+				syncStream(false);
 			};
 		};
 
@@ -585,6 +635,7 @@ export class P2PManager {
 			return;
 		}
 
+		await ensureIceServersLoaded();
 		console.log(`[P2P] Recebida oferta de ${fromUserId}`);
 		let pc = this.peerConnections.get(fromUserId);
 		let isFreshPc = false;
@@ -594,9 +645,15 @@ export class P2PManager {
 			isFreshPc = true;
 		}
 
-		// Se houver oferta local pendente ou sinalização instável, faz rollback para aceitar a oferta remota imediatamente
+		// Perfect Negotiation: em caso de colisão de ofertas simultâneas (glare),
+		// apenas o peer "polite" (ID menor lexicograficamente) faz rollback; o "impolite" ignora.
 		if (pc.signalingState !== "stable") {
-			console.log(`[P2P] Oferta recebida com sinalização ${pc.signalingState} de ${fromUserId}. Fazendo rollback para responder...`);
+			const isPolite = this.myUserId < fromUserId;
+			if (!isPolite) {
+				console.log(`[P2P] Colisão de oferta com ${fromUserId} (impolite). Mantendo nossa oferta ativa.`);
+				return;
+			}
+			console.log(`[P2P] Oferta recebida com sinalização ${pc.signalingState} de ${fromUserId} (polite). Fazendo rollback para responder...`);
 			try {
 				await pc.setLocalDescription({ type: "rollback" });
 			} catch (err) {

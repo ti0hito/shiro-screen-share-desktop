@@ -747,6 +747,13 @@ class ShiroApp {
 					const inGuests = this.currentRoom.guests?.some((g) => g.id === peerId || g.id === basePeerId);
 					return inMembers || inGuests || false;
 				},
+				isExpectingRemoteStream: (peerId) => {
+					if (!this.currentRoom) return false;
+					const basePeerId = peerId.split(":web:")[0];
+					return Boolean(
+						this.currentRoom.activeStreams?.some((s) => s.userId === peerId || s.userId === basePeerId),
+					);
+				},
 				onConnected: (peerId) => {
 					console.log(`[App] P2P conectado com sucesso a ${peerId}`);
 					if (this.p2pManager?.getIsStreaming()) {
@@ -817,16 +824,36 @@ class ShiroApp {
 					const canonicalId = activeStreamer?.userId ?? peerId;
 
 					const existing = this.remoteStreams.get(canonicalId) ?? this.remoteStreams.get(peerId);
-					const tracks = new Map<string, MediaStreamTrack>();
+					let streamToUse: MediaStream;
+					let tracksChanged = false;
 					if (existing) {
-						for (const t of existing.stream.getTracks()) {
-							if (t.readyState !== "ended") tracks.set(t.kind, t);
+						streamToUse = existing.stream;
+						const desired = new Map<string, MediaStreamTrack>();
+						for (const t of streamToUse.getTracks()) {
+							if (t.readyState !== "ended") desired.set(t.kind, t);
 						}
+						for (const t of stream.getTracks()) {
+							if (t.readyState !== "ended") desired.set(t.kind, t);
+						}
+						const desiredList = Array.from(desired.values());
+						const currentList = streamToUse.getTracks();
+						for (const t of desiredList) {
+							if (!currentList.includes(t)) {
+								streamToUse.addTrack(t);
+								tracksChanged = true;
+							}
+						}
+						for (const t of currentList) {
+							if (!desiredList.includes(t)) {
+								streamToUse.removeTrack(t);
+								tracksChanged = true;
+							}
+						}
+					} else {
+						const liveTracks = stream.getTracks().filter((t) => t.readyState !== "ended");
+						streamToUse = new MediaStream(liveTracks);
+						tracksChanged = true;
 					}
-					for (const t of stream.getTracks()) {
-						if (t.readyState !== "ended") tracks.set(t.kind, t);
-					}
-					const streamToUse = new MediaStream(Array.from(tracks.values()));
 					this.remoteStreams.set(canonicalId, { stream: streamToUse, username });
 					if (canonicalId !== peerId) {
 						this.remoteStreams.delete(peerId);
@@ -843,7 +870,9 @@ class ShiroApp {
 						}
 					}
 
-					this.renderLiveStreamsGrid();
+					if (tracksChanged || !document.getElementById(`stream-card-${canonicalId}`)) {
+						this.renderLiveStreamsGrid();
+					}
 					this.streamsPoller?.trigger();
 				},
 				onSystemNotice: (notice) => {
@@ -2248,10 +2277,12 @@ class ShiroApp {
 	}
 
 	private hasRemoteStream(userIdOrPeerId: string): boolean {
-		if (this.remoteStreams.has(userIdOrPeerId)) return true;
+		const hasLiveVideo = (s: MediaStream) => s.getVideoTracks().some((t) => t.readyState === "live");
+		const direct = this.remoteStreams.get(userIdOrPeerId);
+		if (direct && hasLiveVideo(direct.stream)) return true;
 		const base = userIdOrPeerId.split(":web:")[0];
-		for (const key of this.remoteStreams.keys()) {
-			if (key === userIdOrPeerId || key === base || key.split(":web:")[0] === base) {
+		for (const [key, val] of this.remoteStreams.entries()) {
+			if ((key === userIdOrPeerId || key === base || key.split(":web:")[0] === base) && hasLiveVideo(val.stream)) {
 				return true;
 			}
 		}
@@ -4186,8 +4217,13 @@ class ShiroApp {
 				for (const g of this.currentRoom.guests ?? []) {
 					if (g.id && g.id !== myId) targetPeers.add(g.id);
 				}
+				for (const connectedPeer of this.p2pManager?.getConnectedPeers() ?? []) {
+					if (connectedPeer && connectedPeer !== myId) targetPeers.add(connectedPeer);
+				}
 				for (const targetId of targetPeers) {
-					void this.p2pManager?.renegotiate(targetId, false);
+					if (this.p2pManager?.hasPeerConnection(targetId)) {
+						void this.p2pManager?.renegotiate(targetId, false);
+					}
 				}
 			}
 		} catch (err: any) {
