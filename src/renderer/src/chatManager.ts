@@ -16,6 +16,7 @@
  */
 
 import { getToken } from "./authManager";
+import { playUiSound } from "./soundManager";
 
 export interface ChatUser {
 	id: string;
@@ -115,6 +116,13 @@ export class ChatManager {
 
 				this.messages.push(msg);
 				this.appendMessageElement(msg);
+				if (
+					!this.currentUser ||
+					(this.currentUser.id !== msg.sender?.id &&
+						this.currentUser.username !== msg.sender?.username)
+				) {
+					playUiSound("new_message");
+				}
 
 				if (!this.isTabActive) {
 					this.unreadCount++;
@@ -163,6 +171,13 @@ export class ChatManager {
 		if (this.messages.some((m) => m.id === msg.id)) return;
 		this.messages.push(msg);
 		this.appendMessageElement(msg);
+		if (
+			!this.currentUser ||
+			(this.currentUser.id !== msg.sender?.id &&
+				this.currentUser.username !== msg.sender?.username)
+		) {
+			playUiSound("new_message");
+		}
 		if (!this.isTabActive) {
 			this.unreadCount++;
 			this.updateUnreadBadge();
@@ -703,7 +718,7 @@ export class ChatManager {
 
 		list.innerHTML = "";
 		for (const msg of this.messages) {
-			list.appendChild(this.createMessageNode(msg));
+			this.appendOrGroupMessage(list, msg);
 		}
 		this.onRefreshIcons?.();
 		this.scrollToBottom();
@@ -716,8 +731,70 @@ export class ChatManager {
 		const empty = document.getElementById("chat-empty-state");
 		if (empty) empty.remove();
 
-		list.appendChild(this.createMessageNode(msg));
+		this.appendOrGroupMessage(list, msg);
 		this.onRefreshIcons?.();
+	}
+
+	private getSenderKey(msg: ChatMessage): string {
+		return msg.sender.id || msg.sender.username || "unknown";
+	}
+
+	private getMinuteBucket(timestamp: number): string {
+		return String(Math.floor((Number.isFinite(timestamp) ? timestamp : Date.now()) / 60000));
+	}
+
+	private appendOrGroupMessage(list: HTMLElement, msg: ChatMessage): void {
+		const senderKey = this.getSenderKey(msg);
+		const minuteBucket = this.getMinuteBucket(msg.timestamp);
+		const lastRow = list.lastElementChild as HTMLElement | null;
+
+		if (
+			lastRow &&
+			lastRow.classList.contains("chat-message-row") &&
+			lastRow.dataset.senderKey === senderKey &&
+			lastRow.dataset.minuteBucket === minuteBucket
+		) {
+			const contentEl = lastRow.querySelector<HTMLElement>(".chat-msg-content");
+			if (contentEl) {
+				for (const node of this.createContentNodes(msg)) {
+					contentEl.appendChild(node);
+				}
+				return;
+			}
+		}
+
+		list.appendChild(this.createMessageNode(msg));
+	}
+
+	private createContentNodes(msg: ChatMessage): HTMLElement[] {
+		const nodes: HTMLElement[] = [];
+		if (msg.content) {
+			const textEl = document.createElement("div");
+			textEl.className = "chat-bubble-text";
+			textEl.textContent = msg.content;
+			nodes.push(textEl);
+		}
+		if (msg.gifUrl) {
+			const isFav = this.isGifFavorite(msg.gifUrl);
+			const gifEl = document.createElement("div");
+			gifEl.className = "chat-bubble-gif";
+			gifEl.innerHTML = `
+				<img src="${this.escapeHtml(msg.gifUrl)}" alt="GIF" loading="lazy" />
+				<button type="button" class="btn-msg-fav-gif ${isFav ? "is-favorite" : ""}" data-msg-gif-url="${this.escapeHtml(msg.gifUrl)}" title="${isFav ? "Remover dos favoritos" : "Favoritar GIF"}">
+					<i data-lucide="star"></i>
+				</button>`;
+			const msgFavBtn = gifEl.querySelector<HTMLButtonElement>(".btn-msg-fav-gif");
+			msgFavBtn?.addEventListener("click", (e) => {
+				e.stopPropagation();
+				this.toggleFavoriteGif({
+					url: msg.gifUrl!,
+					previewUrl: msg.gifUrl!,
+					title: "GIF do Chat",
+				});
+			});
+			nodes.push(gifEl);
+		}
+		return nodes;
 	}
 
 	private createMessageNode(msg: ChatMessage): HTMLElement {
@@ -725,6 +802,8 @@ export class ChatManager {
 		const wrapper = document.createElement("div");
 		wrapper.className = `chat-message-row ${isMe ? "is-me" : "is-other"}`;
 		wrapper.dataset.messageId = msg.id;
+		wrapper.dataset.senderKey = this.getSenderKey(msg);
+		wrapper.dataset.minuteBucket = this.getMinuteBucket(msg.timestamp);
 
 		const time = new Date(msg.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 		const displayName = msg.sender.nickname || msg.sender.username || "Usuário";
@@ -732,21 +811,6 @@ export class ChatManager {
 		let avatarHtml = `<span class="chat-avatar-placeholder">${(displayName[0] || "U").toUpperCase()}</span>`;
 		if (msg.sender.avatar) {
 			avatarHtml = `<img src="${this.escapeHtml(msg.sender.avatar)}" alt="${this.escapeHtml(displayName)}" class="chat-avatar-img" />`;
-		}
-
-		let contentHtml = "";
-		if (msg.content) {
-			contentHtml += `<div class="chat-bubble-text">${this.escapeHtml(msg.content)}</div>`;
-		}
-		if (msg.gifUrl) {
-			const isFav = this.isGifFavorite(msg.gifUrl);
-			contentHtml += `
-				<div class="chat-bubble-gif">
-					<img src="${this.escapeHtml(msg.gifUrl)}" alt="GIF" loading="lazy" />
-					<button type="button" class="btn-msg-fav-gif ${isFav ? "is-favorite" : ""}" data-msg-gif-url="${this.escapeHtml(msg.gifUrl)}" title="${isFav ? "Remover dos favoritos" : "Favoritar GIF"}">
-						<i data-lucide="star"></i>
-					</button>
-				</div>`;
 		}
 
 		wrapper.innerHTML = `
@@ -758,23 +822,15 @@ export class ChatManager {
 					<span class="chat-msg-sender">${this.escapeHtml(displayName)}</span>
 					<span class="chat-msg-time">${time}</span>
 				</div>
-				<div class="chat-msg-content">
-					${contentHtml}
-				</div>
+				<div class="chat-msg-content"></div>
 			</div>
 		`;
 
-		// Listener para o botão de favoritar GIF na mensagem do chat
-		if (msg.gifUrl) {
-			const msgFavBtn = wrapper.querySelector<HTMLButtonElement>(".btn-msg-fav-gif");
-			msgFavBtn?.addEventListener("click", (e) => {
-				e.stopPropagation();
-				this.toggleFavoriteGif({
-					url: msg.gifUrl!,
-					previewUrl: msg.gifUrl!,
-					title: "GIF do Chat",
-				});
-			});
+		const contentContainer = wrapper.querySelector<HTMLElement>(".chat-msg-content");
+		if (contentContainer) {
+			for (const node of this.createContentNodes(msg)) {
+				contentContainer.appendChild(node);
+			}
 		}
 
 		return wrapper;

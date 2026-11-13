@@ -1,6 +1,6 @@
 {
 	"name": "shiro-screen-share",
-	"version": "2.3.3",
+	"version": "2.3.4",
 	"description": "Shiro Screen Share — Desktop app with isolated process audio capture and WebRTC P2P multi-stream",
 	"main": "dist/main/main.js",
 	"author": "Hito",
@@ -9,7 +9,7 @@
 		"clean": "node -e \"const fs = require('fs'); ['dist/main', 'dist/preload', 'dist/renderer'].forEach(d => { try { if (fs.existsSync(d)) fs.rmSync(d, { recursive: true, force: true, maxRetries: 3 }); } catch(e){} });\"",
 		"build:main": "node scripts/build-main.mjs",
 		"build:preload": "esbuild src/preload/index.ts --bundle --platform=node --target=node18 --outfile=dist/preload/index.js --external:electron --format=cjs",
-		"build:renderer": "esbuild src/renderer/src/app.ts --bundle --platform=browser --target=chrome120 --outfile=dist/renderer/app.bundle.js --external:electron --format=iife --tree-shaking=true && node -e \"const fs = require('fs'); fs.copyFileSync('src/renderer/index.html', 'dist/renderer/index.html'); fs.copyFileSync('src/renderer/index.css', 'dist/renderer/index.css'); fs.copyFileSync('icon.ico', 'dist/renderer/icon.ico');\"",
+		"build:renderer": "esbuild src/renderer/src/app.ts --bundle --platform=browser --target=chrome120 --outfile=dist/renderer/app.bundle.js --external:electron --format=iife --tree-shaking=true && node -e \"const fs = require('fs'); const path = require('path'); fs.copyFileSync('src/renderer/index.html', 'dist/renderer/index.html'); fs.copyFileSync('src/renderer/index.css', 'dist/renderer/index.css'); fs.copyFileSync('icon.ico', 'dist/renderer/icon.ico'); fs.mkdirSync('dist/renderer/sounds', { recursive: true }); for (const f of fs.readdirSync('assets/sounds')) { if (f.endsWith('.mp3')) fs.copyFileSync(path.join('assets/sounds', f), path.join('dist/renderer/sounds', f)); }\"",
 		"build:all": "npm run clean && tsc --noEmit && npm run build:main && npm run build:preload && npm run build:renderer",
 		"dev": "npm run build:all && electron .",
 		"pack": "npm run build:all && electron-builder --dir",

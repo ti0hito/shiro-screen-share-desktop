@@ -2,7 +2,7 @@ import http from "node:http";
 import https from "node:https";
 import { app, BrowserWindow, ipcMain, nativeImage, shell } from "electron";
 import type { AudioCaptureConfig } from "../types/capture";
-import type { ApiRequestOptions, ApiRequestResult } from "../types/ipc";
+import type { ApiRequestOptions, ApiRequestResult, DiscordPresenceState } from "../types/ipc";
 import type { AudioCaptureEngine } from "./audioEngine";
 import {
 	isAutoUpdateEnabled,
@@ -10,6 +10,9 @@ import {
 	installUpdateNow,
 	checkForUpdatesNow,
 	downloadUpdateNow,
+	isDiscordRpcEnabled,
+	setDiscordRpcEnabled,
+	updateDiscordPresence,
 } from "./main";
 import { scanSources } from "./windowScanner";
 import {
@@ -155,6 +158,7 @@ export function setupIpcHandlers(
 		return {
 			openAtLogin: loginSettings.openAtLogin,
 			autoUpdate: isAutoUpdateEnabled(),
+			discordRpc: isDiscordRpcEnabled(),
 			version: app.getVersion(),
 			isDev: !app.isPackaged,
 			platform: process.platform,
@@ -178,6 +182,18 @@ export function setupIpcHandlers(
 		setAutoUpdateEnabled(enabled);
 		console.log(`[IPC] Auto update set to: ${enabled}`);
 		return enabled;
+	});
+
+	ipcMain.handle("set-discord-rpc-enabled", (_event, enabled: boolean) => {
+		setDiscordRpcEnabled(Boolean(enabled));
+		console.log(`[IPC] Discord RPC set to: ${Boolean(enabled)}`);
+		return Boolean(enabled);
+	});
+
+	ipcMain.on("update-discord-presence", (_event, state: DiscordPresenceState) => {
+		if (state && typeof state.mode === "string") {
+			updateDiscordPresence(state);
+		}
 	});
 
 	ipcMain.handle("install-update", () => {

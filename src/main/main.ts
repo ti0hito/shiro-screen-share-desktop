@@ -3,6 +3,7 @@ import dotenv from "dotenv";
 import { app, BrowserWindow, ipcMain, Menu, nativeImage, protocol, session, Tray } from "electron";
 import { autoUpdater } from "electron-updater";
 import { AudioCaptureEngine } from "./audioEngine";
+import { DiscordRpcService, type DiscordPresenceState } from "./discordRpc";
 import { setupIpcHandlers } from "./ipcHandlers";
 import { parseDeepLinkUrl, registerDeepLinkProtocol } from "./protocol";
 import {
@@ -297,6 +298,19 @@ function createTray(iconPath: string): void {
 }
 
 let autoUpdateEnabled: boolean = true;
+const discordRpc = new DiscordRpcService();
+
+export function isDiscordRpcEnabled(): boolean {
+	return discordRpc.isEnabled();
+}
+
+export function setDiscordRpcEnabled(enabled: boolean): void {
+	discordRpc.setEnabled(enabled);
+}
+
+export function updateDiscordPresence(state: DiscordPresenceState): void {
+	discordRpc.updateActivity(state);
+}
 
 export function isAutoUpdateEnabled(): boolean {
 	return autoUpdateEnabled;
@@ -412,6 +426,7 @@ app.whenReady().then(() => {
 	createWindow();
 	handleArgvDeepLink(process.argv);
 	setupAutoUpdater();
+	discordRpc.start();
 });
 
 app.on("window-all-closed", () => {
@@ -445,4 +460,5 @@ app.on("before-quit", (event) => {
 app.on("will-quit", () => {
 	audioEngine.stopCapture();
 	stopWebSocketServer();
+	discordRpc.destroy();
 });

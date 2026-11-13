@@ -9,9 +9,19 @@ export interface DeepLinkParams {
 	[key: string]: string | undefined;
 }
 
+export type DiscordPresenceMode = "lobby" | "room" | "streaming" | "watching";
+
+export interface DiscordPresenceState {
+	mode: DiscordPresenceMode;
+	roomName?: string;
+	memberCount?: number;
+	isPrivate?: boolean;
+}
+
 export interface AppSettings {
 	openAtLogin: boolean;
 	autoUpdate: boolean;
+	discordRpc?: boolean;
 	/** Versão do app (package.json), exibida no header */
 	version: string;
 	/** Sistema operacional (process.platform) */
@@ -55,6 +65,8 @@ export interface ElectronAPI {
 	getApiUrl?: () => Promise<string>;
 	setOpenAtLogin: (enabled: boolean) => Promise<boolean>;
 	setAutoUpdate: (enabled: boolean) => Promise<boolean>;
+	setDiscordRpcEnabled?: (enabled: boolean) => Promise<boolean>;
+	updateDiscordPresence?: (state: DiscordPresenceState) => void;
 	installUpdate: () => Promise<void>;
 	checkForUpdates: () => Promise<unknown>;
 	downloadUpdate?: () => Promise<unknown>;

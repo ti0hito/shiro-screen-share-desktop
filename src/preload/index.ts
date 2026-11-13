@@ -1,7 +1,13 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { AudioCaptureStatus } from "../types/audio";
 import type { AudioCaptureConfig, WindowSource } from "../types/capture";
-import type { ApiRequestOptions, ApiRequestResult, AppSettings, ElectronAPI } from "../types/ipc";
+import type {
+	ApiRequestOptions,
+	ApiRequestResult,
+	AppSettings,
+	DiscordPresenceState,
+	ElectronAPI,
+} from "../types/ipc";
 
 const api: ElectronAPI = {
 	getAvailableSources: (): Promise<WindowSource[]> => {
@@ -49,6 +55,14 @@ const api: ElectronAPI = {
 
 	setAutoUpdate: (enabled: boolean): Promise<boolean> => {
 		return ipcRenderer.invoke("set-auto-update", enabled);
+	},
+
+	setDiscordRpcEnabled: (enabled: boolean): Promise<boolean> => {
+		return ipcRenderer.invoke("set-discord-rpc-enabled", enabled);
+	},
+
+	updateDiscordPresence: (state: DiscordPresenceState): void => {
+		ipcRenderer.send("update-discord-presence", state);
 	},
 
 	installUpdate: (): Promise<void> => {

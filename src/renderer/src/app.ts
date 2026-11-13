@@ -79,6 +79,12 @@ import {
 	Zap,
 } from "lucide";
 import { ChatManager } from "./chatManager";
+import {
+	getSoundVolume,
+	playUiSound,
+	setSoundVolume,
+	type UiSoundType,
+} from "./soundManager";
 import type {
 	AudioCaptureMode,
 	SourceType,
@@ -247,7 +253,7 @@ class ShiroApp {
 		{
 			id: "sys-v21",
 			title: "Shiro Screen Share v2.3.3",
-			message: "Nova arquitetura WebRTC P2P multi-stream ativa com isolamento de áudio.",
+			message: "Arquitetura WebRTC p2p multi-stream ativa com isolamento de áudio.",
 			type: "info",
 			date: "Sistema",
 		},
@@ -759,6 +765,7 @@ class ShiroApp {
 					if (this.p2pManager?.getIsStreaming()) {
 						setStreamStatus(true, "AO VIVO");
 						if (window.api) window.api.reportStreamShareState(true);
+		this.syncDiscordPresence();
 						document.getElementById("btn-start-stream")?.classList.add("hidden");
 						document.getElementById("btn-stop-stream")?.classList.remove("hidden");
 					} else {
@@ -1049,6 +1056,7 @@ class ShiroApp {
 			["qualityChangeListeners", () => this.setupQualityChangeListeners()],
 			["customSelects", () => this.setupCustomSelects()],
 			["appSettings", () => this.setupAppSettings()],
+			["uiSounds", () => this.setupUiClickSounds()],
 			["logout", () => this.setupLogout()],
 			["streamDeckBridge", () => this.setupStreamDeckBridge()],
 			["serverEvents", () => this.subscribeServerEvents()],
@@ -2090,8 +2098,11 @@ class ShiroApp {
 		if (!this.currentRoom) {
 			banner?.classList.add("hidden");
 			headerPill?.classList.add("hidden");
+			this.syncDiscordPresence();
 			return;
 		}
+
+		this.syncDiscordPresence();
 
 		if (banner) {
 			banner.classList.remove("hidden");
@@ -4196,6 +4207,7 @@ class ShiroApp {
 
 		setStreamStatus(true, "AO VIVO");
 		if (window.api) window.api.reportStreamShareState(true);
+		this.syncDiscordPresence();
 
 		document.getElementById("btn-start-stream")?.classList.add("hidden");
 		document.getElementById("btn-stop-stream")?.classList.remove("hidden");
@@ -4285,6 +4297,7 @@ class ShiroApp {
 
 		if (window.api) window.api.stopAudioCapture();
 		if (window.api) window.api.reportStreamShareState(false);
+		this.syncDiscordPresence();
 
 		const isWatchingRemote = this.remoteStreams.size > 0;
 		setStreamStatus(isWatchingRemote, isWatchingRemote ? "Assistindo" : "Desconectado");
@@ -4589,9 +4602,93 @@ class ShiroApp {
 		});
 	}
 
+	private setupUiClickSounds(): void {
+		document.addEventListener(
+			"click",
+			(e) => {
+				const target = (e.target as HTMLElement | null)?.closest(
+					[
+						"button",
+						"[role='button']",
+						"[role='menuitem']",
+						"[role='option']",
+						"[role='tab']",
+						".panel-tab",
+						".sub-tab",
+						".checkbox-label",
+						".radio-card",
+						".settings-nav-btn",
+						".sidebar-toggle-btn",
+						".room-item",
+						".room-card",
+						".user-card",
+						".friend-card",
+						".friend-request-card",
+						".custom-select-trigger",
+						".custom-select-option",
+						".audio-option",
+						".source-item",
+						".source-card",
+						".account-menu-item",
+						".notif-item",
+						".notification-item",
+					].join(", "),
+				) as HTMLElement | null;
+				if (!target) return;
+				if (
+					(target as HTMLButtonElement).disabled ||
+					target.getAttribute("aria-disabled") === "true" ||
+					target.classList.contains("disabled")
+				) {
+					return;
+				}
+				if (target.classList.contains("btn-test-sound")) {
+					const testType = target.dataset.soundTest as UiSoundType | undefined;
+					if (testType) playUiSound(testType, true);
+					return;
+				}
+				playUiSound("click");
+			},
+			{ capture: true },
+		);
+	}
+
+	private syncDiscordPresence(): void {
+		if (!window.api?.updateDiscordPresence) return;
+		const isStreaming = this.p2pManager?.getIsStreaming() ?? false;
+		const isWatching = !isStreaming && this.remoteStreams.size > 0;
+		const mode = isStreaming
+			? "streaming"
+			: isWatching
+				? "watching"
+				: this.currentRoom
+					? "room"
+					: "lobby";
+
+		window.api.updateDiscordPresence({
+			mode,
+			roomName: this.currentRoom?.name,
+			memberCount: this.currentRoom?.members?.length,
+			isPrivate: this.currentRoom?.isPrivate,
+		});
+	}
+
 	private async setupAppSettings(): Promise<void> {
 		const chkOpenAtLogin = document.getElementById("chk-open-at-login") as HTMLInputElement;
 		const chkAutoUpdate = document.getElementById("chk-auto-update") as HTMLInputElement;
+		const chkDiscordRpc = document.getElementById("chk-discord-rpc") as HTMLInputElement;
+
+		// Navegação por abas do modal de configurações
+		const navButtons = document.querySelectorAll<HTMLButtonElement>(".settings-nav-btn[data-settings-tab]");
+		const tabPanels = document.querySelectorAll<HTMLElement>(".settings-tab-panel[data-settings-panel]");
+		navButtons.forEach((btn) => {
+			btn.addEventListener("click", () => {
+				const targetTab = btn.dataset.settingsTab;
+				if (!targetTab) return;
+				navButtons.forEach((b) => b.classList.toggle("active", b === btn));
+				tabPanels.forEach((p) => p.classList.toggle("hidden", p.dataset.settingsPanel !== targetTab));
+			});
+		});
 
 		if (window.api?.getAppSettings) {
 			try {
@@ -4600,6 +4697,42 @@ class ShiroApp {
 				if (chkAutoUpdate) chkAutoUpdate.checked = settings.autoUpdate;
 			} catch (err) {
 				console.warn("[App] Não foi possível carregar as configurações:", err);
+			}
+		}
+
+		// Discord Rich Presence (persistido no localStorage e sincronizado com o main)
+		const savedRpc = localStorage.getItem("shiro-discord-rpc");
+		const rpcEnabled = savedRpc !== "false";
+		if (chkDiscordRpc) chkDiscordRpc.checked = rpcEnabled;
+		if (window.api?.setDiscordRpcEnabled) {
+			void window.api.setDiscordRpcEnabled(rpcEnabled).then(() => {
+				if (rpcEnabled) this.syncDiscordPresence();
+			});
+		}
+		chkDiscordRpc?.addEventListener("change", async () => {
+			const enabled = chkDiscordRpc.checked;
+			localStorage.setItem("shiro-discord-rpc", String(enabled));
+			if (window.api?.setDiscordRpcEnabled) {
+				await window.api.setDiscordRpcEnabled(enabled);
+				if (enabled) this.syncDiscordPresence();
+			}
+		});
+
+		// Sliders e botões de teste dos sons da UI
+		const soundTypes: UiSoundType[] = ["click", "notification", "new_message"];
+		for (const type of soundTypes) {
+			const slider = document.getElementById(`range-sound-${type}`) as HTMLInputElement | null;
+			const label = document.getElementById(`sound-vol-label-${type}`);
+			const initialVol = getSoundVolume(type);
+			if (slider) {
+				slider.value = String(initialVol);
+				slider.addEventListener("input", () => {
+					const vol = setSoundVolume(type, Number(slider.value));
+					if (label) label.textContent = `${vol}%`;
+				});
+			}
+			if (label) {
+				label.textContent = `${initialVol}%`;
 			}
 		}
 
@@ -6222,6 +6355,7 @@ class ShiroApp {
 			roomNameEl.textContent = latestInvite.roomName;
 			console.log(`[App] 🔔 Exibindo toast de convite para sala '${latestInvite.roomName}' de ${senderName}`);
 			toast.classList.remove("hidden");
+			playUiSound("notification");
 			this.refreshIcons();
 		}
 	}
@@ -6287,6 +6421,7 @@ class ShiroApp {
 			senderEl.textContent = `@${latestReq.fromUsername}`;
 			console.log(`[App] 🔔 Exibindo toast de pedido de amizade de @${latestReq.fromUsername}`);
 			toast.classList.remove("hidden");
+			playUiSound("notification");
 			this.refreshIcons();
 		}
 	}
@@ -7621,6 +7756,7 @@ class ShiroApp {
 		}
 
 		toast.classList.remove("hidden");
+		playUiSound("notification");
 		this.refreshIcons();
 
 		setTimeout(() => {
