@@ -8055,6 +8055,25 @@ body.is-resizing-sidebars .right-panel {
   animation: gifPopoverFlyIn 0.18s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
+.gif-popover-footer {
+  padding: 6px 12px;
+  border-top: 1px solid #27272a;
+  background: #101013;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  font-size: 10px;
+  color: #71717a;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.gif-popover-footer strong {
+  color: #d4d4d8;
+  font-weight: 700;
+}
+
 @keyframes gifPopoverFlyIn {
   from {
     opacity: 0;
