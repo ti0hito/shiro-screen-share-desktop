@@ -533,6 +533,7 @@ export class P2PManager {
 			console.log(`[P2P] ${peerId} connectionState: ${state}`);
 			if (state === "connected") {
 				this.clearDisconnectTimer(peerId);
+				void this.logSelectedIceRoute(pc, peerId);
 				this.callbacks.onConnected(peerId);
 			} else if (state === "disconnected") {
 				// O WebRTC geralmente se recupera sozinho em poucos segundos: só fecha se não voltar
@@ -771,6 +772,37 @@ export class P2PManager {
 		if (timer) {
 			clearTimeout(timer);
 			this.disconnectTimers.delete(peerId);
+		}
+	}
+
+	private async logSelectedIceRoute(pc: RTCPeerConnection, peerId: string): Promise<void> {
+		try {
+			const stats = await pc.getStats();
+			let selectedPair: any = null;
+			const localCandidates = new Map<string, any>();
+			const remoteCandidates = new Map<string, any>();
+
+			stats.forEach((report) => {
+				if (report.type === "transport" && report.selectedCandidatePairId) {
+					selectedPair = stats.get(report.selectedCandidatePairId);
+				} else if (report.type === "candidate-pair" && report.nominated && report.state === "succeeded" && !selectedPair) {
+					selectedPair = report;
+				} else if (report.type === "local-candidate") {
+					localCandidates.set(report.id, report);
+				} else if (report.type === "remote-candidate") {
+					remoteCandidates.set(report.id, report);
+				}
+			});
+
+			if (selectedPair) {
+				const local = localCandidates.get(selectedPair.localCandidateId);
+				const remote = remoteCandidates.get(selectedPair.remoteCandidateId);
+				console.log(
+					`[P2P] Rota ICE ativa para ${peerId}: local=${local?.candidateType ?? "?"}(${local?.protocol ?? "?"}) <-> remote=${remote?.candidateType ?? "?"}(${remote?.protocol ?? "?"})`,
+				);
+			}
+		} catch {
+			// ignore getStats errors
 		}
 	}
 

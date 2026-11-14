@@ -2758,6 +2758,12 @@ body.is-resizing-sidebars .right-panel {
   font-size: 11px;
 }
 
+.btn-xs {
+  padding: 4px 9px;
+  font-size: 11px;
+  line-height: 1.25;
+}
+
 /* ══════════════════════════════════════════════════════════
    UTILITIES
    ══════════════════════════════════════════════════════════ */
@@ -3364,6 +3370,164 @@ body.is-resizing-sidebars .right-panel {
   height: 100%;
   object-fit: contain;
   background: #000;
+}
+
+.stream-mini-dock {
+  position: absolute;
+  left: 16px;
+  bottom: 72px;
+  z-index: 45;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100% - 32px);
+  overflow-x: auto;
+  padding: 6px 8px;
+  background: rgba(12, 12, 18, 0.85);
+  border: 1px solid rgba(168, 85, 247, 0.35);
+  border-radius: 10px;
+  backdrop-filter: blur(12px);
+}
+
+.stream-mini-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(24, 24, 32, 0.9);
+  color: #e4e4e7;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.stream-mini-pill:hover {
+  border-color: #a855f7;
+  background: rgba(124, 58, 237, 0.22);
+  color: #fff;
+}
+
+.stream-mini-pill-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ef4444;
+  box-shadow: 0 0 6px #ef4444;
+}
+
+.badge-stream-quality {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #6ee7b7;
+  background: rgba(16, 185, 129, 0.14);
+  border: 1px solid rgba(16, 185, 129, 0.32);
+}
+
+.badge-progress-section {
+  margin: 12px 16px 0;
+  padding: 12px;
+  border-radius: 10px;
+  background: rgba(15, 15, 22, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.badge-progress-section.badge-progress-compact {
+  margin: 10px 0 0;
+  padding: 10px;
+  gap: 8px;
+}
+
+.badge-progress-title {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #a1a1aa;
+}
+
+.badge-progress-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.badge-progress-compact .badge-progress-grid {
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.badge-progress-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.badge-progress-compact .badge-progress-row {
+  padding: 0;
+  background: transparent;
+  border: none;
+  gap: 4px;
+}
+
+.badge-progress-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: #e4e4e7;
+}
+
+.badge-progress-meta span:first-child {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.badge-progress-meta span:last-child {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: #a1a1aa;
+}
+
+.badge-progress-meta .done {
+  color: #4ade80;
+  font-weight: 600;
+}
+
+.badge-progress-track {
+  height: 5px;
+  width: 100%;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+
+.badge-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #7c3aed, #a855f7);
+  transition: width 0.25s ease;
+}
+
+.badge-progress-fill.done {
+  background: #22c55e;
 }
 
 .right-section.maximized-active .grid-maximized-bar {
@@ -6200,7 +6364,7 @@ body.is-resizing-sidebars .right-panel {
    PERFIL DO USUÁRIO — cartão interativo (clicar para editar)
    ══════════════════════════════════════════════════════════ */
 .modal-profile-card {
-  max-width: 520px;
+  max-width: 640px;
 }
 
 /* Abertura: sobe suavemente com leve escala, overlay escurece junto */
@@ -6280,6 +6444,12 @@ body.is-resizing-sidebars .right-panel {
   align-items: flex-end;
   margin-top: -46px;
   padding: 0 16px;
+  pointer-events: none;
+}
+
+.modal-profile-card .profile-avatar-wrapper,
+.modal-profile-card .profile-preview-badges > * {
+  pointer-events: auto;
 }
 
 .profile-avatar-wrapper.profile-editable {
@@ -8598,14 +8768,16 @@ body.is-resizing-sidebars .right-panel {
 }
 
 .discord-profile-actions {
-  margin-top: 10px;
-  padding: 10px;
+  margin: 12px 16px 0;
+  padding: 10px 12px;
   background: rgba(88, 101, 242, 0.08);
   border: 1px solid rgba(88, 101, 242, 0.25);
-  border-radius: 8px;
+  border-radius: 10px;
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 .discord-profile-actions-header {
@@ -8623,6 +8795,21 @@ body.is-resizing-sidebars .right-panel {
 
 .discord-profile-btns {
   display: flex;
-  gap: 6px;
+  gap: 8px;
   flex-wrap: wrap;
+}
+
+.discord-profile-btns .btn {
+  padding: 6px 12px;
+  font-size: 11.5px;
+  border-radius: 8px;
+  background: rgba(88, 101, 242, 0.14);
+  border: 1px solid rgba(88, 101, 242, 0.35);
+  color: #e0e7ff;
+}
+
+.discord-profile-btns .btn:hover:not(:disabled) {
+  background: rgba(88, 101, 242, 0.28);
+  border-color: rgba(129, 140, 248, 0.65);
+  color: #fff;
 }

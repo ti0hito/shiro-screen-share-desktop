@@ -778,15 +778,15 @@ class ShiroApp {
 					this.remoteStreams.delete(peerId);
 					if (basePeerId !== peerId) this.remoteStreams.delete(basePeerId);
 					this.renderLiveStreamsGrid();
-					if (this.remoteStreams.size === 0 && !this.p2pManager?.getIsStreaming()) {
-						setStreamStatus(false, "Desconectado");
-					}
 					// Se o usuário ainda estiver transmitindo na sala atual, agenda tentativa de reconexão limpa
 					const stillStreaming = this.currentRoom?.activeStreams?.some(
 						(s) => s.userId === peerId || s.userId === basePeerId,
 					);
-					if (stillStreaming && this.currentRoom && !this.p2pManager?.isConnecting(peerId, 15_000)) {
-						console.log(`[App] Stream de ${peerId} ainda está ativa na sala. Agendando reconexão em 2.5s...`);
+					if (this.remoteStreams.size === 0 && !this.p2pManager?.getIsStreaming()) {
+						setStreamStatus(false, stillStreaming ? "Reconectando..." : "Desconectado");
+					}
+					if (stillStreaming && this.currentRoom && !this.p2pManager?.isConnecting(peerId, 10_000)) {
+						console.log(`[App] Stream de ${peerId} ainda está ativa na sala. Agendando reconexão automática em 1.5s...`);
 						setTimeout(() => {
 							if (
 								this.currentRoom?.activeStreams?.some((s) => s.userId === peerId || s.userId === basePeerId) &&
@@ -795,7 +795,7 @@ class ShiroApp {
 							) {
 								void this.p2pManager?.renegotiate(peerId, true);
 							}
-						}, 2500);
+						}, 1500);
 					}
 				},
 				onError: (err) => {
@@ -1351,7 +1351,7 @@ class ShiroApp {
 		this.friendsPoller?.setIntervalMs(intervals.friends);
 		this.usersPoller?.setIntervalMs(intervals.users);
 		if (this.serverSupportsEvents) {
-			this.streamsPoller?.setIntervalMs(60_000);
+			this.streamsPoller?.setIntervalMs(600_000);
 		}
 	}
 
@@ -2385,7 +2385,7 @@ class ShiroApp {
 							<div class="room-item-badges">
 								${isActive ? '<span class="badge-current-room">ATUAL</span>' : ""}
 								${isGlobal ? '<span class="badge-current-room">GLOBAL</span>' : ""}
-								${r.pinnedUntil && new Date(r.pinnedUntil).getTime() > Date.now() ? '<span class="badge-room-pinned" title="Sala Fixa (Não expira)"><i data-lucide="pin" style="width:10px;height:10px;"></i> FIXA</span>' : ""}
+								${r.isFavorite ? '<span class="badge-room-pinned" title="Sala Favorita (Link Fixo Permanente)">⭐ FAVORITA</span>' : r.pinnedUntil && new Date(r.pinnedUntil).getTime() > Date.now() ? '<span class="badge-room-pinned" title="Sala Fixa (Não expira)"><i data-lucide="pin" style="width:10px;height:10px;"></i> FIXA</span>' : ""}
 								${streamCount > 0 ? `<span class="badge-room-live"><span class="live-dot"></span>${streamCount} live</span>` : ""}
 							</div>
 						</div>
@@ -2731,6 +2731,7 @@ class ShiroApp {
 							<span>Transmissão de ${this.escapeHtml(displayName)}</span>
 						</div>
 						<div class="stream-card-actions">
+							<span class="badge-stream-quality hidden"></span>
 							<div class="stream-volume-control" title="Volume da transmissão">
 								<button class="stream-vol-btn" title="Silenciar / Ativar som" type="button">
 									<i data-lucide="${volIcon}"></i>
@@ -2754,9 +2755,21 @@ class ShiroApp {
 					<video class="stream-card-video" autoplay playsinline></video>`;
 
 				const videoEl = remoteCard.querySelector("video") as HTMLVideoElement;
+				const qualityEl = remoteCard.querySelector(".badge-stream-quality") as HTMLSpanElement | null;
 				const volBtn = remoteCard.querySelector(".stream-vol-btn") as HTMLButtonElement;
 				const volSlider = remoteCard.querySelector(".stream-vol-slider") as HTMLInputElement;
 				const volPercent = remoteCard.querySelector(".stream-vol-percent") as HTMLSpanElement;
+
+				const syncQualityBadge = () => {
+					if (!qualityEl || videoEl.videoHeight <= 0) return;
+					const h = videoEl.videoHeight;
+					const resTag = h >= 2160 ? "4K" : h >= 1440 ? "1440p" : h >= 1080 ? "1080p" : h >= 720 ? "720p" : `${h}p`;
+					const fps = Math.round(remoteData.stream.getVideoTracks()[0]?.getSettings?.().frameRate || 0);
+					qualityEl.textContent = fps >= 50 ? `Estável • ${resTag} 60fps` : `Estável • ${resTag}`;
+					qualityEl.classList.remove("hidden");
+				};
+				videoEl.addEventListener("loadedmetadata", syncQualityBadge);
+				videoEl.addEventListener("resize", syncQualityBadge);
 
 				videoEl.srcObject = remoteData.stream;
 				videoEl.volume = savedVol / 100;
@@ -2897,6 +2910,7 @@ class ShiroApp {
 			if (rightSectionEl) rightSectionEl.classList.add("maximized-active");
 			if (gridEl) gridEl.classList.add("maximized-active");
 
+			const otherCards: Array<{ cardId: string; cardEl: HTMLElement; label: string }> = [];
 			gridEl.querySelectorAll<HTMLElement>(".stream-card").forEach((c) => {
 				const isCurrentMax = (c.id === "stream-card-local" && this.maximizedStreamId === "local-preview") || (c.id === this.maximizedStreamId);
 				const videoEl = c.querySelector("video");
@@ -2912,9 +2926,45 @@ class ShiroApp {
 				} else {
 					c.style.display = "none";
 					if (videoEl) videoEl.muted = true;
+					if (!c.classList.contains("stream-card-connecting")) {
+						const label = c.querySelector(".stream-card-user span")?.textContent?.trim() || "Outra transmissão";
+						const targetId = c.id === "stream-card-local" ? "local-preview" : c.id;
+						otherCards.push({ cardId: targetId, cardEl: c, label });
+					}
 				}
 			});
+
+			let miniDock = gridEl.querySelector<HTMLElement>(".stream-mini-dock");
+			if (otherCards.length > 0) {
+				if (!miniDock) {
+					miniDock = document.createElement("div");
+					miniDock.className = "stream-mini-dock";
+					gridEl.appendChild(miniDock);
+				}
+				miniDock.innerHTML = otherCards
+					.map(
+						(o) => `<button type="button" class="stream-mini-pill" data-target-card="${this.escapeHtml(o.cardId)}">
+							<span class="stream-mini-pill-dot"></span>
+							<span>${this.escapeHtml(o.label)}</span>
+						</button>`,
+					)
+					.join("");
+				miniDock.querySelectorAll<HTMLButtonElement>(".stream-mini-pill").forEach((btn) => {
+					btn.addEventListener("click", (e) => {
+						e.stopPropagation();
+						const targetCardId = btn.dataset.targetCard;
+						const match = otherCards.find((x) => x.cardId === targetCardId);
+						if (match) {
+							this.maximizeStreamCard(match.cardId, match.cardEl);
+							this.renderLiveStreamsGrid();
+						}
+					});
+				});
+			} else {
+				miniDock?.remove();
+			}
 		} else {
+			gridEl.querySelector(".stream-mini-dock")?.remove();
 			const rightSectionEl = document.querySelector(".right-section");
 			if (rightSectionEl) rightSectionEl.classList.remove("maximized-active");
 			if (gridEl) gridEl.classList.remove("maximized-active");
@@ -3771,7 +3821,7 @@ class ShiroApp {
 			</div>`;
 			})
 			.join("") +
-			guests
+			Array.from(new Map(guests.map((g) => [g.id, g])).values())
 				.map(
 					(g) => `
 			<div class="user-card guest-user-card" data-guest-id="${this.escapeHtml(g.id)}" title="Assistindo pelo navegador como visitante">
@@ -4032,8 +4082,10 @@ class ShiroApp {
 		const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180" viewBox="0 0 320 180" fill="none">
 			<rect width="320" height="180" rx="8" fill="#0d0f17"/>
 			<circle cx="160" cy="90" r="38" fill="#7c3aed" fill-opacity="0.14" stroke="#a855f7" stroke-width="1.8"/>
-			<path d="M144 80c0-2.2 1.8-4 4-4h5c1.1 0 2.1-.6 2.6-1.6l1.4-2.8c.5-1 1.5-1.6 2.6-1.6h8.8c1.1 0 2.1.6 2.6 1.6l1.4 2.8c.5 1 1.5 1.6 2.6 1.6h5c2.2 0 4 1.8 4 4v22c0 2.2-1.8 4-4 4h-28c-2.2 0-4-1.8-4-4V80z" stroke="#c084fc" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
-			<circle cx="160" cy="92" r="6.5" stroke="#c084fc" stroke-width="2.2"/>
+			<g transform="translate(142 72) scale(1.5)" stroke="#c084fc" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+				<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/>
+				<circle cx="12" cy="13" r="3"/>
+			</g>
 		</svg>`;
 		return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 	}
@@ -6041,9 +6093,12 @@ class ShiroApp {
 			if (inputMax) inputMax.value = (this.currentRoom.maxMembers || 15).toString();
 			if (codeText) codeText.textContent = this.currentRoom.inviteCode || "INV-XXXXXX";
 			if (inputPinned) {
-				if (this.currentRoom.pinnedUntil && new Date(this.currentRoom.pinnedUntil).getTime() > Date.now()) {
+				if (this.currentRoom.isFavorite) {
+					inputPinned.value = "-1";
+				} else if (this.currentRoom.pinnedUntil && new Date(this.currentRoom.pinnedUntil).getTime() > Date.now()) {
 					const daysLeft = Math.ceil((new Date(this.currentRoom.pinnedUntil).getTime() - Date.now()) / (24 * 60 * 60 * 1000));
-					if (daysLeft > 7) inputPinned.value = "14";
+					if (daysLeft > 30) inputPinned.value = "-1";
+					else if (daysLeft > 7) inputPinned.value = "14";
 					else if (daysLeft > 3) inputPinned.value = "7";
 					else if (daysLeft > 1) inputPinned.value = "3";
 					else inputPinned.value = "1";
@@ -6188,7 +6243,9 @@ class ShiroApp {
 				updatePayload.maxMembers = maxMembers;
 			}
 			if (inputPinned) {
-				updatePayload.pinnedDays = parseInt(inputPinned.value, 10);
+				const pinnedVal = parseInt(inputPinned.value, 10);
+				updatePayload.pinnedDays = pinnedVal;
+				updatePayload.isFavorite = pinnedVal === -1;
 			}
 
 			const res = await updateRoomSettings(this.currentRoom.roomId, updatePayload);
@@ -6950,6 +7007,11 @@ class ShiroApp {
 		const renderBadges = () => {
 			const user = getUser();
 			if (previewBadges) previewBadges.innerHTML = this.renderProfileBadges(user?.badges, user?.badgeStats);
+			const progressEl = document.getElementById("profile-badge-progress");
+			if (progressEl) {
+				progressEl.innerHTML = this.renderBadgeProgressHtml(user?.badgeStats);
+				progressEl.classList.remove("hidden");
+			}
 			this.refreshIcons();
 		};
 
@@ -7347,6 +7409,17 @@ class ShiroApp {
 			const badgeStats = userData.badgeStats ?? (isSelf ? currentUser?.badgeStats : undefined);
 			badgesEl.innerHTML = this.renderProfileBadges(badges, badgeStats);
 		}
+		const miniProgressEl = document.getElementById("user-mini-badge-progress");
+		if (miniProgressEl) {
+			if (isSelf) {
+				const badgeStats = userData.badgeStats ?? currentUser?.badgeStats;
+				miniProgressEl.innerHTML = this.renderBadgeProgressHtml(badgeStats);
+				miniProgressEl.classList.remove("hidden");
+			} else {
+				miniProgressEl.innerHTML = "";
+				miniProgressEl.classList.add("hidden");
+			}
+		}
 
 		const nameEl = document.getElementById("user-mini-display-name");
 		if (nameEl) nameEl.textContent = displayName;
@@ -7638,6 +7711,49 @@ class ShiroApp {
 				</span>`;
 			})
 			.join("");
+	}
+
+	/** HTML das barras de progresso das insígnias (exibido em seção própria no perfil) */
+	private renderBadgeProgressHtml(stats: BadgeStats | undefined): string {
+		const streamSec = stats?.streamSeconds ?? 0;
+		const roomsCreated = stats?.roomsCreated ?? 0;
+		const friendsCount = stats?.friendsCount ?? 0;
+		const items = [
+			{
+				label: "24/7 (Live)",
+				meta: `${formatStreamTime(streamSec)} / 24h`,
+				pct: Math.min(100, Math.round((streamSec / 86400) * 100)),
+			},
+			{
+				label: "Construtor Civil",
+				meta: `${roomsCreated} / 50 salas`,
+				pct: Math.min(100, Math.round((roomsCreated / 50) * 100)),
+			},
+			{
+				label: "Vizinhança",
+				meta: `${friendsCount} / 20 amigos`,
+				pct: Math.min(100, Math.round((friendsCount / 20) * 100)),
+			},
+		];
+
+		return `
+			<div class="badge-progress-title">Progresso das Insígnias</div>
+			<div class="badge-progress-grid">
+				${items
+					.map(
+						(it) => `
+					<div class="badge-progress-row">
+						<div class="badge-progress-meta">
+							<span title="${this.escapeHtml(it.label)}">${this.escapeHtml(it.label)}</span>
+							<span class="${it.pct >= 100 ? "done" : ""}">${it.pct >= 100 ? "Conquistada ✓" : this.escapeHtml(it.meta)}</span>
+						</div>
+						<div class="badge-progress-track">
+							<div class="badge-progress-fill ${it.pct >= 100 ? "done" : ""}" style="width: ${it.pct}%"></div>
+						</div>
+					</div>`,
+					)
+					.join("")}
+			</div>`;
 	}
 
 	/** Desenvolvedores veem no mini perfil o botão para dar/remover a insígnia Beta Tester */
