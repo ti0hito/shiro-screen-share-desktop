@@ -25,18 +25,22 @@ O **Shiro Screen Share** é um aplicativo desktop moderno construído em Electro
 
 Livre de intermediários pesados ou servidores de streaming pagos, o app se conecta a uma **API Vercel + MongoDB** ultrarrápida para autenticação segura e sinalização em tempo real.
 
-### 🌟 Destaques da Nova Versão (v2.1)
+### 🌟 Destaques da Versão Atual (v2.3.6)
 
 - 🔒 **Sistema de Autenticação Seguro**: Tela inicial de Login e Registro com senhas criptografadas em `bcrypt` (12 rounds) e tokens JWT.
 - 📡 **Conexão Direta Peer-to-Peer (P2P)**: Transmissão de vídeo e áudio via `RTCPeerConnection` nativo com sinalização real-time por Server-Sent Events (SSE).
-- 🎙️ **Isolamento de Áudio por Processo**: Captura nativa via WASAPI (Windows) — transmita apenas o áudio do seu jogo ou programa sem capturar sons do sistema.
+- 🎙️ **Isolamento de Áudio por Processo**: Captura nativa via WASAPI (Windows) e PipeWire (Linux) — transmita apenas o áudio do seu jogo ou programa sem capturar sons do sistema.
 - 🏰 **Salas de Transmissão (Canais)**:
-  - Crie salas públicas ou privadas.
-  - **IDs de Sala**: Personalizados (ex: `MINHASALA`) ou gerados automaticamente (ex: `SHIRO-9F2A`).
-  - **Proteção por Senha de 8 Dígitos**: Crie salas privadas protegidas por senha numérica de 8 dígitos ou use o botão **⚡ Gerar Senha**.
-- 📺 **Grid Multi-Transmissão (Live Grid)**:
+  - Crie salas públicas ou privadas com **IDs personalizados** ou gerados automaticamente (ex: `SHIRO-9F2A`).
+  - **Proteção por Senha de 8 Dígitos** com gerador automático.
+- 📺 **Grid Multi-Transmissão (Live Grid) + Zoom & Pan**:
   - Visualize todas as transmissões ao vivo da sala simultaneamente em um grid no estilo Discord.
-  - **Maximizar ao Clicar**: Clique em qualquer card de transmissão para expandir em tela cheia com barra de atalho ou tecla `Esc` para retornar.
+  - **Maximizar ao Clicar** e **Zoom / Pan** com scroll e arraste para inspecionar textos ou códigos em telas de alta resolução.
+- 💬 **Chat Efêmero em Tempo Real**:
+  - Mensagens em sala com suporte a **GIFs (GIPHY)**, favoritos locais, preview seguro de imagens, respostas, edição/exclusão e indicador de digitação.
+  - **Menções Inteligentes**: Autocomplete com `@` para membros da sala e `@everyone`, suporte a `<@ID>`, destaque visual e **notificações visuais e sonoras configuráveis**.
+- 🎮 **Discord Rich Presence**: Modo **Pre-set da Shiro** (automático conforme sala e transmissão) ou **Personalizado** com edição de textos, tempo decorrido e botão customizável.
+- ⌨️ **Atalhos Globais & Sons da Interface**: Atalhos de teclado configuráveis (como mutar áudio da live, pausar transmissão e alternar cena sem Alt+Tab) e controle individual de volume para sons do app.
 - 🛡️ **Segurança de Chaves e IPC Bridge**: A `SHIRO_API_KEY` reside exclusivamente no processo principal do Electron e nunca é exposta no renderer.
 
 ---
@@ -78,11 +82,14 @@ Livre de intermediários pesados ou servidores de streaming pagos, o app se cone
 
 | Módulo | Tipo | Responsabilidade |
 |--------|------|------------------|
-| `src/main/main.ts` | Main | Ciclo de vida da aplicação Electron, protocolo customizado e tray |
+| `src/main/main.ts` | Main | Ciclo de vida da aplicação Electron, atalhos globais, protocolo customizado e tray |
 | `src/main/audioEngine.ts` | Main | Captura de áudio nativa via `loopback-capture` (WASAPI no Windows, PipeWire no Linux) |
 | `src/main/ipcHandlers.ts` | Main | Ponte IPC segura (injetor da `X-API-Key` e túnel SSE) |
 | `src/main/windowScanner.ts` | Main | Enumeração de janelas e telas (Win32 no Windows, `/proc` + `xprop` no Linux) |
-| `src/renderer/src/app.ts` | Renderer | Gerenciador da interface, controle de salas, grid e estado |
+| `src/main/discordRpc.ts` | Main | Integração com Discord Rich Presence (Pre-set da Shiro e modo personalizado) |
+| `src/renderer/src/app.ts` | Renderer | Gerenciador da interface, controle de salas, grid, zoom/pan e configurações |
+| `src/renderer/src/chatManager.ts` | Renderer | Chat efêmero em tempo real, GIFs, menções (`@`, `@everyone`, `<@ID>`) e moderação local |
+| `src/renderer/src/soundManager.ts` | Renderer | Reprodução e controle de volume dos efeitos sonoros da interface e menções |
 | `src/renderer/src/p2pManager.ts` | Renderer | Conexões WebRTC P2P multi-peer e sinalização |
 | `src/renderer/src/authManager.ts` | Renderer | Comunicação de autenticação, JWT e API de salas |
 | `src/renderer/src/sourcePicker.ts` | Renderer | Picker de janelas e telas em tempo real |

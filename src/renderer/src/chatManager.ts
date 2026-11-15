@@ -68,6 +68,12 @@ export class ChatManager {
 	private isLocalTyping = false;
 	private safeImageCache = new Map<string, boolean>();
 	private replyingTo: ChatMessage | null = null;
+	private knownUsersById = new Map<string, ChatUser>();
+	private knownUsersByUsername = new Map<string, ChatUser>();
+	private roomMembers: ChatUser[] = [];
+	private mentionSuggestions: Array<{ kind: "everyone" } | { kind: "user"; user: ChatUser }> = [];
+	private mentionSelectedIndex = 0;
+	private mentionQueryRange: { start: number; end: number; prefix: string } | null = null;
 
 	// Gerenciamento de GIFs & Favoritos
 	private activeGifTab: "trending" | "favorites" = "trending";
@@ -81,6 +87,7 @@ export class ChatManager {
 	public onBroadcastP2PMessage?: (msg: ChatMessage) => void;
 	public onBroadcastP2PTyping?: (typing: { roomId: string; user: ChatUser; isTyping: boolean }) => void;
 	public onOpenUserProfile?: (user: ChatUser, anchorEl: HTMLElement) => void;
+	public onMentionReceived?: (msg: ChatMessage) => void;
 
 	constructor() {
 		this.loadFavoriteGifs();
@@ -138,12 +145,20 @@ export class ChatManager {
 				this.clearUserTyping(msg.sender);
 				this.messages.push(msg);
 				this.appendMessageElement(msg);
-				if (
-					!this.currentUser ||
-					(this.currentUser.id !== msg.sender?.id &&
-						this.currentUser.username !== msg.sender?.username)
-				) {
-					playUiSound("new_message");
+				const isFromMe =
+					this.currentUser &&
+					(this.currentUser.id === msg.sender?.id ||
+						this.currentUser.username === msg.sender?.username);
+				const isMention = this.isMessageMentioningMe(msg);
+				if (!isFromMe) {
+					if (isMention) {
+						playUiSound("mention");
+						if (!this.isTabActive) {
+							this.onMentionReceived?.(msg);
+						}
+					} else {
+						playUiSound("new_message");
+					}
 				}
 
 				if (!this.isTabActive) {
@@ -423,6 +438,8 @@ export class ChatManager {
 		}
 		this.clearAllTypingUsers();
 		this.replyingTo = null;
+		this.roomMembers = [];
+		this.closeMentionPopover();
 		this.renderReplyBar();
 		this.closeContextMenu();
 		this.currentRoomId = null;
@@ -473,6 +490,8 @@ export class ChatManager {
 		};
 
 		this.replyingTo = null;
+		this.roomMembers = [];
+		this.closeMentionPopover();
 		this.renderReplyBar();
 
 		// 1. Atualização Otimista Imediata na UI (0ms)
@@ -646,6 +665,7 @@ export class ChatManager {
 
 		input?.addEventListener("input", () => {
 			syncCharCounter();
+			this.updateMentionSuggestions(input);
 			const hasText = (input.value || "").trim().length > 0;
 			if (!hasText) {
 				if (this.localStopTypingTimer) {
@@ -662,14 +682,58 @@ export class ChatManager {
 			}, 3000);
 		});
 
+		input?.addEventListener("click", () => {
+			this.updateMentionSuggestions(input);
+		});
+
+		input?.addEventListener("keyup", (e) => {
+			if (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "Home" || e.key === "End") {
+				this.updateMentionSuggestions(input);
+			}
+		});
+
+		input?.addEventListener("keydown", (e) => {
+			if (!this.mentionQueryRange || this.mentionSuggestions.length === 0) return;
+			if (e.key === "ArrowDown") {
+				e.preventDefault();
+				this.mentionSelectedIndex = (this.mentionSelectedIndex + 1) % this.mentionSuggestions.length;
+				this.renderMentionPopover(input, syncCharCounter);
+			} else if (e.key === "ArrowUp") {
+				e.preventDefault();
+				this.mentionSelectedIndex =
+					(this.mentionSelectedIndex - 1 + this.mentionSuggestions.length) %
+					this.mentionSuggestions.length;
+				this.renderMentionPopover(input, syncCharCounter);
+			} else if (e.key === "Enter" || e.key === "Tab") {
+				e.preventDefault();
+				e.stopPropagation();
+				const item = this.mentionSuggestions[this.mentionSelectedIndex];
+				if (item) this.applyMentionSuggestion(input, item, syncCharCounter);
+			} else if (e.key === "Escape") {
+				e.preventDefault();
+				e.stopPropagation();
+				this.closeMentionPopover();
+			}
+		});
+
 		form?.addEventListener("submit", (e) => {
 			e.preventDefault();
 			if (!input) return;
 			const text = input.value.trim().slice(0, ChatManager.MAX_MESSAGE_LENGTH);
 			if (!text) return;
+			this.closeMentionPopover();
 			this.sendMessage(text);
 			input.value = "";
 			syncCharCounter();
+		});
+
+		document.addEventListener("mousedown", (e) => {
+			const mentionPopover = document.getElementById("chat-mention-popover");
+			if (!mentionPopover || mentionPopover.classList.contains("hidden")) return;
+			const target = e.target as Node;
+			if (!mentionPopover.contains(target) && target !== input) {
+				this.closeMentionPopover();
+			}
 		});
 
 		
@@ -1043,7 +1107,7 @@ export class ChatManager {
 				(this.currentUser.id === msg.sender.id || this.currentUser.username === msg.sender.username),
 		);
 		const entry = document.createElement("div");
-		entry.className = "chat-msg-entry";
+		entry.className = `chat-msg-entry ${this.isMessageMentioningMe(msg) ? "is-mention" : ""}`;
 		entry.dataset.messageId = msg.id;
 
 		if (msg.replyTo) {
@@ -1056,9 +1120,17 @@ export class ChatManager {
 
 		let textEl: HTMLDivElement | null = null;
 		if (msg.content) {
+			if (msg.sender) {
+				if (msg.sender.id) this.knownUsersById.set(msg.sender.id, msg.sender);
+				if (msg.sender.username) this.knownUsersByUsername.set(msg.sender.username.toLowerCase(), msg.sender);
+			}
+			if (this.currentUser) {
+				if (this.currentUser.id) this.knownUsersById.set(this.currentUser.id, this.currentUser);
+				if (this.currentUser.username) this.knownUsersByUsername.set(this.currentUser.username.toLowerCase(), this.currentUser);
+			}
 			textEl = document.createElement("div");
 			textEl.className = "chat-bubble-text";
-			textEl.textContent = msg.content;
+			this.renderFormattedContent(textEl, msg.content);
 			if (msg.editedAt) {
 				const editedSpan = document.createElement("span");
 				editedSpan.className = "chat-msg-edited";
@@ -1417,6 +1489,256 @@ export class ChatManager {
 				list.scrollTop = list.scrollHeight;
 			});
 		}
+	}
+
+	private isMessageMentioningMe(msg: ChatMessage): boolean {
+		if (!this.currentUser) return false;
+		const isMe =
+			this.currentUser.id === msg.sender?.id ||
+			this.currentUser.username === msg.sender?.username;
+		if (isMe) return false;
+
+		const myId = (this.currentUser.id || "").trim();
+		const myUsername = (this.currentUser.username || "").trim();
+		const myNickname = (this.currentUser.nickname || "").trim();
+
+		if (
+			msg.replyTo?.senderUsername &&
+			myUsername &&
+			msg.replyTo.senderUsername.toLowerCase() === myUsername.toLowerCase()
+		) {
+			return true;
+		}
+		if (
+			msg.replyTo?.senderName &&
+			((myUsername && msg.replyTo.senderName.toLowerCase() === myUsername.toLowerCase()) ||
+				(myNickname && msg.replyTo.senderName.toLowerCase() === myNickname.toLowerCase()))
+		) {
+			return true;
+		}
+		const content = msg.content || "";
+		if (!content) return false;
+
+		if (myId && content.includes(`<@${myId}>`)) {
+			return true;
+		}
+		if (/@everyone(?![a-zA-Z0-9_.-])/i.test(content)) {
+			return true;
+		}
+		const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+		if (myUsername && new RegExp(`@${esc(myUsername)}(?![a-zA-Z0-9_.-])`, "i").test(content)) {
+			return true;
+		}
+		if (myNickname && myNickname.length >= 2 && new RegExp(`@${esc(myNickname)}(?![a-zA-Z0-9_.-])`, "i").test(content)) {
+			return true;
+		}
+		return false;
+	}
+
+	private renderFormattedContent(container: HTMLElement, text: string): void {
+		const tokenRegex = /(<@([a-zA-Z0-9_-]{3,40})>|@([a-zA-Z0-9_.-]{2,32}))/g;
+		let lastIndex = 0;
+		let match: RegExpExecArray | null;
+
+		while ((match = tokenRegex.exec(text)) !== null) {
+			if (match.index > lastIndex) {
+				container.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
+			}
+			const full = match[0];
+			const idMention = match[2];
+			const userMention = match[3];
+
+			const btn = document.createElement("button");
+			btn.type = "button";
+			btn.className = "chat-mention-pill";
+
+			if (idMention) {
+				const known = this.knownUsersById.get(idMention);
+				const displayName = known?.nickname || known?.username || idMention;
+				const isSelf = this.currentUser?.id === idMention;
+				if (isSelf) btn.classList.add("is-me");
+				btn.textContent = `@${displayName}`;
+				btn.title = `Ver perfil de ${displayName}`;
+				btn.addEventListener("click", (e) => {
+					e.stopPropagation();
+					this.onOpenUserProfile?.(
+						known || { id: idMention, username: idMention },
+						btn,
+					);
+				});
+			} else if (userMention) {
+				if (userMention.toLowerCase() === "everyone") {
+					const span = document.createElement("span");
+					span.className = "chat-mention-pill is-everyone";
+					span.textContent = "@everyone";
+					span.title = "Menciona todos na sala";
+					container.appendChild(span);
+					lastIndex = tokenRegex.lastIndex;
+					continue;
+				}
+				const known = this.knownUsersByUsername.get(userMention.toLowerCase());
+				const isSelf =
+					this.currentUser?.username?.toLowerCase() === userMention.toLowerCase();
+				if (isSelf) btn.classList.add("is-me");
+				btn.textContent = full;
+				btn.title = `Ver perfil de @${userMention}`;
+				btn.addEventListener("click", (e) => {
+					e.stopPropagation();
+					this.onOpenUserProfile?.(
+						known || { id: "", username: userMention },
+						btn,
+					);
+				});
+			}
+
+			container.appendChild(btn);
+			lastIndex = tokenRegex.lastIndex;
+		}
+
+		if (lastIndex < text.length) {
+			container.appendChild(document.createTextNode(text.slice(lastIndex)));
+		}
+	}
+
+	public setRoomMembers(members: ChatUser[]): void {
+		const seen = new Set<string>();
+		const list: ChatUser[] = [];
+		for (const m of members) {
+			if (!m?.username) continue;
+			const key = m.username.toLowerCase();
+			if (seen.has(key)) continue;
+			seen.add(key);
+			list.push(m);
+			this.knownUsersByUsername.set(key, m);
+			if (m.id) this.knownUsersById.set(m.id, m);
+		}
+		this.roomMembers = list;
+		const input = document.getElementById("input-chat-message") as HTMLInputElement | null;
+		if (input && this.mentionQueryRange) {
+			this.updateMentionSuggestions(input);
+		}
+	}
+
+	private closeMentionPopover(): void {
+		this.mentionQueryRange = null;
+		this.mentionSuggestions = [];
+		this.mentionSelectedIndex = 0;
+		const popover = document.getElementById("chat-mention-popover");
+		if (popover) {
+			popover.classList.add("hidden");
+			popover.innerHTML = "";
+		}
+	}
+
+	private updateMentionSuggestions(input: HTMLInputElement): void {
+		const cursor = input.selectionStart ?? input.value.length;
+		const before = input.value.slice(0, cursor);
+		// Só dispara com @ no início ou após espaço (nunca após '<', evitando <@ID>)
+		const match = /(?:^|\s)@([a-zA-Z0-9_.-]*)$/.exec(before);
+		if (!match) {
+			this.closeMentionPopover();
+			return;
+		}
+		const query = (match[1] || "").toLowerCase();
+		const fullMatch = match[0];
+		const leadingSpace = fullMatch.startsWith("@") ? "" : fullMatch[0];
+		const start = before.length - fullMatch.length + leadingSpace.length;
+
+		const items: Array<{ kind: "everyone" } | { kind: "user"; user: ChatUser }> = [];
+		if ("everyone".includes(query)) {
+			items.push({ kind: "everyone" });
+		}
+		for (const u of this.roomMembers) {
+			const uname = (u.username || "").toLowerCase();
+			const nick = (u.nickname || "").toLowerCase();
+			if (!query || uname.includes(query) || nick.includes(query)) {
+				items.push({ kind: "user", user: u });
+			}
+		}
+
+		if (items.length === 0) {
+			this.closeMentionPopover();
+			return;
+		}
+
+		this.mentionQueryRange = { start, end: cursor, prefix: leadingSpace };
+		this.mentionSuggestions = items;
+		if (this.mentionSelectedIndex >= items.length) {
+			this.mentionSelectedIndex = 0;
+		}
+		this.renderMentionPopover(input, () => {
+			const charCounter = document.getElementById("chat-char-counter");
+			if (!charCounter) return;
+			const len = input.value.length;
+			charCounter.textContent = `${len}/${ChatManager.MAX_MESSAGE_LENGTH}`;
+			charCounter.classList.toggle("hidden", len === 0);
+			charCounter.classList.toggle("near-limit", len >= ChatManager.MAX_MESSAGE_LENGTH - 50 && len < ChatManager.MAX_MESSAGE_LENGTH);
+			charCounter.classList.toggle("at-limit", len >= ChatManager.MAX_MESSAGE_LENGTH);
+		});
+	}
+
+	private renderMentionPopover(input: HTMLInputElement, syncCharCounter: () => void): void {
+		const popover = document.getElementById("chat-mention-popover");
+		if (!popover) return;
+		popover.innerHTML = "";
+
+		this.mentionSuggestions.forEach((item, idx) => {
+			const btn = document.createElement("button");
+			btn.type = "button";
+			btn.className = `chat-mention-item ${idx === this.mentionSelectedIndex ? "is-active" : ""}`;
+			btn.setAttribute("role", "option");
+			btn.setAttribute("aria-selected", idx === this.mentionSelectedIndex ? "true" : "false");
+
+			if (item.kind === "everyone") {
+				btn.innerHTML = `
+					<div class="chat-mention-avatar is-everyone">@</div>
+					<div class="chat-mention-info">
+						<span class="chat-mention-name">@everyone</span>
+						<span class="chat-mention-sub">Mencionar todos na sala</span>
+					</div>`;
+			} else {
+				const displayName = item.user.nickname || item.user.username;
+				const initial = (displayName[0] || "?").toUpperCase();
+				const avatarHtml = item.user.avatar
+					? `<img class="chat-mention-avatar" src="${this.escapeHtml(item.user.avatar)}" alt="${this.escapeHtml(displayName)}" />`
+					: `<div class="chat-mention-avatar">${this.escapeHtml(initial)}</div>`;
+				btn.innerHTML = `
+					${avatarHtml}
+					<div class="chat-mention-info">
+						<span class="chat-mention-name">${this.escapeHtml(displayName)}</span>
+						<span class="chat-mention-sub">@${this.escapeHtml(item.user.username)}</span>
+					</div>`;
+			}
+
+			btn.addEventListener("mousedown", (e) => {
+				e.preventDefault();
+				this.applyMentionSuggestion(input, item, syncCharCounter);
+			});
+
+			popover.appendChild(btn);
+		});
+
+		popover.classList.remove("hidden");
+	}
+
+	private applyMentionSuggestion(
+		input: HTMLInputElement,
+		item: { kind: "everyone" } | { kind: "user"; user: ChatUser },
+		syncCharCounter: () => void,
+	): void {
+		if (!this.mentionQueryRange) return;
+		const { start, end } = this.mentionQueryRange;
+		const mentionText = item.kind === "everyone" ? "@everyone " : `@${item.user.username} `;
+		const nextValue = (input.value.slice(0, start) + mentionText + input.value.slice(end)).slice(
+			0,
+			ChatManager.MAX_MESSAGE_LENGTH,
+		);
+		const nextCursor = Math.min(start + mentionText.length, nextValue.length);
+		input.value = nextValue;
+		input.focus();
+		input.setSelectionRange(nextCursor, nextCursor);
+		syncCharCounter();
+		this.closeMentionPopover();
 	}
 
 	private escapeHtml(str: string): string {

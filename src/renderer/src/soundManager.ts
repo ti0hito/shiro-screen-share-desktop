@@ -1,15 +1,17 @@
-export type UiSoundType = "click" | "notification" | "new_message";
+export type UiSoundType = "click" | "notification" | "new_message" | "mention";
 
 const SOUND_FILES: Record<UiSoundType, string> = {
 	click: "./sounds/click.mp3",
 	notification: "./sounds/notification.mp3",
 	new_message: "./sounds/new_message.mp3",
+	mention: "./sounds/mention.mp3",
 };
 
 const DEFAULT_VOLUMES: Record<UiSoundType, number> = {
 	click: 45,
 	notification: 70,
 	new_message: 65,
+	mention: 80,
 };
 
 const STORAGE_PREFIX = "shiro-sound-volume-";
@@ -50,6 +52,7 @@ export function getAllSoundVolumes(): Record<UiSoundType, number> {
 		click: getSoundVolume("click"),
 		notification: getSoundVolume("notification"),
 		new_message: getSoundVolume("new_message"),
+		mention: getSoundVolume("mention"),
 	};
 }
 

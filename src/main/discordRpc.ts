@@ -20,6 +20,16 @@ export interface DiscordPresenceState {
 	isPrivate?: boolean;
 }
 
+export interface DiscordRpcCustomConfig {
+	mode: "preset" | "custom";
+	details?: string;
+	state?: string;
+	largeText?: string;
+	showTimer?: boolean;
+	button1Label?: string;
+	button1Url?: string;
+}
+
 /**
  * Pure Node.js Discord Rich Presence IPC client (zero native dependencies).
  * Connects to the local Discord Desktop IPC pipe/socket when available and
@@ -36,6 +46,7 @@ export class DiscordRpcService {
 	private reconnectTimer: NodeJS.Timeout | null = null;
 	private readonly startTimestamp = Math.floor(Date.now() / 1000);
 	private currentState: DiscordPresenceState = { mode: "lobby" };
+	private customConfig: DiscordRpcCustomConfig = { mode: "preset" };
 
 	constructor(clientId?: string) {
 		this.clientId =
@@ -70,6 +81,26 @@ export class DiscordRpcService {
 		} else {
 			this.ensureConnected();
 		}
+	}
+
+	public getCustomConfig(): DiscordRpcCustomConfig {
+		return { ...this.customConfig };
+	}
+
+	public setCustomConfig(config: DiscordRpcCustomConfig): DiscordRpcCustomConfig {
+		this.customConfig = {
+			mode: config?.mode === "custom" ? "custom" : "preset",
+			details: config?.details ? String(config.details).slice(0, 128) : "",
+			state: config?.state ? String(config.state).slice(0, 128) : "",
+			largeText: config?.largeText ? String(config.largeText).slice(0, 128) : "",
+			showTimer: config?.showTimer !== false,
+			button1Label: config?.button1Label ? String(config.button1Label).slice(0, 32) : "",
+			button1Url: config?.button1Url ? String(config.button1Url).slice(0, 512) : "",
+		};
+		if (this.enabled && !this.destroyed && this.ready && this.socket && !this.socket.destroyed) {
+			this.sendActivity();
+		}
+		return this.getCustomConfig();
 	}
 
 	public start(): void {
@@ -289,6 +320,39 @@ export class DiscordRpcService {
 	}
 
 	private buildActivityPayload(): Record<string, unknown> {
+		if (this.customConfig.mode === "custom") {
+			const details = this.customConfig.details?.trim() || "Shiro Screen Share";
+			const state = this.customConfig.state?.trim() || undefined;
+			const largeText =
+				this.customConfig.largeText?.trim() || "Shiro Screen Share • share.shirobot.xyz";
+			const buttons: Array<{ label: string; url: string }> = [];
+
+			const btn1Label = this.customConfig.button1Label?.trim();
+			const btn1Url = this.customConfig.button1Url?.trim();
+			if (btn1Label && btn1Url && /^https?:\/\//i.test(btn1Url)) {
+				buttons.push({ label: btn1Label.slice(0, 32), url: btn1Url });
+			}
+			// Segundo botão é sempre fixo da Shiro e não pode ser editado
+			buttons.push({
+				label: "Conheça o Screen Share",
+				url: "https://share.shirobot.xyz",
+			});
+
+			return {
+				details,
+				...(state ? { state } : {}),
+				...(this.customConfig.showTimer !== false
+					? { timestamps: { start: this.startTimestamp } }
+					: {}),
+				assets: {
+					large_image: "shiro_logo",
+					large_text: largeText,
+				},
+				buttons,
+				instance: false,
+			};
+		}
+
 		const { mode, roomName, memberCount, isPrivate } = this.currentState;
 		const cleanRoomName = roomName?.trim();
 

@@ -59,7 +59,7 @@
                 id="login-username"
                 name="username"
                 class="auth-input"
-                placeholder="ex: xzechs"
+                placeholder="ex: hito"
                 autocomplete="username"
                 maxlength="32"
                 required
@@ -733,6 +733,7 @@
 
             <!-- Barra de Envio -->
             <form id="form-chat" class="chat-input-bar">
+              <div id="chat-mention-popover" class="chat-mention-popover hidden" role="listbox" aria-label="Sugestões de menção"></div>
               <button type="button" id="btn-toggle-gif-picker" class="btn-chat-addon" title="Buscar e enviar GIF">
                 <span class="gif-tag">GIF</span>
               </button>
@@ -1118,6 +1119,10 @@
             </svg>
             <span>Discord</span>
           </button>
+          <button type="button" class="settings-nav-btn" data-settings-tab="shortcuts">
+            <i data-lucide="keyboard"></i>
+            <span>Atalhos</span>
+          </button>
         </nav>
 
         <div class="settings-content">
@@ -1215,6 +1220,25 @@
                 </div>
                 <input id="range-sound-new_message" type="range" min="0" max="100" value="65" class="sound-range-slider">
               </div>
+
+              <div class="sound-setting-card">
+                <div class="sound-setting-top">
+                  <div class="sound-setting-info">
+                    <i data-lucide="at-sign"></i>
+                    <div>
+                      <span class="sound-setting-name">Menções no Chat</span>
+                      <span class="sound-setting-hint">Quando alguém responde você ou usa @você / &lt;@ID&gt;</span>
+                    </div>
+                  </div>
+                  <div class="sound-setting-actions">
+                    <span id="sound-vol-label-mention" class="sound-vol-badge">80%</span>
+                    <button type="button" class="btn btn-secondary btn-xs btn-test-sound" data-sound-test="mention" title="Testar som de menção">
+                      <i data-lucide="play"></i>
+                    </button>
+                  </div>
+                </div>
+                <input id="range-sound-mention" type="range" min="0" max="100" value="80" class="sound-range-slider">
+              </div>
             </div>
           </section>
 
@@ -1236,6 +1260,16 @@
               <p class="settings-inline-hint">
                 Mostra no seu perfil do Discord quando você está no lobby, em uma sala ou transmitindo, com botões para a Shiro e o Screen Share.
               </p>
+              <div class="rpc-mode-summary">
+                <div class="rpc-mode-summary-info">
+                  <span class="rpc-mode-label">Modo atual:</span>
+                  <span id="rpc-current-mode-badge" class="rpc-mode-badge">Pre-set da Shiro</span>
+                </div>
+                <button type="button" id="btn-open-custom-rpc" class="btn btn-secondary btn-sm">
+                  <i data-lucide="sliders-horizontal"></i>
+                  <span>Configurar Rich Presence</span>
+                </button>
+              </div>
             </div>
 
             <div class="setting-section-header">
@@ -1250,7 +1284,186 @@
               <!-- Renderizado dinamicamente em app.ts -->
             </div>
           </section>
+
+          <!-- ABA: ATALHOS GLOBAIS -->
+          <section class="settings-tab-panel hidden" data-settings-panel="shortcuts">
+            <h4 class="settings-panel-title">Atalhos Globais</h4>
+            <p class="settings-panel-desc">Configure teclas rápidas que funcionam mesmo com o aplicativo minimizado ou em segundo plano.</p>
+
+            <div class="settings-card-group shortcuts-group">
+              <div class="shortcut-row">
+                <div class="shortcut-info">
+                  <span class="shortcut-title">Mutar / Desmutar Áudio das Lives</span>
+                  <span class="shortcut-desc">Silencia ou restaura o áudio de todas as transmissões abertas</span>
+                </div>
+                <div class="shortcut-controls">
+                  <button type="button" class="shortcut-recorder-btn" data-shortcut-action="toggleMute">Ctrl+Shift+M</button>
+                  <button type="button" class="btn btn-ghost btn-xs shortcut-clear-btn" data-shortcut-clear="toggleMute" title="Desativar atalho">
+                    <i data-lucide="x"></i>
+                  </button>
+                </div>
+              </div>
+
+              <div class="shortcut-row">
+                <div class="shortcut-info">
+                  <span class="shortcut-title">Iniciar / Parar Transmissão</span>
+                  <span class="shortcut-desc">Inicia ou encerra sua transmissão de tela rapidamente</span>
+                </div>
+                <div class="shortcut-controls">
+                  <button type="button" class="shortcut-recorder-btn" data-shortcut-action="toggleStream">Ctrl+Shift+S</button>
+                  <button type="button" class="btn btn-ghost btn-xs shortcut-clear-btn" data-shortcut-clear="toggleStream" title="Desativar atalho">
+                    <i data-lucide="x"></i>
+                  </button>
+                </div>
+              </div>
+
+              <div class="shortcut-row">
+                <div class="shortcut-info">
+                  <span class="shortcut-title">Alternar Fonte / Cena</span>
+                  <span class="shortcut-desc">Troca para a próxima janela ou monitor enquanto transmite</span>
+                </div>
+                <div class="shortcut-controls">
+                  <button type="button" class="shortcut-recorder-btn" data-shortcut-action="cycleSource">Ctrl+Shift+C</button>
+                  <button type="button" class="btn btn-ghost btn-xs shortcut-clear-btn" data-shortcut-clear="cycleSource" title="Desativar atalho">
+                    <i data-lucide="x"></i>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div class="shortcuts-footer">
+              <span id="shortcuts-status-msg" class="settings-inline-hint">Clique em um atalho e pressione a nova combinação de teclas.</span>
+              <button type="button" id="btn-reset-shortcuts" class="btn btn-secondary btn-xs">Restaurar Padrões</button>
+            </div>
+          </section>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================================================= -->
+  <!-- MODAL: PERSONALIZAR DISCORD RICH PRESENCE               -->
+  <!-- ======================================================= -->
+  <div id="modal-custom-rpc" class="modal-overlay hidden">
+    <div class="modal-card custom-rpc-modal-card">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <i data-lucide="gamepad-2" class="modal-title-icon"></i>
+          <h3>Rich Presence do Discord</h3>
+        </div>
+        <button type="button" id="btn-close-custom-rpc" class="modal-close-btn" title="Fechar">
+          <i data-lucide="x"></i>
+        </button>
+      </div>
+      <div class="modal-body custom-rpc-body">
+        <div class="rpc-mode-selector">
+          <button type="button" id="btn-rpc-mode-preset" class="rpc-mode-option active">
+            <i data-lucide="sparkles"></i>
+            <div>
+              <strong>Pre-set da Shiro</strong>
+              <span>Automático conforme sua sala e transmissão</span>
+            </div>
+          </button>
+          <button type="button" id="btn-rpc-mode-custom" class="rpc-mode-option">
+            <i data-lucide="pencil"></i>
+            <div>
+              <strong>Personalizado</strong>
+              <span>Edite textos e o 1º botão do seu status</span>
+            </div>
+          </button>
+        </div>
+
+        <div id="rpc-preset-notice" class="rpc-preset-notice">
+          <i data-lucide="info"></i>
+          <span>No modo <strong>Pre-set da Shiro</strong>, seu status muda automaticamente quando você entra em uma sala, assiste ou transmite tela.</span>
+        </div>
+
+        <div id="rpc-custom-fields" class="rpc-custom-fields hidden">
+          <div class="rpc-field-grid">
+            <div class="form-group">
+              <label for="rpc-input-details">Linha 1 (Detalhes)</label>
+              <input type="text" id="rpc-input-details" maxlength="128" placeholder="Ex: Jogando Valorant com a galera">
+            </div>
+            <div class="form-group">
+              <label for="rpc-input-state">Linha 2 (Estado)</label>
+              <input type="text" id="rpc-input-state" maxlength="128" placeholder="Ex: Em call na sala privada">
+            </div>
+          </div>
+
+          <div class="rpc-field-grid">
+            <div class="form-group">
+              <label for="rpc-input-large-text">Texto ao passar o mouse no ícone</label>
+              <input type="text" id="rpc-input-large-text" maxlength="128" placeholder="Shiro Screen Share • share.shirobot.xyz">
+            </div>
+            <div class="form-group rpc-timer-check">
+              <label class="checkbox-label" for="rpc-chk-timer">
+                <input type="checkbox" id="rpc-chk-timer" class="custom-checkbox" checked>
+                <span class="checkbox-custom"></span>
+                <span class="checkbox-text"><span>Mostrar tempo decorrido</span></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="rpc-buttons-section">
+            <div class="rpc-btn-card">
+              <div class="rpc-btn-card-header">
+                <span class="rpc-btn-badge editable">Botão 1 • Editável</span>
+                <span class="rpc-btn-hint">Aparece como o primeiro botão no seu perfil do Discord</span>
+              </div>
+              <div class="rpc-field-grid">
+                <div class="form-group">
+                  <label for="rpc-input-btn1-label">Texto do Botão</label>
+                  <input type="text" id="rpc-input-btn1-label" maxlength="32" placeholder="Ex: Meu canal na Twitch">
+                </div>
+                <div class="form-group">
+                  <label for="rpc-input-btn1-url">Link (URL https://)</label>
+                  <input type="url" id="rpc-input-btn1-url" maxlength="512" placeholder="https://twitch.tv/seucanal">
+                </div>
+              </div>
+            </div>
+
+            <div class="rpc-btn-card is-locked">
+              <div class="rpc-btn-card-header">
+                <span class="rpc-btn-badge locked"><i data-lucide="lock"></i> Botão 2 • Fixo (Não editável)</span>
+                <span class="rpc-btn-hint">O segundo botão é fixo da Shiro e não pode ser alterado</span>
+              </div>
+              <div class="rpc-field-grid">
+                <div class="form-group">
+                  <label>Texto do Botão</label>
+                  <input type="text" value="Conheça o Screen Share" disabled>
+                </div>
+                <div class="form-group">
+                  <label>Link Fixo</label>
+                  <input type="text" value="https://share.shirobot.xyz" disabled>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Prévia visual estilo Discord -->
+        <div class="rpc-preview-box">
+          <div class="rpc-preview-title">PRÉVIA NO DISCORD</div>
+          <div class="rpc-preview-card">
+            <div class="rpc-preview-top">
+              <img src="icon.ico" alt="Shiro" class="rpc-preview-img" />
+              <div class="rpc-preview-texts">
+                <strong class="rpc-preview-app">Shiro</strong>
+                <span id="rpc-preview-details" class="rpc-preview-line">Shiro Screen Share</span>
+                <span id="rpc-preview-state" class="rpc-preview-line muted">No lobby • Preparando transmissão</span>
+                <span id="rpc-preview-timer" class="rpc-preview-timer">🎮 00:01</span>
+              </div>
+            </div>
+            <div class="rpc-preview-buttons">
+              <div id="rpc-preview-btn1" class="rpc-preview-btn">Conheça a Shiro</div>
+              <div class="rpc-preview-btn">Visite o Screen Share</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="btn-cancel-custom-rpc" class="btn btn-ghost">Cancelar</button>
+        <button type="button" id="btn-save-custom-rpc" class="btn btn-primary">Salvar Rich Presence</button>
       </div>
     </div>
   </div>
@@ -1480,7 +1693,7 @@
           <label for="input-add-friend-target" class="input-label">Usuário ou ID</label>
           <div class="input-wrapper">
             <i data-lucide="user" class="input-icon"></i>
-            <input type="text" id="input-add-friend-target" class="auth-input" placeholder="ex: xzechs ou ID de usuário" required autofocus>
+            <input type="text" id="input-add-friend-target" class="auth-input" placeholder="ex: eacamih ou ID de usuário" required autofocus>
           </div>
         </div>
 

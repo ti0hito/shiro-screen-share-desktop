@@ -1,9 +1,11 @@
+import fs from "node:fs";
 import path from "node:path";
 import dotenv from "dotenv";
-import { app, BrowserWindow, ipcMain, Menu, nativeImage, protocol, session, Tray } from "electron";
+import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, protocol, session, Tray } from "electron";
+import type { GlobalShortcutAction, GlobalShortcutsConfig } from "../types/ipc";
 import { autoUpdater } from "electron-updater";
 import { AudioCaptureEngine } from "./audioEngine";
-import { DiscordRpcService, type DiscordPresenceState } from "./discordRpc";
+import { DiscordRpcService, type DiscordPresenceState, type DiscordRpcCustomConfig } from "./discordRpc";
 import { setupIpcHandlers } from "./ipcHandlers";
 import { parseDeepLinkUrl, registerDeepLinkProtocol } from "./protocol";
 import {
@@ -312,6 +314,119 @@ export function updateDiscordPresence(state: DiscordPresenceState): void {
 	discordRpc.updateActivity(state);
 }
 
+const DEFAULT_SHORTCUTS: GlobalShortcutsConfig = {
+	toggleMute: "CommandOrControl+Shift+M",
+	toggleStream: "CommandOrControl+Shift+S",
+	cycleSource: "CommandOrControl+Shift+C",
+};
+let globalShortcutsConfig: GlobalShortcutsConfig = { ...DEFAULT_SHORTCUTS };
+
+function getPrefsFilePath(): string {
+	return path.join(app.getPath("userData"), "shiro-prefs.json");
+}
+
+function loadUserPrefs(): void {
+	try {
+		const filePath = getPrefsFilePath();
+		if (!fs.existsSync(filePath)) return;
+		const parsed = JSON.parse(fs.readFileSync(filePath, "utf8")) as {
+			discordRpcCustom?: DiscordRpcCustomConfig;
+			globalShortcuts?: Partial<GlobalShortcutsConfig>;
+		};
+		if (parsed?.discordRpcCustom) {
+			discordRpc.setCustomConfig(parsed.discordRpcCustom);
+		}
+		if (parsed?.globalShortcuts) {
+			globalShortcutsConfig = {
+				toggleMute:
+					typeof parsed.globalShortcuts.toggleMute === "string"
+						? parsed.globalShortcuts.toggleMute
+						: DEFAULT_SHORTCUTS.toggleMute,
+				toggleStream:
+					typeof parsed.globalShortcuts.toggleStream === "string"
+						? parsed.globalShortcuts.toggleStream
+						: DEFAULT_SHORTCUTS.toggleStream,
+				cycleSource:
+					typeof parsed.globalShortcuts.cycleSource === "string"
+						? parsed.globalShortcuts.cycleSource
+						: DEFAULT_SHORTCUTS.cycleSource,
+			};
+		}
+	} catch (err) {
+		console.warn("[Prefs] Could not load user prefs:", err);
+	}
+}
+
+function saveUserPrefs(): void {
+	try {
+		const data = {
+			discordRpcCustom: discordRpc.getCustomConfig(),
+			globalShortcuts: globalShortcutsConfig,
+		};
+		fs.writeFileSync(getPrefsFilePath(), JSON.stringify(data, null, 2), "utf8");
+	} catch (err) {
+		console.warn("[Prefs] Could not save user prefs:", err);
+	}
+}
+
+export function getDiscordRpcCustomConfig(): DiscordRpcCustomConfig {
+	return discordRpc.getCustomConfig();
+}
+
+export function setDiscordRpcCustomConfig(config: DiscordRpcCustomConfig): DiscordRpcCustomConfig {
+	const updated = discordRpc.setCustomConfig(config);
+	saveUserPrefs();
+	return updated;
+}
+
+export function registerGlobalShortcuts(): string[] {
+	const failed: string[] = [];
+	try {
+		globalShortcut.unregisterAll();
+		const entries: Array<[GlobalShortcutAction, string]> = [
+			["toggleMute", globalShortcutsConfig.toggleMute],
+			["toggleStream", globalShortcutsConfig.toggleStream],
+			["cycleSource", globalShortcutsConfig.cycleSource],
+		];
+		for (const [action, accelerator] of entries) {
+			const acc = (accelerator || "").trim();
+			if (!acc) continue;
+			try {
+				const ok = globalShortcut.register(acc, () => {
+					if (mainWindow && !mainWindow.isDestroyed()) {
+						mainWindow.webContents.send("global-shortcut-triggered", action);
+					}
+				});
+				if (!ok) failed.push(action);
+			} catch {
+				failed.push(action);
+			}
+		}
+	} catch (err) {
+		console.warn("[Shortcuts] Failed to register global shortcuts:", err);
+	}
+	return failed;
+}
+
+export function getGlobalShortcuts(): GlobalShortcutsConfig {
+	return { ...globalShortcutsConfig };
+}
+
+export function setGlobalShortcuts(config: GlobalShortcutsConfig): {
+	ok: boolean;
+	config: GlobalShortcutsConfig;
+	failed: string[];
+} {
+	globalShortcutsConfig = {
+		toggleMute: typeof config?.toggleMute === "string" ? config.toggleMute.trim() : "",
+		toggleStream: typeof config?.toggleStream === "string" ? config.toggleStream.trim() : "",
+		cycleSource: typeof config?.cycleSource === "string" ? config.cycleSource.trim() : "",
+	};
+	const failed = registerGlobalShortcuts();
+	saveUserPrefs();
+	return { ok: failed.length === 0, config: { ...globalShortcutsConfig }, failed };
+}
+
 export function isAutoUpdateEnabled(): boolean {
 	return autoUpdateEnabled;
 }
@@ -423,10 +538,12 @@ app.whenReady().then(() => {
 		if (permission === "media") return true;
 		return true;
 	});
+	loadUserPrefs();
 	createWindow();
 	handleArgvDeepLink(process.argv);
 	setupAutoUpdater();
 	discordRpc.start();
+	registerGlobalShortcuts();
 });
 
 app.on("window-all-closed", () => {
@@ -458,6 +575,7 @@ app.on("before-quit", (event) => {
 });
 
 app.on("will-quit", () => {
+	globalShortcut.unregisterAll();
 	audioEngine.stopCapture();
 	stopWebSocketServer();
 	discordRpc.destroy();

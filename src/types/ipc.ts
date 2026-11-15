@@ -18,6 +18,19 @@ export interface DiscordPresenceState {
 	isPrivate?: boolean;
 }
 
+export interface DiscordRpcCustomConfig {
+	mode: "preset" | "custom";
+	details?: string;
+	state?: string;
+	largeText?: string;
+	showTimer?: boolean;
+	button1Label?: string;
+	button1Url?: string;
+}
+
+export type GlobalShortcutAction = "toggleMute" | "toggleStream" | "cycleSource";
+export type GlobalShortcutsConfig = Record<GlobalShortcutAction, string>;
+
 export interface AppSettings {
 	openAtLogin: boolean;
 	autoUpdate: boolean;
@@ -74,6 +87,11 @@ export interface ElectronAPI {
 	setAutoUpdate: (enabled: boolean) => Promise<boolean>;
 	setDiscordRpcEnabled?: (enabled: boolean) => Promise<boolean>;
 	updateDiscordPresence?: (state: DiscordPresenceState) => void;
+	getDiscordRpcCustomConfig?: () => Promise<DiscordRpcCustomConfig>;
+	setDiscordRpcCustomConfig?: (config: DiscordRpcCustomConfig) => Promise<DiscordRpcCustomConfig>;
+	getGlobalShortcuts?: () => Promise<GlobalShortcutsConfig>;
+	setGlobalShortcuts?: (config: GlobalShortcutsConfig) => Promise<{ ok: boolean; config: GlobalShortcutsConfig; failed?: string[] }>;
+	onGlobalShortcutTriggered?: (callback: (action: GlobalShortcutAction) => void) => () => void;
 	installUpdate: () => Promise<void>;
 	checkForUpdates: () => Promise<unknown>;
 	downloadUpdate?: () => Promise<unknown>;

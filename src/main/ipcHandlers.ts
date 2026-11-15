@@ -2,7 +2,7 @@ import http from "node:http";
 import https from "node:https";
 import { app, BrowserWindow, ipcMain, nativeImage, shell } from "electron";
 import type { AudioCaptureConfig } from "../types/capture";
-import type { ApiRequestOptions, ApiRequestResult, DiscordPresenceState } from "../types/ipc";
+import type { ApiRequestOptions, ApiRequestResult, DiscordPresenceState, DiscordRpcCustomConfig, GlobalShortcutsConfig } from "../types/ipc";
 import type { AudioCaptureEngine } from "./audioEngine";
 import {
 	isAutoUpdateEnabled,
@@ -13,6 +13,10 @@ import {
 	isDiscordRpcEnabled,
 	setDiscordRpcEnabled,
 	updateDiscordPresence,
+	getDiscordRpcCustomConfig,
+	setDiscordRpcCustomConfig,
+	getGlobalShortcuts,
+	setGlobalShortcuts,
 } from "./main";
 import { scanSources } from "./windowScanner";
 import {
@@ -470,6 +474,22 @@ export function setupIpcHandlers(
 		if (state && typeof state.mode === "string") {
 			updateDiscordPresence(state);
 		}
+	});
+
+	ipcMain.handle("get-discord-rpc-custom-config", () => {
+		return getDiscordRpcCustomConfig();
+	});
+
+	ipcMain.handle("set-discord-rpc-custom-config", (_event, config: DiscordRpcCustomConfig) => {
+		return setDiscordRpcCustomConfig(config);
+	});
+
+	ipcMain.handle("get-global-shortcuts", () => {
+		return getGlobalShortcuts();
+	});
+
+	ipcMain.handle("set-global-shortcuts", (_event, config: GlobalShortcutsConfig) => {
+		return setGlobalShortcuts(config);
 	});
 
 	ipcMain.handle("install-update", () => {

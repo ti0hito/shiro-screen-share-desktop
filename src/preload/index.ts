@@ -6,6 +6,9 @@ import type {
 	ApiRequestResult,
 	AppSettings,
 	DiscordPresenceState,
+	DiscordRpcCustomConfig,
+	GlobalShortcutAction,
+	GlobalShortcutsConfig,
 	ElectronAPI,
 } from "../types/ipc";
 
@@ -66,6 +69,23 @@ const api: ElectronAPI = {
 
 	updateDiscordPresence: (state: DiscordPresenceState): void => {
 		ipcRenderer.send("update-discord-presence", state);
+	},
+	getDiscordRpcCustomConfig: (): Promise<DiscordRpcCustomConfig> => {
+		return ipcRenderer.invoke("get-discord-rpc-custom-config");
+	},
+	setDiscordRpcCustomConfig: (config: DiscordRpcCustomConfig): Promise<DiscordRpcCustomConfig> => {
+		return ipcRenderer.invoke("set-discord-rpc-custom-config", config);
+	},
+	getGlobalShortcuts: (): Promise<GlobalShortcutsConfig> => {
+		return ipcRenderer.invoke("get-global-shortcuts");
+	},
+	setGlobalShortcuts: (config: GlobalShortcutsConfig): Promise<{ ok: boolean; config: GlobalShortcutsConfig; failed?: string[] }> => {
+		return ipcRenderer.invoke("set-global-shortcuts", config);
+	},
+	onGlobalShortcutTriggered: (callback: (action: GlobalShortcutAction) => void) => {
+		const listener = (_event: Electron.IpcRendererEvent, action: GlobalShortcutAction) => callback(action);
+		ipcRenderer.on("global-shortcut-triggered", listener);
+		return () => ipcRenderer.removeListener("global-shortcut-triggered", listener);
 	},
 
 	installUpdate: (): Promise<void> => {

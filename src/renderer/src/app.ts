@@ -1,6 +1,7 @@
 import {
 	AlertTriangle,
 	AppWindow,
+	AtSign,
 	BadgeCheck,
 	Bell,
 	BellOff,
@@ -21,6 +22,7 @@ import {
 	Download,
 	ExternalLink,
 	FlaskConical,
+	Gamepad2,
 	Eye,
 	EyeOff,
 	CheckCheck,
@@ -32,6 +34,7 @@ import {
 	Hash,
 	Image,
 	Info,
+	Keyboard,
 	KeyRound,
 	Layers,
 	Link,
@@ -60,6 +63,7 @@ import {
 	Settings,
 	ShieldAlert,
 	ShieldCheck,
+	SlidersHorizontal,
 	Sparkles,
 	Square,
 	Star,
@@ -906,6 +910,16 @@ class ShiroApp {
 			this.chatManager.onOpenUserProfile = (chatUser, anchorEl) => {
 				void this.openChatUserProfile(chatUser, anchorEl);
 			};
+			this.chatManager.onMentionReceived = (msg) => {
+				const senderName = msg.sender?.nickname || msg.sender?.username || "Alguém";
+				this.showSystemNoticeToast({
+					id: `mention_${msg.id}`,
+					type: "info",
+					title: "Você foi mencionado no chat",
+					message: `${senderName}: ${(msg.content || "[GIF]").slice(0, 80)}`,
+					date: new Date().toISOString(),
+				});
+			};
 			this.p2pManager.startSignaling();
 		}
 
@@ -1052,6 +1066,8 @@ class ShiroApp {
 			["miniProfilePopover", () => this.setupMiniProfilePopover()],
 			["panelTabs", () => this.setupPanelTabs()],
 			["sidebarResizers", () => this.setupSidebarResizers()],
+			["globalShortcuts", () => this.setupGlobalShortcuts()],
+			["customRpcModal", () => this.setupCustomRpcModal()],
 			["friendsSystem", () => this.setupFriendsSystem()],
 			["roomSettingsModal", () => this.setupRoomSettingsModal()],
 			["joinByInviteModal", () => this.setupJoinByInviteModal()],
@@ -1640,8 +1656,8 @@ class ShiroApp {
 		const resizerLeft = document.getElementById("resizer-left");
 		const resizerRight = document.getElementById("resizer-right");
 
-		const MIN_LEFT = 310;
-		const MIN_RIGHT = 270;
+		const MIN_LEFT = 340;
+		const MIN_RIGHT = 320;
 
 		// Carrega larguras salvas do localStorage
 		const savedLeft = parseInt(localStorage.getItem("shiro_left_sidebar_width") || "", 10);
@@ -2473,6 +2489,14 @@ class ShiroApp {
 				nickname: me.nickname,
 				avatar: me.avatar,
 			});
+			this.chatManager.setRoomMembers(
+				this.getVisibleUsers().map((u) => ({
+					id: u.id,
+					username: u.username,
+					nickname: u.nickname,
+					avatar: u.avatar,
+				})),
+			);
 		}
 
 		// Renderiza o grid imediatamente para dar feedback visual de conexão instantâneo (0ms)
@@ -2677,6 +2701,7 @@ class ShiroApp {
 				});
 				this.bindFullscreenButton(localCard, "local-preview");
 				this.bindPopoutButton(localCard, "local-preview", user?.username ?? "Você", this.previewStream);
+				this.attachVideoZoomPan(localCard, videoEl);
 
 				gridEl.appendChild(localCard);
 			} else {
@@ -2783,6 +2808,7 @@ class ShiroApp {
 				};
 				videoEl.addEventListener("loadedmetadata", syncQualityBadge);
 				videoEl.addEventListener("resize", syncQualityBadge);
+				this.attachVideoZoomPan(remoteCard, videoEl);
 
 				videoEl.srcObject = remoteData.stream;
 				videoEl.volume = savedVol / 100;
@@ -3781,6 +3807,14 @@ class ShiroApp {
 		if (titleEl) titleEl.textContent = "Membros na sala";
 
 		const users = this.getVisibleUsers();
+		this.chatManager.setRoomMembers(
+			users.map((u) => ({
+				id: u.id,
+				username: u.username,
+				nickname: u.nickname,
+				avatar: u.avatar,
+			})),
+		);
 		// Visitantes (navegador) aparecem só na lista da sala, nunca na lista global
 		const guests = this.currentRoom?.guests ?? [];
 		const currentUser = getUser();
@@ -4786,7 +4820,7 @@ class ShiroApp {
 		});
 
 		// Sliders e botões de teste dos sons da UI
-		const soundTypes: UiSoundType[] = ["click", "notification", "new_message"];
+		const soundTypes: UiSoundType[] = ["click", "notification", "new_message", "mention"];
 		for (const type of soundTypes) {
 			const slider = document.getElementById(`range-sound-${type}`) as HTMLInputElement | null;
 			const label = document.getElementById(`sound-vol-label-${type}`);
@@ -7418,7 +7452,8 @@ class ShiroApp {
 					!target.closest(".user-card") &&
 					!target.closest(".friend-card") &&
 					!target.closest(".chat-msg-avatar") &&
-					!target.closest(".chat-msg-sender")
+					!target.closest(".chat-msg-sender") &&
+					!target.closest(".chat-mention-pill")
 				) {
 					this.hideUserMiniProfile();
 				}
@@ -8067,6 +8102,374 @@ class ShiroApp {
 		});
 	}
 
+	private attachVideoZoomPan(card: HTMLElement, video: HTMLVideoElement): void {
+		if (card.dataset.zoomBound === "1") return;
+		card.dataset.zoomBound = "1";
+
+		let scale = 1;
+		let tx = 0;
+		let ty = 0;
+		let isPanning = false;
+		let startX = 0;
+		let startY = 0;
+		let didPan = false;
+
+		const zoomPill = document.createElement("button");
+		zoomPill.type = "button";
+		zoomPill.className = "stream-zoom-pill hidden";
+		zoomPill.title = "Clique para resetar o zoom (1x)";
+		card.appendChild(zoomPill);
+
+		const applyTransform = () => {
+			if (scale <= 1.01) {
+				scale = 1;
+				tx = 0;
+				ty = 0;
+				video.style.transform = "";
+				video.style.transformOrigin = "";
+				card.classList.remove("is-zoomed");
+				zoomPill.classList.add("hidden");
+				return;
+			}
+			const rect = card.getBoundingClientRect();
+			const maxX = (rect.width * (scale - 1)) / 2;
+			const maxY = (rect.height * (scale - 1)) / 2;
+			tx = Math.max(-maxX, Math.min(maxX, tx));
+			ty = Math.max(-maxY, Math.min(maxY, ty));
+			video.style.transformOrigin = "center center";
+			video.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
+			card.classList.add("is-zoomed");
+			zoomPill.textContent = `${scale.toFixed(1)}x • Resetar`;
+			zoomPill.classList.remove("hidden");
+		};
+
+		zoomPill.addEventListener("click", (e) => {
+			e.stopPropagation();
+			scale = 1;
+			tx = 0;
+			ty = 0;
+			applyTransform();
+		});
+
+		card.addEventListener(
+			"wheel",
+			(e) => {
+				if (!video.srcObject) return;
+				if ((e.target as HTMLElement).closest(".stream-card-header, .stream-zoom-pill")) return;
+				e.preventDefault();
+				e.stopPropagation();
+				const delta = e.deltaY < 0 ? 0.25 : -0.25;
+				scale = Math.max(1, Math.min(4, Number((scale + delta).toFixed(2))));
+				applyTransform();
+			},
+			{ passive: false },
+		);
+
+		card.addEventListener("mousedown", (e) => {
+			if (scale <= 1 || e.button !== 0) return;
+			if ((e.target as HTMLElement).closest("button, input, .stream-card-header")) return;
+			isPanning = true;
+			didPan = false;
+			startX = e.clientX - tx;
+			startY = e.clientY - ty;
+			card.classList.add("is-panning");
+		});
+
+		window.addEventListener("mousemove", (e) => {
+			if (!isPanning) return;
+			const nextTx = e.clientX - startX;
+			const nextTy = e.clientY - startY;
+			if (Math.abs(nextTx - tx) > 3 || Math.abs(nextTy - ty) > 3) {
+				didPan = true;
+			}
+			tx = nextTx;
+			ty = nextTy;
+			applyTransform();
+		});
+
+		window.addEventListener("mouseup", () => {
+			if (!isPanning) return;
+			isPanning = false;
+			card.classList.remove("is-panning");
+		});
+
+		card.addEventListener(
+			"click",
+			(e) => {
+				if (didPan) {
+					e.stopPropagation();
+					e.preventDefault();
+					didPan = false;
+				}
+			},
+			true,
+		);
+
+		card.addEventListener("dblclick", (e) => {
+			if (scale > 1 && !(e.target as HTMLElement).closest("button, input, .stream-card-header")) {
+				e.stopPropagation();
+				scale = 1;
+				applyTransform();
+			}
+		});
+	}
+
+	private setupGlobalShortcuts(): void {
+		let allStreamsMuted = false;
+		const DEFAULT_SHORTCUTS = {
+			toggleMute: "CommandOrControl+Shift+M",
+			toggleStream: "CommandOrControl+Shift+S",
+			cycleSource: "CommandOrControl+Shift+C",
+		};
+		let currentShortcuts: Record<"toggleMute" | "toggleStream" | "cycleSource", string> = { ...DEFAULT_SHORTCUTS };
+
+		const formatLabel = (acc: string): string => {
+			if (!acc) return "Desativado";
+			return acc.replace(/CommandOrControl/g, "Ctrl");
+		};
+
+		const renderButtons = () => {
+			(["toggleMute", "toggleStream", "cycleSource"] as const).forEach((action) => {
+				const btn = document.querySelector<HTMLButtonElement>(`.shortcut-recorder-btn[data-shortcut-action="${action}"]`);
+				if (btn) {
+					btn.textContent = formatLabel(currentShortcuts[action]);
+					btn.classList.toggle("is-empty", !currentShortcuts[action]);
+				}
+			});
+		};
+
+		void window.api?.getGlobalShortcuts?.().then((cfg) => {
+			if (cfg) {
+				currentShortcuts = {
+					toggleMute: cfg.toggleMute ?? DEFAULT_SHORTCUTS.toggleMute,
+					toggleStream: cfg.toggleStream ?? DEFAULT_SHORTCUTS.toggleStream,
+					cycleSource: cfg.cycleSource ?? DEFAULT_SHORTCUTS.cycleSource,
+				};
+				renderButtons();
+			}
+		});
+
+		const saveShortcuts = async () => {
+			const statusEl = document.getElementById("shortcuts-status-msg");
+			const res = await window.api?.setGlobalShortcuts?.(currentShortcuts);
+			if (statusEl) {
+				if (res && !res.ok && res.failed?.length) {
+					statusEl.textContent = `Não foi possível registrar: ${res.failed.join(", ")} (pode estar em uso por outro app).`;
+					statusEl.style.color = "#f87171";
+				} else {
+					statusEl.textContent = "Atalhos globais salvos e ativos!";
+					statusEl.style.color = "#34d399";
+				}
+			}
+		};
+
+		document.querySelectorAll<HTMLButtonElement>(".shortcut-recorder-btn").forEach((btn) => {
+			const action = btn.dataset.shortcutAction as "toggleMute" | "toggleStream" | "cycleSource" | undefined;
+			if (!action) return;
+
+			btn.addEventListener("click", () => {
+				btn.classList.add("is-recording");
+				btn.textContent = "Pressione as teclas...";
+
+				const onKeyDown = (e: KeyboardEvent) => {
+					e.preventDefault();
+					e.stopPropagation();
+					if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) return;
+					if (e.key === "Escape") {
+						window.removeEventListener("keydown", onKeyDown, true);
+						btn.classList.remove("is-recording");
+						renderButtons();
+						return;
+					}
+
+					const parts: string[] = [];
+					if (e.ctrlKey || e.metaKey) parts.push("CommandOrControl");
+					if (e.altKey) parts.push("Alt");
+					if (e.shiftKey) parts.push("Shift");
+
+					let key = e.key.length === 1 ? e.key.toUpperCase() : e.key;
+					if (key === " ") key = "Space";
+					parts.push(key);
+
+					window.removeEventListener("keydown", onKeyDown, true);
+					btn.classList.remove("is-recording");
+					currentShortcuts[action] = parts.join("+");
+					renderButtons();
+					void saveShortcuts();
+				};
+
+				window.addEventListener("keydown", onKeyDown, true);
+			});
+		});
+
+		document.querySelectorAll<HTMLButtonElement>(".shortcut-clear-btn").forEach((btn) => {
+			const action = btn.dataset.shortcutClear as "toggleMute" | "toggleStream" | "cycleSource" | undefined;
+			if (!action) return;
+			btn.addEventListener("click", () => {
+				currentShortcuts[action] = "";
+				renderButtons();
+				void saveShortcuts();
+			});
+		});
+
+		document.getElementById("btn-reset-shortcuts")?.addEventListener("click", () => {
+			currentShortcuts = { ...DEFAULT_SHORTCUTS };
+			renderButtons();
+			void saveShortcuts();
+		});
+
+		window.api?.onGlobalShortcutTriggered?.((action) => {
+			if (action === "toggleMute") {
+				allStreamsMuted = !allStreamsMuted;
+				document.querySelectorAll<HTMLVideoElement>(".stream-card:not(#stream-card-local) video").forEach((v) => {
+					v.muted = allStreamsMuted;
+				});
+				this.showSystemNoticeToast({
+					id: `shortcut_mute_${Date.now()}`,
+					type: "info",
+					title: "Atalho Global",
+					message: allStreamsMuted ? "Áudio das transmissões mutado." : "Áudio das transmissões restaurado.",
+					date: new Date().toISOString(),
+				});
+			} else if (action === "toggleStream") {
+				if (this.p2pManager?.getIsStreaming()) {
+					this.stopStreaming();
+				} else {
+					this.startStreaming();
+				}
+			} else if (action === "cycleSource") {
+				if (this.allSources.length > 0) {
+					const nextIndex = (this.selectedSourceIndex + 1) % this.allSources.length;
+					const source = this.allSources[nextIndex];
+					this.leftSourcePicker?.setSelectedSource(source);
+					this.onSourceSelected(source);
+				}
+			}
+		});
+	}
+
+	private setupCustomRpcModal(): void {
+		const modal = document.getElementById("modal-custom-rpc");
+		const btnOpen = document.getElementById("btn-open-custom-rpc");
+		const btnClose = document.getElementById("btn-close-custom-rpc");
+		const btnCancel = document.getElementById("btn-cancel-custom-rpc");
+		const btnSave = document.getElementById("btn-save-custom-rpc");
+		const btnPreset = document.getElementById("btn-rpc-mode-preset");
+		const btnCustom = document.getElementById("btn-rpc-mode-custom");
+		const customFields = document.getElementById("rpc-custom-fields");
+		const presetNotice = document.getElementById("rpc-preset-notice");
+		const modeBadge = document.getElementById("rpc-current-mode-badge");
+
+		const inputDetails = document.getElementById("rpc-input-details") as HTMLInputElement | null;
+		const inputState = document.getElementById("rpc-input-state") as HTMLInputElement | null;
+		const inputLargeText = document.getElementById("rpc-input-large-text") as HTMLInputElement | null;
+		const chkTimer = document.getElementById("rpc-chk-timer") as HTMLInputElement | null;
+		const inputBtn1Label = document.getElementById("rpc-input-btn1-label") as HTMLInputElement | null;
+		const inputBtn1Url = document.getElementById("rpc-input-btn1-url") as HTMLInputElement | null;
+
+		const prevDetails = document.getElementById("rpc-preview-details");
+		const prevState = document.getElementById("rpc-preview-state");
+		const prevTimer = document.getElementById("rpc-preview-timer");
+		const prevBtn1 = document.getElementById("rpc-preview-btn1");
+
+		let selectedMode: "preset" | "custom" = "preset";
+
+		const updatePreview = () => {
+			if (selectedMode === "preset") {
+				if (prevDetails) prevDetails.textContent = "Shiro Screen Share";
+				if (prevState) prevState.textContent = "No lobby • Preparando transmissão";
+				if (prevTimer) prevTimer.classList.remove("hidden");
+				if (prevBtn1) {
+					prevBtn1.textContent = "Conheça a Shiro";
+					prevBtn1.classList.remove("hidden");
+				}
+			} else {
+				if (prevDetails) prevDetails.textContent = inputDetails?.value.trim() || "Shiro Screen Share";
+				if (prevState) {
+					const st = inputState?.value.trim();
+					prevState.textContent = st || "";
+					prevState.classList.toggle("hidden", !st);
+				}
+				if (prevTimer) prevTimer.classList.toggle("hidden", chkTimer ? !chkTimer.checked : false);
+				if (prevBtn1) {
+					const lbl = inputBtn1Label?.value.trim();
+					const url = inputBtn1Url?.value.trim();
+					if (lbl && url) {
+						prevBtn1.textContent = lbl;
+						prevBtn1.classList.remove("hidden");
+					} else {
+						prevBtn1.classList.add("hidden");
+					}
+				}
+			}
+		};
+
+		const applyModeUi = (mode: "preset" | "custom") => {
+			selectedMode = mode;
+			btnPreset?.classList.toggle("active", mode === "preset");
+			btnCustom?.classList.toggle("active", mode === "custom");
+			customFields?.classList.toggle("hidden", mode === "preset");
+			presetNotice?.classList.toggle("hidden", mode === "custom");
+			if (modeBadge) {
+				modeBadge.textContent = mode === "custom" ? "Personalizado" : "Pre-set da Shiro";
+				modeBadge.classList.toggle("is-custom", mode === "custom");
+			}
+			updatePreview();
+		};
+
+		void window.api?.getDiscordRpcCustomConfig?.().then((cfg) => {
+			if (!cfg) return;
+			if (inputDetails) inputDetails.value = cfg.details || "";
+			if (inputState) inputState.value = cfg.state || "";
+			if (inputLargeText) inputLargeText.value = cfg.largeText || "";
+			if (chkTimer) chkTimer.checked = cfg.showTimer !== false;
+			if (inputBtn1Label) inputBtn1Label.value = cfg.button1Label || "";
+			if (inputBtn1Url) inputBtn1Url.value = cfg.button1Url || "";
+			applyModeUi(cfg.mode === "custom" ? "custom" : "preset");
+		});
+
+		const closeModal = () => modal?.classList.add("hidden");
+		btnOpen?.addEventListener("click", () => {
+			modal?.classList.remove("hidden");
+			this.refreshIcons();
+		});
+		btnClose?.addEventListener("click", closeModal);
+		btnCancel?.addEventListener("click", closeModal);
+		modal?.addEventListener("click", (e) => {
+			if (e.target === modal) closeModal();
+		});
+
+		btnPreset?.addEventListener("click", () => applyModeUi("preset"));
+		btnCustom?.addEventListener("click", () => applyModeUi("custom"));
+
+		[inputDetails, inputState, inputLargeText, inputBtn1Label, inputBtn1Url].forEach((el) => {
+			el?.addEventListener("input", updatePreview);
+		});
+		chkTimer?.addEventListener("change", updatePreview);
+
+		btnSave?.addEventListener("click", async () => {
+			const btn1Url = inputBtn1Url?.value.trim() || "";
+			const btn1Label = inputBtn1Label?.value.trim() || "";
+			if (selectedMode === "custom" && btn1Label && btn1Url && !/^https?:\/\//i.test(btn1Url)) {
+				void this.showAlert("A URL do Botão 1 deve começar com https:// ou http://");
+				return;
+			}
+			const saved = await window.api?.setDiscordRpcCustomConfig?.({
+				mode: selectedMode,
+				details: inputDetails?.value.trim() || "",
+				state: inputState?.value.trim() || "",
+				largeText: inputLargeText?.value.trim() || "",
+				showTimer: chkTimer ? chkTimer.checked : true,
+				button1Label: btn1Label,
+				button1Url: btn1Url,
+			});
+			if (saved) {
+				applyModeUi(saved.mode);
+			}
+			closeModal();
+		});
+	}
+
 	/**
 	 * Renderiza os ícones lucide pendentes. O createIcons padrão recria TODOS os ícones
 	 * do documento a cada chamada (os SVGs mantêm data-lucide), o que trocava elementos
@@ -8101,7 +8504,7 @@ class ShiroApp {
 					UserCheck, UserPlus, Bell, BellOff, LogIn, KeyRound, Hash, CheckCheck,
 					Megaphone, AlertTriangle, Send, Info, Cat, ExternalLink, CircleHelp, GraduationCap, ChevronDown, Pencil, Link,
 					Maximize, Minimize, Gauge, Layers,
-					CodeXml, FlaskConical, Hammer, House, Timer, Star, Reply, Download,
+					CodeXml, FlaskConical, Hammer, House, Timer, Star, Reply, Download, Gamepad2, Keyboard, SlidersHorizontal, AtSign,
 				},
 			});
 		} catch (err) {
