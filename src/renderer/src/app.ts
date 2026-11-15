@@ -18,6 +18,7 @@ import {
 	Crown,
 	MessageSquare,
 	createIcons,
+	Download,
 	ExternalLink,
 	FlaskConical,
 	Eye,
@@ -51,6 +52,7 @@ import {
 	Power,
 	Radio,
 	RefreshCw,
+	Reply,
 	RotateCw,
 	ScreenShare,
 	Search,
@@ -60,6 +62,7 @@ import {
 	ShieldCheck,
 	Sparkles,
 	Square,
+	Star,
 	Timer,
 	Sun,
 	Target,
@@ -785,17 +788,18 @@ class ShiroApp {
 					if (this.remoteStreams.size === 0 && !this.p2pManager?.getIsStreaming()) {
 						setStreamStatus(false, stillStreaming ? "Reconectando..." : "Desconectado");
 					}
-					if (stillStreaming && this.currentRoom && !this.p2pManager?.isConnecting(peerId, 10_000)) {
-						console.log(`[App] Stream de ${peerId} ainda está ativa na sala. Agendando reconexão automática em 1.5s...`);
+					if (stillStreaming && this.currentRoom && !this.p2pManager?.isConnecting(peerId, 12_000)) {
+						console.log(`[App] Stream de ${peerId} ainda está ativa na sala. Agendando reconexão automática em 3s...`);
 						setTimeout(() => {
 							if (
 								this.currentRoom?.activeStreams?.some((s) => s.userId === peerId || s.userId === basePeerId) &&
 								!this.remoteStreams.has(peerId) &&
-								!this.remoteStreams.has(basePeerId)
+								!this.remoteStreams.has(basePeerId) &&
+								!this.p2pManager?.isConnecting(peerId, 12_000)
 							) {
 								void this.p2pManager?.renegotiate(peerId, true);
 							}
-						}, 1500);
+						}, 3000);
 					}
 				},
 				onError: (err) => {
@@ -889,9 +893,18 @@ class ShiroApp {
 				onChatMessage: (msg) => {
 					this.chatManager.receiveP2PMessage(msg);
 				},
+				onChatTyping: (typing) => {
+					this.chatManager.receiveP2PTyping(typing);
+				},
 			});
 			this.chatManager.onBroadcastP2PMessage = (msg) => {
 				this.p2pManager?.broadcastChatMessage(msg);
+			};
+			this.chatManager.onBroadcastP2PTyping = (typing) => {
+				this.p2pManager?.broadcastChatTyping(typing);
+			};
+			this.chatManager.onOpenUserProfile = (chatUser, anchorEl) => {
+				void this.openChatUserProfile(chatUser, anchorEl);
 			};
 			this.p2pManager.startSignaling();
 		}
@@ -2332,8 +2345,8 @@ class ShiroApp {
 				const peerId = streamInfo.userId;
 				if (!peerId || (isLocalDesktopStreaming && (peerId === currentUser?.id || streamInfo.username === currentUser?.username)) || this.hasRemoteStream(peerId)) continue;
 
-				// Tentativa recente ainda em andamento: aguarda em vez de reofertar sem parar (5s)
-				if (this.p2pManager?.isConnecting(peerId, 5_000)) continue;
+				// Tentativa recente ainda em andamento: aguarda em vez de reofertar sem parar (15s)
+				if (this.p2pManager?.isConnecting(peerId, 15_000)) continue;
 
 				// Inicia ou renegocia a conexão P2P sem derrubar conexões ativas
 				console.log(`[App] Detectada stream ativa de ${streamInfo.username} (${peerId}) fora do grid. Iniciando conexão P2P...`);
@@ -2927,7 +2940,9 @@ class ShiroApp {
 					c.style.display = "none";
 					if (videoEl) videoEl.muted = true;
 					if (!c.classList.contains("stream-card-connecting")) {
-						const label = c.querySelector(".stream-card-user span")?.textContent?.trim() || "Outra transmissão";
+						const label =
+							c.querySelector(".stream-card-user > span:not(.stream-card-avatar-initial)")?.textContent?.trim() ||
+							"Outra transmissão";
 						const targetId = c.id === "stream-card-local" ? "local-preview" : c.id;
 						otherCards.push({ cardId: targetId, cardEl: c, label });
 					}
@@ -7326,6 +7341,67 @@ class ShiroApp {
 	// ------------------------------------------------------------------------------------------------------------------------------
 	//  MINI PERFIL FLUTUANTE (POPOVER LATERAL DIREITO)
 	// ------------------------------------------------------------------------------------------------------------------------------
+	private async openChatUserProfile(
+		chatUser: { id: string; username: string; nickname?: string; avatar?: string | null },
+		targetEl: HTMLElement,
+	): Promise<void> {
+		const token = getToken();
+		const currentUser = getUser();
+		const isSelf = currentUser && (currentUser.id === chatUser.id || currentUser.username === chatUser.username);
+		const friendMatch = this.friends.find(
+			(f) => f.id === chatUser.id || f.username === chatUser.username,
+		);
+
+		const initialData = isSelf && currentUser
+			? currentUser
+			: friendMatch
+				? {
+						id: friendMatch.id,
+						username: friendMatch.username,
+						nickname: friendMatch.nickname,
+						avatar: friendMatch.avatar,
+						banner: friendMatch.banner,
+						isOnline: friendMatch.isOnline,
+						badges: friendMatch.badges,
+						badgeStats: friendMatch.badgeStats,
+					}
+				: {
+						id: chatUser.id,
+						username: chatUser.username,
+						nickname: chatUser.nickname,
+						avatar: chatUser.avatar || undefined,
+					};
+
+		this.showUserMiniProfile(initialData, targetEl);
+
+		if (token && (chatUser.id || chatUser.username)) {
+			try {
+				const res = await window.api.apiRequest({
+					endpoint: `/api/users/profile/${encodeURIComponent(chatUser.id || chatUser.username)}`,
+					method: "GET",
+					token,
+				});
+				const payload = res?.data as {
+					user?: {
+						id: string;
+						username: string;
+						nickname?: string;
+						avatar?: string;
+						banner?: string;
+						isOnline?: boolean;
+						badges?: BadgeId[];
+						badgeStats?: BadgeStats;
+					};
+				} | undefined;
+				if (res?.ok && payload?.user && this.activeMiniProfileUserId === initialData.id) {
+					this.showUserMiniProfile(payload.user, targetEl);
+				}
+			} catch {
+				// mantém dados iniciais se a requisição falhar
+			}
+		}
+	}
+
 	private setupMiniProfilePopover(): void {
 		const popover = document.getElementById("user-mini-profile-popover");
 		const btnClose = document.getElementById("btn-close-mini-profile");
@@ -7337,7 +7413,13 @@ class ShiroApp {
 		document.addEventListener("click", (e) => {
 			const target = e.target as HTMLElement;
 			if (popover && !popover.classList.contains("hidden")) {
-				if (!popover.contains(target) && !target.closest(".user-card") && !target.closest(".friend-card")) {
+				if (
+					!popover.contains(target) &&
+					!target.closest(".user-card") &&
+					!target.closest(".friend-card") &&
+					!target.closest(".chat-msg-avatar") &&
+					!target.closest(".chat-msg-sender")
+				) {
 					this.hideUserMiniProfile();
 				}
 			}
@@ -8019,7 +8101,7 @@ class ShiroApp {
 					UserCheck, UserPlus, Bell, BellOff, LogIn, KeyRound, Hash, CheckCheck,
 					Megaphone, AlertTriangle, Send, Info, Cat, ExternalLink, CircleHelp, GraduationCap, ChevronDown, Pencil, Link,
 					Maximize, Minimize, Gauge, Layers,
-					CodeXml, FlaskConical, Hammer, House, Timer,
+					CodeXml, FlaskConical, Hammer, House, Timer, Star, Reply, Download,
 				},
 			});
 		} catch (err) {

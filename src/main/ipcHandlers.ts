@@ -52,6 +52,282 @@ const keepAliveOptions = { keepAlive: true, keepAliveMsecs: 10_000, maxSockets: 
 const httpsAgent = new https.Agent(keepAliveOptions);
 const httpAgent = new http.Agent(keepAliveOptions);
 
+const SAFE_IMAGE_MAX_BYTES = 8 * 1024 * 1024; // 8 MB máx
+const SAFE_IMAGE_MAX_DIMENSION = 4096; // 4096px máx por eixo
+const SAFE_IMAGE_MAX_PIXELS = 4096 * 3072; // ~12.5 MP máx (proteção contra decompression bomb)
+const safeImageProbeCache = new Map<string, { safe: boolean; width?: number; height?: number; reason?: string }>();
+
+function isBlockedHost(hostname: string): boolean {
+	const h = hostname.toLowerCase().trim();
+	if (
+		!h ||
+		h === "localhost" ||
+		h.endsWith(".local") ||
+		h.endsWith(".internal") ||
+		h === "[::1]" ||
+		h.startsWith("[fc") ||
+		h.startsWith("[fd") ||
+		h.startsWith("[fe80:")
+	) {
+		return true;
+	}
+	if (/^\d{1,3}(\.\d{1,3}){3}$/.test(h)) {
+		const parts = h.split(".").map((n) => parseInt(n, 10));
+		if (
+			parts[0] === 0 ||
+			parts[0] === 10 ||
+			parts[0] === 127 ||
+			(parts[0] === 169 && parts[1] === 254) ||
+			(parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
+			(parts[0] === 192 && parts[1] === 168) ||
+			parts[0] >= 224
+		) {
+			return true;
+		}
+	}
+	return false;
+}
+
+function parseImageHeaderDimensions(buf: Buffer): { width: number; height: number } | null {
+	if (buf.length < 24) return null;
+
+	// PNG: 89 50 4E 47 0D 0A 1A 0A + IHDR
+	if (
+		buf[0] === 0x89 &&
+		buf[1] === 0x50 &&
+		buf[2] === 0x4e &&
+		buf[3] === 0x47 &&
+		buf[4] === 0x0d &&
+		buf[5] === 0x0a &&
+		buf[6] === 0x1a &&
+		buf[7] === 0x0a
+	) {
+		const width = buf.readUInt32BE(16);
+		const height = buf.readUInt32BE(20);
+		return { width, height };
+	}
+
+	// GIF: GIF87a ou GIF89a
+	if (
+		buf[0] === 0x47 &&
+		buf[1] === 0x49 &&
+		buf[2] === 0x46 &&
+		buf[3] === 0x38 &&
+		(buf[4] === 0x37 || buf[4] === 0x39) &&
+		buf[5] === 0x61
+	) {
+		const width = buf.readUInt16LE(6);
+		const height = buf.readUInt16LE(8);
+		return { width, height };
+	}
+
+	// WebP: RIFF....WEBP
+	if (
+		buf.length >= 30 &&
+		buf.toString("ascii", 0, 4) === "RIFF" &&
+		buf.toString("ascii", 8, 12) === "WEBP"
+	) {
+		const chunkType = buf.toString("ascii", 12, 16);
+		if (chunkType === "VP8 " && buf.length >= 30) {
+			const width = buf.readUInt16LE(26) & 0x3fff;
+			const height = buf.readUInt16LE(28) & 0x3fff;
+			return { width, height };
+		}
+		if (chunkType === "VP8L" && buf.length >= 25) {
+			const b0 = buf[21];
+			const b1 = buf[22];
+			const b2 = buf[23];
+			const b3 = buf[24];
+			const width = 1 + (((b1 & 0x3f) << 8) | b0);
+			const height = 1 + (((b3 & 0x0f) << 10) | (b2 << 2) | ((b1 & 0xc0) >> 6));
+			return { width, height };
+		}
+		if (chunkType === "VP8X" && buf.length >= 30) {
+			const width = 1 + buf.readUIntLE(24, 3);
+			const height = 1 + buf.readUIntLE(27, 3);
+			return { width, height };
+		}
+	}
+
+	// JPEG: FF D8 ... SOF markers
+	if (buf[0] === 0xff && buf[1] === 0xd8) {
+		let offset = 2;
+		while (offset + 9 < buf.length) {
+			if (buf[offset] !== 0xff) {
+				offset++;
+				continue;
+			}
+			const marker = buf[offset + 1];
+			if (marker === 0xff) {
+				offset++;
+				continue;
+			}
+			// SOF0..SOF3, SOF5..SOF7, SOF9..SOF11, SOF13..SOF15
+			if (
+				(marker >= 0xc0 && marker <= 0xc3) ||
+				(marker >= 0xc5 && marker <= 0xc7) ||
+				(marker >= 0xc9 && marker <= 0xcb) ||
+				(marker >= 0xcd && marker <= 0xcf)
+			) {
+				const height = buf.readUInt16BE(offset + 5);
+				const width = buf.readUInt16BE(offset + 7);
+				return { width, height };
+			}
+			if (marker === 0xd9 || marker === 0xda) break;
+			const segLen = buf.readUInt16BE(offset + 2);
+			if (segLen < 2) break;
+			offset += 2 + segLen;
+		}
+	}
+
+	return null;
+}
+
+function probeSafeImageUrl(
+	rawUrl: string,
+	redirectsLeft = 3,
+): Promise<{ safe: boolean; width?: number; height?: number; reason?: string }> {
+	return new Promise((resolve) => {
+		try {
+			if (!rawUrl || typeof rawUrl !== "string" || rawUrl.length > 1000) {
+				return resolve({ safe: false, reason: "URL inválida" });
+			}
+			const url = new URL(rawUrl);
+			if (url.protocol !== "https:" || url.username || url.password || isBlockedHost(url.hostname)) {
+				return resolve({ safe: false, reason: "Host ou protocolo não permitido" });
+			}
+			const lowerPath = url.pathname.toLowerCase();
+			if (/\.(svg|svgz|ico|bmp|tif|tiff|html|htm|php|exe|zip|rar|pdf|xml)$/i.test(lowerPath)) {
+				return resolve({ safe: false, reason: "Formato de arquivo bloqueado" });
+			}
+
+			let settled = false;
+			const finish = (result: { safe: boolean; width?: number; height?: number; reason?: string }) => {
+				if (settled) return;
+				settled = true;
+				resolve(result);
+			};
+
+			const req = https.request(
+				url,
+				{
+					method: "GET",
+					timeout: 4500,
+					headers: {
+						"User-Agent": "ShiroScreenShare-ImageGuard/1.0",
+						Accept: "image/webp,image/png,image/jpeg,image/gif,image/avif;q=0.9",
+						Range: "bytes=0-65535",
+					},
+				},
+				(res) => {
+					const status = res.statusCode ?? 0;
+					if ([301, 302, 303, 307, 308].includes(status) && res.headers.location) {
+						res.resume();
+						if (redirectsLeft <= 0) {
+							return finish({ safe: false, reason: "Muitos redirecionamentos" });
+						}
+						try {
+							const nextUrl = new URL(res.headers.location, url).toString();
+							return void probeSafeImageUrl(nextUrl, redirectsLeft - 1).then(finish);
+						} catch {
+							return finish({ safe: false, reason: "Redirecionamento inválido" });
+						}
+					}
+
+					if (status !== 200 && status !== 206) {
+						res.resume();
+						return finish({ safe: false, reason: `HTTP ${status}` });
+					}
+
+					const contentType = String(res.headers["content-type"] || "").toLowerCase().split(";")[0].trim();
+					const allowedTypes = new Set([
+						"image/jpeg",
+						"image/jpg",
+						"image/png",
+						"image/gif",
+						"image/webp",
+						"image/avif",
+					]);
+					if (!allowedTypes.has(contentType)) {
+						res.destroy();
+						return finish({ safe: false, reason: `Content-Type não permitido: ${contentType}` });
+					}
+
+					const contentLength = parseInt(String(res.headers["content-length"] || "0"), 10);
+					if (Number.isFinite(contentLength) && contentLength > SAFE_IMAGE_MAX_BYTES) {
+						res.destroy();
+						return finish({ safe: false, reason: "Imagem excede 8 MB" });
+					}
+
+					const contentRange = String(res.headers["content-range"] || "");
+					const rangeMatch = contentRange.match(/\/(\d+)$/);
+					if (rangeMatch) {
+						const totalSize = parseInt(rangeMatch[1], 10);
+						if (Number.isFinite(totalSize) && totalSize > SAFE_IMAGE_MAX_BYTES) {
+							res.destroy();
+							return finish({ safe: false, reason: "Imagem excede 8 MB" });
+						}
+					}
+
+					const chunks: Buffer[] = [];
+					let bytesRead = 0;
+
+					res.on("data", (chunk: Buffer) => {
+						chunks.push(chunk);
+						bytesRead += chunk.length;
+						if (bytesRead >= 65536) {
+							res.destroy();
+						}
+					});
+
+					const evaluateHeader = () => {
+						const headerBuf = Buffer.concat(chunks);
+						if (headerBuf.length < 16) {
+							return finish({ safe: false, reason: "Cabeçalho de imagem incompleto" });
+						}
+						const dims = parseImageHeaderDimensions(headerBuf);
+						if (dims) {
+							if (
+								dims.width <= 0 ||
+								dims.height <= 0 ||
+								dims.width > SAFE_IMAGE_MAX_DIMENSION ||
+								dims.height > SAFE_IMAGE_MAX_DIMENSION ||
+								dims.width * dims.height > SAFE_IMAGE_MAX_PIXELS
+							) {
+								return finish({
+									safe: false,
+									reason: `Dimensões inseguras (${dims.width}x${dims.height})`,
+								});
+							}
+							return finish({ safe: true, width: dims.width, height: dims.height });
+						}
+						// Para AVIF (ISOBMFF) onde dimensões podem estar em box ispe e o tamanho total foi validado
+						if (contentType === "image/avif" && headerBuf.includes(Buffer.from("ftyp"))) {
+							return finish({ safe: true });
+						}
+						return finish({ safe: false, reason: "Assinatura binária da imagem inválida" });
+					};
+
+					res.on("end", evaluateHeader);
+					res.on("close", evaluateHeader);
+					res.on("error", () => finish({ safe: false, reason: "Erro na leitura da imagem" }));
+				},
+			);
+
+			req.on("timeout", () => {
+				req.destroy();
+				finish({ safe: false, reason: "Timeout ao verificar imagem" });
+			});
+			req.on("error", () => {
+				finish({ safe: false, reason: "Erro de rede ao verificar imagem" });
+			});
+			req.end();
+		} catch {
+			resolve({ safe: false, reason: "URL malformada" });
+		}
+	});
+}
+
 
 type SourceEntry = {
 	id: string;
@@ -411,6 +687,23 @@ const DEFAULT_API_URL = "https://share.shirobot.xyz";
 			console.error("[IPC] open-external error:", err.message);
 			return false;
 		}
+	});
+
+	ipcMain.handle("probe-safe-image", async (_event, rawUrl: string) => {
+		const key = String(rawUrl || "").trim();
+		if (safeImageProbeCache.has(key)) {
+			return safeImageProbeCache.get(key)!;
+		}
+		const result = await probeSafeImageUrl(key);
+		if (safeImageProbeCache.size >= 300) {
+			const firstKey = safeImageProbeCache.keys().next().value;
+			if (firstKey) safeImageProbeCache.delete(firstKey);
+		}
+		safeImageProbeCache.set(key, result);
+		if (!result.safe) {
+			console.warn(`[IPC] Imagem bloqueada pelo ImageGuard (${result.reason}): ${key}`);
+		}
+		return result;
 	});
 
 	// Get resources path

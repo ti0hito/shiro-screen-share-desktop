@@ -36,6 +36,9 @@ const api: ElectronAPI = {
 	openExternal: (url: string): Promise<boolean> => {
 		return ipcRenderer.invoke("open-external", url);
 	},
+	probeSafeImage: (url: string) => {
+		return ipcRenderer.invoke("probe-safe-image", url);
+	},
 
 	getResourcesPath: (): Promise<string> => {
 		return ipcRenderer.invoke("get-resources-path");

@@ -54,6 +54,13 @@ export interface ElectronAPI {
 	apiRequest: (opts: ApiRequestOptions) => Promise<ApiRequestResult>;
 	/** Abre URL no navegador padrão (somente domínios shirobot.xyz) */
 	openExternal: (url: string) => Promise<boolean>;
+	/** Inspeciona com segurança no processo principal se uma URL é uma imagem segura para renderizar no chat */
+	probeSafeImage?: (url: string) => Promise<{
+		safe: boolean;
+		width?: number;
+		height?: number;
+		reason?: string;
+	}>;
 	discordAuth: (action: "login" | "link", token?: string) => Promise<{
 		ok: boolean;
 		token?: string;

@@ -728,19 +728,25 @@
               </div>
             </div>
 
+            <!-- Indicador de Digitação -->
+            <div id="chat-typing-bar" class="chat-typing-bar hidden" aria-live="polite"></div>
+
             <!-- Barra de Envio -->
             <form id="form-chat" class="chat-input-bar">
               <button type="button" id="btn-toggle-gif-picker" class="btn-chat-addon" title="Buscar e enviar GIF">
                 <span class="gif-tag">GIF</span>
               </button>
-              <input
-                type="text"
-                id="input-chat-message"
-                class="chat-text-input"
-                placeholder="Enviar mensagem na sala..."
-                maxlength="1000"
-                autocomplete="off"
-              />
+              <div class="chat-input-wrapper">
+                <input
+                  type="text"
+                  id="input-chat-message"
+                  class="chat-text-input"
+                  placeholder="Enviar mensagem na sala..."
+                  maxlength="500"
+                  autocomplete="off"
+                />
+                <span id="chat-char-counter" class="chat-char-counter hidden">0/500</span>
+              </div>
               <button type="submit" id="btn-send-chat-message" class="btn-chat-send" title="Enviar mensagem">
                 <i data-lucide="send"></i>
               </button>

@@ -18,6 +18,7 @@ export interface P2PCallbacks {
 	isExpectingRemoteStream?: (peerId: string) => boolean;
 	onSystemNotice?: (notice: any) => void;
 	onChatMessage?: (msg: any) => void;
+	onChatTyping?: (typing: any) => void;
 }
 
 const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
@@ -310,10 +311,12 @@ export class P2PManager {
 	isConnecting(peerId: string, withinMs: number): boolean {
 		const pc = this.peerConnections.get(peerId);
 		if (!pc) return false;
-		if (pc.connectionState === "connected") return true;
+		if (pc.connectionState === "connected" || pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed") {
+			return true;
+		}
 		if (pc.connectionState !== "new" && pc.connectionState !== "connecting") return false;
-		const startedAt = this.connectStartedAt.get(peerId) ?? 0;
-		return Date.now() - startedAt < withinMs;
+		const lastActivity = Math.max(this.connectStartedAt.get(peerId) ?? 0, this.lastOfferAt.get(peerId) ?? 0);
+		return Date.now() - lastActivity < withinMs;
 	}
 
 	isConnected(peerId: string): boolean {
@@ -367,10 +370,18 @@ export class P2PManager {
 			const isBroken = pc.connectionState === "failed" || pc.connectionState === "closed";
 			if (isBroken || forceRestart) {
 				console.log(`[P2P] Reiniciando conexão com ${targetUserId} (estado: ${pc.connectionState})...`);
-				this.closePeer(targetUserId);
+				this.closePeer(targetUserId, true);
 				pc = undefined;
 			} else if (pc.signalingState !== "stable") {
 				console.log(`[P2P] Renegociação adiada para ${targetUserId}: sinalização ocupada (${pc.signalingState}).`);
+				return;
+			} else if (
+				!iceRestart &&
+				!this.isStreaming &&
+				(pc.connectionState === "connecting" || pc.iceConnectionState === "checking") &&
+				Date.now() - Math.max(this.connectStartedAt.get(targetUserId) ?? 0, this.lastOfferAt.get(targetUserId) ?? 0) < 15_000
+			) {
+				console.log(`[P2P] Conexão com ${targetUserId} já está em negociação ICE (${pc.iceConnectionState}). Aguardando...`);
 				return;
 			}
 		}
@@ -641,7 +652,7 @@ export class P2PManager {
 		let pc = this.peerConnections.get(fromUserId);
 		let isFreshPc = false;
 		if (!pc || pc.connectionState === "closed" || pc.connectionState === "failed") {
-			if (pc) this.closePeer(fromUserId);
+			if (pc) this.closePeer(fromUserId, true);
 			pc = this.createPeerConnection(fromUserId);
 			isFreshPc = true;
 		}
@@ -659,7 +670,7 @@ export class P2PManager {
 				await pc.setLocalDescription({ type: "rollback" });
 			} catch (err) {
 				console.warn(`[P2P] Rollback falhou com ${fromUserId}. Recriando conexão limpa...`, err);
-				this.closePeer(fromUserId);
+				this.closePeer(fromUserId, true);
 				pc = this.createPeerConnection(fromUserId);
 				isFreshPc = true;
 			}
@@ -676,7 +687,7 @@ export class P2PManager {
 			// A oferta pertence a uma sessão nova do outro lado (ex.: ele recriou a conexão).
 			// A conexão antiga não aceita as novas credenciais: recria do zero e responde de novo.
 			console.warn(`[P2P] Oferta de ${fromUserId} incompatível com a conexão atual. Recriando conexão...`, err);
-			this.closePeer(fromUserId);
+			this.closePeer(fromUserId, true);
 			const freshPc = this.createPeerConnection(fromUserId);
 			try {
 				await this.answerOffer(freshPc, fromUserId, sdp);
@@ -806,7 +817,7 @@ export class P2PManager {
 		}
 	}
 
-	closePeer(peerId: string): void {
+	closePeer(peerId: string, silent = false): void {
 		this.clearDisconnectTimer(peerId);
 		const dc = this.dataChannels.get(peerId);
 		if (dc) {
@@ -824,8 +835,10 @@ export class P2PManager {
 			this.pendingCandidates.delete(peerId);
 			this.connectStartedAt.delete(peerId);
 			this.lastOfferAt.delete(peerId);
-			this.callbacks.onDisconnected(peerId);
-			console.log(`[P2P] PeerConnection com ${peerId} encerrada.`);
+			if (!silent) {
+				this.callbacks.onDisconnected(peerId);
+			}
+			console.log(`[P2P] PeerConnection com ${peerId} encerrada${silent ? " (substituição interna)" : ""}.`);
 		}
 	}
 
@@ -839,6 +852,8 @@ export class P2PManager {
 				} else if (data.type === "chat:message" && data.message) {
 					console.log(`[P2P] Mensagem de chat recebida via DataChannel de ${peerId}`);
 					this.callbacks.onChatMessage?.(data.message);
+				} else if (data.type === "chat:typing" && data.typing) {
+					this.callbacks.onChatTyping?.(data.typing);
 				}
 			} catch (err) {
 				console.warn("[P2P] Erro ao parsear mensagem DataChannel:", err);
@@ -859,6 +874,19 @@ export class P2PManager {
 					console.log(`[P2P] Mensagem de chat transmitida via DataChannel para ${peerId}`);
 				} catch (err) {
 					console.warn(`[P2P] Falha ao enviar chat para ${peerId}:`, err);
+				}
+			}
+		}
+	}
+
+	broadcastChatTyping(typing: any): void {
+		const payload = JSON.stringify({ type: "chat:typing", typing });
+		for (const [_peerId, dc] of this.dataChannels) {
+			if (dc.readyState === "open") {
+				try {
+					dc.send(payload);
+				} catch {
+					// ignore transient datachannel errors for typing state
 				}
 			}
 		}
