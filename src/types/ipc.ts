@@ -74,6 +74,22 @@ export interface ElectronAPI {
 		height?: number;
 		reason?: string;
 	}>;
+	/** Busca prévia compacta de links de redes sociais no processo principal */
+	probeLinkPreview?: (url: string) => Promise<{
+		ok: boolean;
+		preview?: {
+			provider: string;
+			accent?: string;
+			url: string;
+			authorName?: string;
+			authorHandle?: string;
+			authorAvatar?: string;
+			title?: string;
+			text?: string;
+			imageUrl?: string;
+			videoUrl?: string;
+		};
+	}>;
 	discordAuth: (action: "login" | "link", token?: string) => Promise<{
 		ok: boolean;
 		token?: string;

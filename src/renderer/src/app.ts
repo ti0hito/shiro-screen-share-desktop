@@ -2414,7 +2414,7 @@ class ShiroApp {
 							<div class="room-item-badges">
 								${isActive ? '<span class="badge-current-room">ATUAL</span>' : ""}
 								${isGlobal ? '<span class="badge-current-room">GLOBAL</span>' : ""}
-								${r.isFavorite ? '<span class="badge-room-pinned" title="Sala Favorita (Link Fixo Permanente)">⭐ FAVORITA</span>' : r.pinnedUntil && new Date(r.pinnedUntil).getTime() > Date.now() ? '<span class="badge-room-pinned" title="Sala Fixa (Não expira)"><i data-lucide="pin" style="width:10px;height:10px;"></i> FIXA</span>' : ""}
+								${r.isFavorite ? '<span class="badge-room-pinned" title="Sala Fixa (Link Fixo Permanente)">⭐ FIXA</span>' : r.pinnedUntil && new Date(r.pinnedUntil).getTime() > Date.now() ? '<span class="badge-room-pinned" title="Sala Fixa (Não expira)"><i data-lucide="pin" style="width:10px;height:10px;"></i> FIXA</span>' : ""}
 								${streamCount > 0 ? `<span class="badge-room-live"><span class="live-dot"></span>${streamCount} live</span>` : ""}
 							</div>
 						</div>

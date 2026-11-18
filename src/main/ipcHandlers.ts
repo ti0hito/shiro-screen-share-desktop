@@ -696,7 +696,7 @@ const DEFAULT_API_URL = "https://share.shirobot.xyz";
 	ipcMain.handle("open-external", async (_event, rawUrl: string) => {
 		try {
 			const url = new URL(rawUrl);
-			const allowed = url.protocol === "https:" && (url.hostname === "shirobot.xyz" || url.hostname.endsWith(".shirobot.xyz"));
+			const allowed = url.protocol === "https:" || url.protocol === "http:";
 			if (!allowed) {
 				console.warn(`[IPC] open-external bloqueado: ${rawUrl}`);
 				return false;
@@ -724,6 +724,208 @@ const DEFAULT_API_URL = "https://share.shirobot.xyz";
 			console.warn(`[IPC] Imagem bloqueada pelo ImageGuard (${result.reason}): ${key}`);
 		}
 		return result;
+	});
+
+	const linkPreviewCache = new Map<string, { at: number; preview: any }>();
+	const LINK_PREVIEW_ALLOWED_HOSTS = new Set([
+		"twitter.com",
+		"mobile.twitter.com",
+		"x.com",
+		"fxtwitter.com",
+		"vxtwitter.com",
+		"fixupx.com",
+		"instagram.com",
+		"m.instagram.com",
+		"facebook.com",
+		"m.facebook.com",
+		"fb.watch",
+		"reddit.com",
+		"old.reddit.com",
+		"bsky.app",
+	]);
+
+	const decodeHtmlEntities = (s: string) =>
+		s
+			.replace(/&amp;/g, "&")
+			.replace(/&lt;/g, "<")
+			.replace(/&gt;/g, ">")
+			.replace(/&quot;/g, '"')
+			.replace(/&#39;/g, "'")
+			.replace(/&#x27;/g, "'")
+			.replace(/&#x2F;/g, "/")
+			.replace(/&#(\d+);/g, (_m, n) => String.fromCharCode(Number(n)))
+			.trim();
+
+	const extractOgMeta = (html: string, key: string): string | undefined => {
+		const esc = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+		const patterns = [
+			new RegExp(`<meta[^>]+(?:property|name)=["']${esc}["'][^>]+content=["']([^"']+)["']`, "i"),
+			new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']${esc}["']`, "i"),
+		];
+		for (const re of patterns) {
+			const m = re.exec(html);
+			if (m?.[1]) return decodeHtmlEntities(m[1]);
+		}
+		return undefined;
+	};
+
+	const fetchWithAbort = async (url: string, headers: Record<string, string> = {}) => {
+		const ctrl = new AbortController();
+		const timer = setTimeout(() => ctrl.abort(), 4500);
+		try {
+			return await fetch(url, {
+				signal: ctrl.signal,
+				redirect: "follow",
+				headers: {
+					"User-Agent": "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
+					"Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+					...headers,
+				},
+			});
+		} finally {
+			clearTimeout(timer);
+		}
+	};
+
+	ipcMain.handle("probe-link-preview", async (_event, rawUrl: string) => {
+		const key = String(rawUrl || "").trim();
+		if (!key || key.length > 900) return { ok: false };
+		let parsed: URL;
+		try {
+			parsed = new URL(key);
+		} catch {
+			return { ok: false };
+		}
+		const host = parsed.hostname.toLowerCase().replace(/^www\./, "");
+		if (parsed.protocol !== "https:" || !LINK_PREVIEW_ALLOWED_HOSTS.has(host)) {
+			return { ok: false };
+		}
+		const cached = linkPreviewCache.get(key);
+		if (cached && Date.now() - cached.at < 10 * 60 * 1000) {
+			return { ok: true, preview: cached.preview };
+		}
+
+		let preview: any = null;
+		try {
+			if (
+				host === "twitter.com" ||
+				host === "mobile.twitter.com" ||
+				host === "x.com" ||
+				host === "fxtwitter.com" ||
+				host === "vxtwitter.com" ||
+				host === "fixupx.com"
+			) {
+				const m = /\/status\/(\d{5,25})/.exec(parsed.pathname);
+				if (m) {
+					const r = await fetchWithAbort(`https://api.fxtwitter.com/status/${m[1]}`, {
+						"User-Agent": "ShiroScreenShare/1.0",
+					});
+					if (r.ok) {
+						const json = (await r.json()) as any;
+						const t = json?.tweet;
+						if (t) {
+							preview = {
+								provider: "X / Twitter",
+								accent: "#1d9bf0",
+								url: key,
+								authorName: t.author?.name,
+								authorHandle: t.author?.screen_name ? `@${t.author.screen_name}` : undefined,
+								authorAvatar: t.author?.avatar_url,
+								text: t.text,
+								imageUrl: t.media?.photos?.[0]?.url || t.media?.all?.[0]?.thumbnail_url,
+								videoUrl: t.media?.videos?.[0]?.url,
+							};
+						}
+					}
+				}
+			} else if (host === "reddit.com" || host === "old.reddit.com") {
+				const r = await fetchWithAbort(
+					`https://www.reddit.com${parsed.pathname.replace(/\/$/, "")}.json?raw_json=1`,
+					{ "User-Agent": "shiro-screen-share/1.0" },
+				);
+				if (r.ok) {
+					const data = (await r.json()) as any;
+					const post = data?.[0]?.data?.children?.[0]?.data;
+					if (post) {
+						const img = post.preview?.images?.[0]?.source?.url;
+						preview = {
+							provider: "Reddit",
+							accent: "#ff4500",
+							url: key,
+							authorName: post.subreddit_name_prefixed,
+							authorHandle: post.author ? `u/${post.author}` : undefined,
+							title: post.title,
+							text: post.selftext ? String(post.selftext).slice(0, 260) : undefined,
+							imageUrl: typeof img === "string" && img.startsWith("https://") ? img : undefined,
+						};
+					}
+				}
+			} else {
+				const provider =
+					host.includes("instagram")
+						? "Instagram"
+						: host.includes("facebook") || host === "fb.watch"
+							? "Facebook"
+							: "Bluesky";
+				const accent =
+					provider === "Instagram" ? "#e1306c" : provider === "Facebook" ? "#1877f2" : "#0085ff";
+				const r = await fetchWithAbort(key);
+				if (r.ok) {
+					const html = (await r.text()).slice(0, 320_000);
+					const title = extractOgMeta(html, "og:title") || extractOgMeta(html, "twitter:title");
+					const text = extractOgMeta(html, "og:description") || extractOgMeta(html, "twitter:description");
+					const imageUrl = extractOgMeta(html, "og:image") || extractOgMeta(html, "twitter:image");
+					const video = extractOgMeta(html, "og:video:secure_url") || extractOgMeta(html, "og:video");
+					preview = {
+						provider,
+						accent,
+						url: key,
+						title,
+						text,
+						imageUrl: imageUrl && imageUrl.startsWith("https://") ? imageUrl : undefined,
+						videoUrl:
+							video && video.startsWith("https://") && /\.(mp4|webm|mov)(\?|$)/i.test(video)
+								? video
+								: undefined,
+					};
+				}
+				if (provider === "Instagram" && (!preview?.imageUrl && !preview?.text && !preview?.title)) {
+					const m = /^\/(p|reel|reels|tv)\/([a-zA-Z0-9_-]+)/.exec(parsed.pathname);
+					if (m) {
+						const igKind = m[1] === "reels" ? "reel" : m[1];
+						const er = await fetchWithAbort(`https://www.instagram.com/${igKind}/${m[2]}/embed/captioned/`, {
+							"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+						});
+						if (er.ok) {
+							const ehtml = (await er.text()).slice(0, 320_000);
+							const userMatch = /class="UsernameText"[^>]*>([^<]+)</i.exec(ehtml);
+							const imgMatch = /class="EmbeddedMediaImage"[^>]+src="([^"]+)"/i.exec(ehtml);
+							const capMatch = /class="Caption"[^>]*>([\s\S]*?)<\/div>/i.exec(ehtml);
+							const captionText = capMatch?.[1]
+								? decodeHtmlEntities(capMatch[1].replace(/<[^>]+>/g, " ").replace(/\s+/g, " "))
+								: undefined;
+							const imgSrc = imgMatch?.[1] ? decodeHtmlEntities(imgMatch[1]) : undefined;
+							preview = {
+								provider: "Instagram",
+								accent: "#e1306c",
+								url: key,
+								authorHandle: userMatch?.[1] ? `@${decodeHtmlEntities(userMatch[1])}` : undefined,
+								text: captionText,
+								imageUrl: imgSrc && imgSrc.startsWith("https://") ? imgSrc : undefined,
+							};
+						}
+					}
+				}
+			}
+		} catch {}
+
+		if (!preview) return { ok: false };
+		if (linkPreviewCache.size >= 200) {
+			const first = linkPreviewCache.keys().next().value;
+			if (first) linkPreviewCache.delete(first);
+		}
+		linkPreviewCache.set(key, { at: Date.now(), preview });
+		return { ok: true, preview };
 	});
 
 	// Get resources path

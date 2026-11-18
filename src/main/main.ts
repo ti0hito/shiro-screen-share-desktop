@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import dotenv from "dotenv";
-import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, protocol, session, Tray } from "electron";
+import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, protocol, session, shell, Tray } from "electron";
 import type { GlobalShortcutAction, GlobalShortcutsConfig } from "../types/ipc";
 import { autoUpdater } from "electron-updater";
 import { AudioCaptureEngine } from "./audioEngine";
@@ -171,7 +171,11 @@ function createWindow(): void {
 	};
 	blockDevTools(mainWindow.webContents);
 
-	mainWindow.webContents.setWindowOpenHandler(() => {
+	mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+		if (url && (url.startsWith("https://") || url.startsWith("http://"))) {
+			void shell.openExternal(url);
+			return { action: "deny" };
+		}
 		return {
 			action: "allow",
 			overrideBrowserWindowOptions: {
@@ -538,6 +542,29 @@ app.whenReady().then(() => {
 		if (permission === "media") return true;
 		return true;
 	});
+	session.defaultSession.webRequest.onBeforeSendHeaders(
+		{
+			urls: [
+				"https://*.youtube.com/*",
+				"https://*.youtube-nocookie.com/*",
+				"https://*.googlevideo.com/*",
+				"https://player.twitch.tv/*",
+				"https://clips.twitch.tv/*",
+			],
+		},
+		(details, callback) => {
+			const headers = { ...details.requestHeaders };
+			const ref = headers.Referer || headers.referer || "";
+			if (!ref || ref.startsWith("file://")) {
+				headers.Referer = "https://share.shirobot.xyz/";
+			}
+			const orig = headers.Origin || headers.origin || "";
+			if (!orig || orig === "null" || orig.startsWith("file://")) {
+				headers.Origin = "https://share.shirobot.xyz";
+			}
+			callback({ requestHeaders: headers });
+		},
+	);
 	loadUserPrefs();
 	createWindow();
 	handleArgvDeepLink(process.argv);

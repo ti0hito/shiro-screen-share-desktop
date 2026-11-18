@@ -67,6 +67,7 @@ export class ChatManager {
 	private localStopTypingTimer: ReturnType<typeof setTimeout> | null = null;
 	private isLocalTyping = false;
 	private safeImageCache = new Map<string, boolean>();
+	private linkPreviewCache = new Map<string, any>();
 	private replyingTo: ChatMessage | null = null;
 	private knownUsersById = new Map<string, ChatUser>();
 	private knownUsersByUsername = new Map<string, ChatUser>();
@@ -693,26 +694,34 @@ export class ChatManager {
 		});
 
 		input?.addEventListener("keydown", (e) => {
-			if (!this.mentionQueryRange || this.mentionSuggestions.length === 0) return;
-			if (e.key === "ArrowDown") {
-				e.preventDefault();
-				this.mentionSelectedIndex = (this.mentionSelectedIndex + 1) % this.mentionSuggestions.length;
-				this.renderMentionPopover(input, syncCharCounter);
-			} else if (e.key === "ArrowUp") {
-				e.preventDefault();
-				this.mentionSelectedIndex =
-					(this.mentionSelectedIndex - 1 + this.mentionSuggestions.length) %
-					this.mentionSuggestions.length;
-				this.renderMentionPopover(input, syncCharCounter);
-			} else if (e.key === "Enter" || e.key === "Tab") {
+			if (this.mentionQueryRange && this.mentionSuggestions.length > 0) {
+				if (e.key === "ArrowDown") {
+					e.preventDefault();
+					this.mentionSelectedIndex = (this.mentionSelectedIndex + 1) % this.mentionSuggestions.length;
+					this.renderMentionPopover(input, syncCharCounter);
+				} else if (e.key === "ArrowUp") {
+					e.preventDefault();
+					this.mentionSelectedIndex =
+						(this.mentionSelectedIndex - 1 + this.mentionSuggestions.length) %
+						this.mentionSuggestions.length;
+					this.renderMentionPopover(input, syncCharCounter);
+				} else if (e.key === "Enter" || e.key === "Tab") {
+					e.preventDefault();
+					e.stopPropagation();
+					const item = this.mentionSuggestions[this.mentionSelectedIndex];
+					if (item) this.applyMentionSuggestion(input, item, syncCharCounter);
+				} else if (e.key === "Escape") {
+					e.preventDefault();
+					e.stopPropagation();
+					this.closeMentionPopover();
+				}
+				return;
+			}
+			if (e.key === "Escape" && this.replyingTo) {
 				e.preventDefault();
 				e.stopPropagation();
-				const item = this.mentionSuggestions[this.mentionSelectedIndex];
-				if (item) this.applyMentionSuggestion(input, item, syncCharCounter);
-			} else if (e.key === "Escape") {
-				e.preventDefault();
-				e.stopPropagation();
-				this.closeMentionPopover();
+				this.replyingTo = null;
+				this.renderReplyBar();
 			}
 		});
 
@@ -963,7 +972,7 @@ export class ChatManager {
 			<div class="gif-thumbnail-item" data-gif-url="${this.escapeHtml(g.url)}" title="${this.escapeHtml(g.title)}">
 				<img src="${this.escapeHtml(g.previewUrl || g.url)}" alt="${this.escapeHtml(g.title)}" loading="lazy" />
 				<button type="button" class="btn-gif-fav ${isFav ? "is-favorite" : ""}" title="${isFav ? "Remover dos favoritos" : "Favoritar GIF"}">
-					<i data-lucide="star"></i>
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
 				</button>
 			</div>`;
 			})
@@ -1083,6 +1092,267 @@ export class ChatManager {
 		return urls;
 	}
 
+	private extractMediaEmbeds(text: string): Array<{
+		kind: "iframe" | "video" | "audio" | "social";
+		provider: string;
+		embedUrl: string;
+		originalUrl: string;
+		layout: "landscape" | "vertical" | "compact" | "social" | "audio";
+		accent?: string;
+	}> {
+		if (!text) return [];
+		const matches = text.match(/https:\/\/[^\s<>"']+/gi);
+		if (!matches) return [];
+		const embeds: Array<{
+			kind: "iframe" | "video" | "audio" | "social";
+			provider: string;
+			embedUrl: string;
+			originalUrl: string;
+			layout: "landscape" | "vertical" | "compact" | "social" | "audio";
+			accent?: string;
+		}> = [];
+		const seen = new Set<string>();
+		const twitchParent =
+			typeof window !== "undefined" && window.location?.hostname
+				? window.location.hostname
+				: "localhost";
+
+		for (const raw of matches) {
+			const clean = raw.replace(/[.,;!?)]+$/, "");
+			if (clean.length > 900 || seen.has(clean)) continue;
+			try {
+				const parsed = new URL(clean);
+				if (parsed.protocol !== "https:") continue;
+				const host = parsed.hostname.toLowerCase().replace(/^www\./, "");
+				const path = parsed.pathname;
+				const pathLower = path.toLowerCase();
+
+				// YouTube (watch, youtu.be, shorts, live, embed, music)
+				if (
+					host === "youtube.com" ||
+					host === "m.youtube.com" ||
+					host === "music.youtube.com" ||
+					host === "youtu.be"
+				) {
+					let videoId: string | null = null;
+					let isVertical = false;
+					if (host === "youtu.be") {
+						const seg = path.split("/").filter(Boolean)[0];
+						if (seg && /^[a-zA-Z0-9_-]{11}$/.test(seg)) videoId = seg;
+					} else if (pathLower.startsWith("/shorts/")) {
+						const seg = path.split("/").filter(Boolean)[1];
+						if (seg && /^[a-zA-Z0-9_-]{11}$/.test(seg)) {
+							videoId = seg;
+							isVertical = true;
+						}
+					} else if (pathLower.startsWith("/live/") || pathLower.startsWith("/embed/")) {
+						const seg = path.split("/").filter(Boolean)[1];
+						if (seg && /^[a-zA-Z0-9_-]{11}$/.test(seg)) videoId = seg;
+					} else {
+						const v = parsed.searchParams.get("v");
+						if (v && /^[a-zA-Z0-9_-]{11}$/.test(v)) videoId = v;
+					}
+					if (videoId) {
+						const tParam = parsed.searchParams.get("t") || parsed.searchParams.get("start");
+						const startSec = tParam ? parseInt(tParam, 10) : 0;
+						const qs = Number.isFinite(startSec) && startSec > 0 ? `?start=${startSec}` : "";
+						seen.add(clean);
+						embeds.push({
+							kind: "iframe",
+							provider: isVertical ? "YouTube Shorts" : "YouTube",
+							embedUrl: `https://www.youtube.com/embed/${videoId}${qs}`,
+							originalUrl: clean,
+							layout: isVertical ? "vertical" : "landscape",
+						});
+					}
+				} else if (host === "twitch.tv" || host === "m.twitch.tv" || host === "clips.twitch.tv") {
+					const parts = path.split("/").filter(Boolean);
+					let embedUrl: string | null = null;
+					if (host === "clips.twitch.tv" && parts[0]) {
+						embedUrl = `https://clips.twitch.tv/embed?clip=${encodeURIComponent(parts[0])}&parent=${encodeURIComponent(twitchParent)}&autoplay=false`;
+					} else if (parts[0] === "videos" && parts[1] && /^\d+$/.test(parts[1])) {
+						embedUrl = `https://player.twitch.tv/?video=${encodeURIComponent(parts[1])}&parent=${encodeURIComponent(twitchParent)}&autoplay=false`;
+					} else if (parts[1] === "clip" && parts[2]) {
+						embedUrl = `https://clips.twitch.tv/embed?clip=${encodeURIComponent(parts[2])}&parent=${encodeURIComponent(twitchParent)}&autoplay=false`;
+					} else if (parts[0] && !["directory", "downloads", "jobs", "p", "settings"].includes(parts[0].toLowerCase())) {
+						embedUrl = `https://player.twitch.tv/?channel=${encodeURIComponent(parts[0])}&parent=${encodeURIComponent(twitchParent)}&autoplay=false`;
+					}
+					if (embedUrl) {
+						seen.add(clean);
+						embeds.push({
+							kind: "iframe",
+							provider: "Twitch",
+							embedUrl,
+							originalUrl: clean,
+							layout: "landscape",
+						});
+					}
+				} else if (host === "tiktok.com" || host === "m.tiktok.com") {
+					const m = /\/video\/(\d{8,25})/.exec(path);
+					if (m) {
+						seen.add(clean);
+						embeds.push({
+							kind: "iframe",
+							provider: "TikTok",
+							embedUrl: `https://www.tiktok.com/embed/v2/${m[1]}`,
+							originalUrl: clean,
+							layout: "vertical",
+						});
+					}
+				} else if (host === "vimeo.com") {
+					const seg = path.split("/").filter(Boolean)[0];
+					if (seg && /^\d+$/.test(seg)) {
+						seen.add(clean);
+						embeds.push({
+							kind: "iframe",
+							provider: "Vimeo",
+							embedUrl: `https://player.vimeo.com/video/${seg}`,
+							originalUrl: clean,
+							layout: "landscape",
+						});
+					}
+				} else if (host === "kick.com") {
+					const parts = path.split("/").filter(Boolean);
+					if (parts[0] && !["categories", "browse", "following"].includes(parts[0].toLowerCase())) {
+						seen.add(clean);
+						embeds.push({
+							kind: "iframe",
+							provider: "Kick",
+							embedUrl: `https://player.kick.com/${encodeURIComponent(parts[0])}`,
+							originalUrl: clean,
+							layout: "landscape",
+						});
+					}
+				} else if (host === "open.spotify.com") {
+					const parts = path.split("/").filter(Boolean);
+					const kindIdx = parts[0]?.startsWith("intl-") ? 1 : 0;
+					const spType = parts[kindIdx];
+					const spId = parts[kindIdx + 1];
+					if (spType && spId && /^(track|album|playlist|episode|show)$/.test(spType) && /^[a-zA-Z0-9]+$/.test(spId)) {
+						seen.add(clean);
+						embeds.push({
+							kind: "iframe",
+							provider: "Spotify",
+							embedUrl: `https://open.spotify.com/embed/${spType}/${spId}`,
+							originalUrl: clean,
+							layout: "compact",
+						});
+					}
+				} else if (host === "soundcloud.com") {
+					const parts = path.split("/").filter(Boolean);
+					if (parts.length >= 2 && !["discover", "stream", "you", "search", "charts"].includes(parts[0].toLowerCase())) {
+						seen.add(clean);
+						embeds.push({
+							kind: "iframe",
+							provider: "SoundCloud",
+							embedUrl: `https://w.soundcloud.com/player/?url=${encodeURIComponent(clean)}&color=%238b5cf6&auto_play=false&visual=true`,
+							originalUrl: clean,
+							layout: "compact",
+						});
+					}
+				} else if (
+					host === "twitter.com" ||
+					host === "mobile.twitter.com" ||
+					host === "x.com" ||
+					host === "fxtwitter.com" ||
+					host === "vxtwitter.com" ||
+					host === "fixupx.com"
+				) {
+					const m = /\/status\/(\d{5,25})/.exec(path);
+					if (m) {
+						seen.add(clean);
+						embeds.push({
+							kind: "social",
+							provider: "X / Twitter",
+							embedUrl: clean,
+							originalUrl: clean,
+							layout: "social",
+							accent: "#1d9bf0",
+						});
+					}
+				} else if (host === "instagram.com" || host === "m.instagram.com") {
+					const m = /^\/(p|reel|reels|tv)\/([a-zA-Z0-9_-]+)/.exec(path);
+					if (m) {
+						seen.add(clean);
+						embeds.push({
+							kind: "social",
+							provider: "Instagram",
+							embedUrl: clean,
+							originalUrl: clean,
+							layout: "social",
+							accent: "#e1306c",
+						});
+					}
+				} else if (host === "facebook.com" || host === "m.facebook.com" || host === "fb.watch") {
+					const isFbTarget =
+						host === "fb.watch" ||
+						/\/(videos?|reel|watch|posts|permalink\.php|photo)\b/i.test(pathLower) ||
+						parsed.searchParams.has("v");
+					if (isFbTarget) {
+						seen.add(clean);
+						embeds.push({
+							kind: "social",
+							provider: "Facebook",
+							embedUrl: clean,
+							originalUrl: clean,
+							layout: "social",
+							accent: "#1877f2",
+						});
+					}
+				} else if (host === "reddit.com" || host === "old.reddit.com") {
+					const m = /^\/r\/([^/]+)\/comments\/([a-zA-Z0-9]+)/.exec(path);
+					if (m) {
+						seen.add(clean);
+						embeds.push({
+							kind: "social",
+							provider: "Reddit",
+							embedUrl: clean,
+							originalUrl: clean,
+							layout: "social",
+							accent: "#ff4500",
+						});
+					}
+				} else if (host === "bsky.app") {
+					const m = /^\/profile\/([^/]+)\/post\/([a-zA-Z0-9]+)/.exec(path);
+					if (m) {
+						seen.add(clean);
+						embeds.push({
+							kind: "social",
+							provider: "Bluesky",
+							embedUrl: clean,
+							originalUrl: clean,
+							layout: "social",
+							accent: "#0085ff",
+						});
+					}
+				} else if (/\.(mp4|webm|mov)$/i.test(pathLower)) {
+					seen.add(clean);
+					embeds.push({
+						kind: "video",
+						provider: "Vídeo",
+						embedUrl: clean,
+						originalUrl: clean,
+						layout: "landscape",
+					});
+				} else if (/\.(mp3|ogg|wav|m4a)$/i.test(pathLower)) {
+					seen.add(clean);
+					embeds.push({
+						kind: "audio",
+						provider: "Áudio",
+						embedUrl: clean,
+						originalUrl: clean,
+						layout: "audio",
+					});
+				}
+
+				if (embeds.length >= 2) break;
+			} catch {
+				// ignore malformed URL
+			}
+		}
+		return embeds;
+	}
+
 	private async verifySafeImage(url: string): Promise<boolean> {
 		if (this.safeImageCache.has(url)) {
 			return this.safeImageCache.get(url)!;
@@ -1184,6 +1454,98 @@ export class ChatManager {
 					});
 				}
 			}
+
+			const mediaEmbeds = this.extractMediaEmbeds(msg.content);
+			if (mediaEmbeds.length > 0) {
+				const mediaContainer = document.createElement("div");
+				mediaContainer.className = "chat-msg-media-list";
+				entry.appendChild(mediaContainer);
+
+				const isOnlyMediaUrl =
+					imageUrls.length === 0 &&
+					mediaEmbeds.length === 1 &&
+					msg.content.trim() === mediaEmbeds[0].originalUrl;
+				if (isOnlyMediaUrl && textEl) {
+					textEl.classList.add("hidden");
+				}
+
+				for (const item of mediaEmbeds) {
+					const card = document.createElement("div");
+					card.className = `chat-bubble-media is-${item.layout}`;
+
+					const header = document.createElement("div");
+					header.className = "chat-media-footer";
+					const label = document.createElement("span");
+					label.textContent = item.provider;
+					const actions = document.createElement("div");
+					actions.className = "chat-media-actions";
+					const link = document.createElement("a");
+					link.href = item.originalUrl;
+					link.target = "_blank";
+					link.rel = "noopener noreferrer";
+					link.textContent = "Abrir";
+					link.addEventListener("click", (e) => {
+						e.stopPropagation();
+						if (window.api?.openExternal) {
+							e.preventDefault();
+							void window.api.openExternal(item.originalUrl);
+						}
+					});
+					const menuBtn = document.createElement("button");
+					menuBtn.type = "button";
+					menuBtn.className = "chat-media-menu-btn";
+					menuBtn.title = "Opções da mensagem (editar, mencionar, apagar)";
+					menuBtn.textContent = "⋮";
+					menuBtn.addEventListener("click", (e) => {
+						e.preventDefault();
+						e.stopPropagation();
+						this.openContextMenu(e, msg, entry);
+					});
+					actions.appendChild(link);
+					actions.appendChild(menuBtn);
+					header.appendChild(label);
+					header.appendChild(actions);
+					card.appendChild(header);
+
+					if (item.kind === "social") {
+						card.className = "chat-social-embed";
+						card.style.borderLeftColor = item.accent || "#8b5cf6";
+						const bodyEl = document.createElement("div");
+						bodyEl.className = "chat-social-body";
+						bodyEl.innerHTML = `<div class="chat-social-loading">Carregando prévia...</div>`;
+						card.appendChild(bodyEl);
+						void this.populateSocialPreview(bodyEl, item.originalUrl, item.provider);
+					} else if (item.kind === "iframe") {
+						const iframe = document.createElement("iframe");
+						iframe.className = `chat-media-frame is-${item.layout}`;
+						iframe.src = item.embedUrl;
+						iframe.title = `${item.provider} player`;
+						iframe.loading = "lazy";
+						iframe.referrerPolicy = "strict-origin-when-cross-origin";
+						iframe.allow =
+							"accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share";
+						iframe.allowFullscreen = true;
+						card.appendChild(iframe);
+					} else if (item.kind === "video") {
+						const video = document.createElement("video");
+						video.className = "chat-media-video";
+						video.src = item.embedUrl;
+						video.controls = true;
+						video.preload = "metadata";
+						video.playsInline = true;
+						card.appendChild(video);
+					} else {
+						const audio = document.createElement("audio");
+						audio.className = "chat-media-audio";
+						audio.src = item.embedUrl;
+						audio.controls = true;
+						audio.preload = "metadata";
+						card.appendChild(audio);
+					}
+
+					mediaContainer.appendChild(card);
+				}
+			}
 		}
 		if (msg.gifUrl) {
 			const isFav = this.isGifFavorite(msg.gifUrl);
@@ -1192,7 +1554,7 @@ export class ChatManager {
 			gifEl.innerHTML = `
 				<img src="${this.escapeHtml(msg.gifUrl)}" alt="GIF" loading="lazy" />
 				<button type="button" class="btn-msg-fav-gif ${isFav ? "is-favorite" : ""}" data-msg-gif-url="${this.escapeHtml(msg.gifUrl)}" title="${isFav ? "Remover dos favoritos" : "Favoritar GIF"}">
-					<i data-lucide="star"></i>
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
 				</button>`;
 			const msgFavBtn = gifEl.querySelector<HTMLButtonElement>(".btn-msg-fav-gif");
 			msgFavBtn?.addEventListener("click", (e) => {
@@ -1304,8 +1666,8 @@ export class ChatManager {
 			<div class="chat-reply-bar-text">
 				<span>Respondendo a <strong>${this.escapeHtml(author)}</strong>${preview ? `: ${this.escapeHtml(preview)}` : ""}</span>
 			</div>
-			<button type="button" class="chat-reply-bar-close" title="Cancelar resposta">
-				<i data-lucide="x"></i>
+			<button type="button" class="chat-reply-bar-close" title="Cancelar resposta (Esc)">
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
 			</button>`;
 		bar.querySelector(".chat-reply-bar-close")?.addEventListener("click", () => {
 			this.replyingTo = null;
@@ -1739,6 +2101,80 @@ export class ChatManager {
 		input.setSelectionRange(nextCursor, nextCursor);
 		syncCharCounter();
 		this.closeMentionPopover();
+	}
+
+	private async populateSocialPreview(bodyEl: HTMLElement, url: string, provider: string): Promise<void> {
+		let preview = this.linkPreviewCache.get(url);
+		if (!preview) {
+			const token = getToken();
+			if (token && window.api?.apiRequest) {
+				try {
+					const res = await window.api.apiRequest({
+						endpoint: `/api/link-preview?url=${encodeURIComponent(url)}`,
+						method: "GET",
+						token,
+					});
+					if (res.ok && (res.data as any)?.preview) {
+						preview = (res.data as any).preview;
+						this.linkPreviewCache.set(url, preview);
+					}
+				} catch {}
+			}
+			if (!preview && window.api?.probeLinkPreview) {
+				try {
+					const localRes = await window.api.probeLinkPreview(url);
+					if (localRes?.ok && localRes.preview) {
+						preview = localRes.preview;
+						this.linkPreviewCache.set(url, preview);
+					}
+				} catch {}
+			}
+			if (!preview) {
+				const twMatch = /^https:\/\/(?:www\.|mobile\.)?(?:twitter\.com|x\.com|fxtwitter\.com|vxtwitter\.com|fixupx\.com)\/[^/]+\/status\/(\d{5,25})/i.exec(url);
+				if (twMatch) {
+					try {
+						const r = await fetch(`https://api.fxtwitter.com/status/${twMatch[1]}`);
+						if (r.ok) {
+							const json = (await r.json()) as any;
+							const t = json?.tweet;
+							if (t) {
+								preview = {
+									provider: "X / Twitter",
+									authorName: t.author?.name,
+									authorHandle: t.author?.screen_name ? `@${t.author.screen_name}` : undefined,
+									authorAvatar: t.author?.avatar_url,
+									text: t.text,
+									imageUrl: t.media?.photos?.[0]?.url || t.media?.all?.[0]?.thumbnail_url,
+									videoUrl: t.media?.videos?.[0]?.url,
+								};
+								this.linkPreviewCache.set(url, preview);
+							}
+						}
+					} catch {}
+				}
+			}
+		}
+		if (!bodyEl.isConnected) return;
+		if (!preview || (!preview.title && !preview.text && !preview.imageUrl && !preview.videoUrl && !preview.authorName)) {
+			bodyEl.innerHTML = `<div class="chat-social-text">${this.escapeHtml(provider)} · Clique em <strong>Abrir</strong> para visualizar</div>`;
+			return;
+		}
+		const authorParts: string[] = [];
+		if (preview.authorName) authorParts.push(`<strong>${this.escapeHtml(preview.authorName)}</strong>`);
+		if (preview.authorHandle) authorParts.push(`<span>${this.escapeHtml(preview.authorHandle)}</span>`);
+		const authorHtml =
+			authorParts.length > 0
+				? `<div class="chat-social-author">${preview.authorAvatar ? `<img src="${this.escapeHtml(preview.authorAvatar)}" alt="" referrerpolicy="no-referrer" />` : ""}${authorParts.join(" ")}</div>`
+				: "";
+		const titleHtml = preview.title ? `<div class="chat-social-title">${this.escapeHtml(preview.title)}</div>` : "";
+		const textHtml = preview.text ? `<div class="chat-social-text">${this.escapeHtml(preview.text)}</div>` : "";
+		const mediaHtml = preview.videoUrl
+			? `<video class="chat-social-media" src="${this.escapeHtml(preview.videoUrl)}" controls preload="metadata" playsinline></video>`
+			: preview.imageUrl
+				? `<img class="chat-social-media" src="${this.escapeHtml(preview.imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" />`
+				: "";
+		bodyEl.innerHTML = `${authorHtml}${titleHtml}${textHtml}${mediaHtml}`;
+		this.scrollToBottom();
 	}
 
 	private escapeHtml(str: string): string {

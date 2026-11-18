@@ -1317,6 +1317,10 @@ body.is-resizing-sidebars .right-panel {
     border-color 0.24s ease;
 }
 
+.right-panel:has(#chat-gif-popover:not(.hidden)) {
+  z-index: 60;
+}
+
 .main-content.sidebar-collapsed .left-panel {
   opacity: 0;
   pointer-events: none;
@@ -1345,6 +1349,10 @@ body.is-resizing-sidebars .right-panel {
   box-sizing: border-box;
   transition: opacity 0.24s cubic-bezier(0.4, 0, 0.2, 1),
     border-color 0.24s ease;
+}
+
+.right-panel:has(#chat-gif-popover:not(.hidden)) {
+  z-index: 60;
 }
 
 .main-content.right-sidebar-collapsed .right-panel {
@@ -8770,24 +8778,24 @@ body.is-resizing-sidebars .right-panel {
   right: 4px;
   width: 24px;
   height: 24px;
-  border-radius: 5px;
-  background: rgba(0, 0, 0, 0.75);
-  backdrop-filter: blur(4px);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  color: #a1a1aa;
+  border-radius: 999px;
+  background: transparent;
+  border: none;
+  color: #e4e4e7;
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.85));
   display: flex;
   align-items: center;
   justify-content: center;
   opacity: 0;
-  transition: all 0.18s ease;
+  transition: transform 0.18s ease, opacity 0.18s ease, color 0.18s ease;
   cursor: pointer;
   z-index: 5;
   padding: 0;
 }
 
 .btn-gif-fav svg {
-  width: 12px;
-  height: 12px;
+  width: 17px;
+  height: 17px;
 }
 
 .gif-thumbnail-item:hover .btn-gif-fav {
@@ -8797,8 +8805,8 @@ body.is-resizing-sidebars .right-panel {
 .btn-gif-fav.is-favorite {
   opacity: 1;
   color: #fbbf24;
-  background: rgba(24, 24, 27, 0.9);
-  border-color: rgba(251, 191, 36, 0.5);
+  background: transparent;
+  border: none;
 }
 
 .btn-gif-fav.is-favorite svg {
@@ -8806,9 +8814,8 @@ body.is-resizing-sidebars .right-panel {
 }
 
 .btn-gif-fav:hover {
-  transform: scale(1.15);
+  transform: scale(1.18);
   color: #fbbf24;
-  border-color: #fbbf24;
 }
 
 /* Botão de favoritar no balão do chat quando alguém envia um GIF */
@@ -8822,24 +8829,24 @@ body.is-resizing-sidebars .right-panel {
   right: 6px;
   width: 26px;
   height: 26px;
-  border-radius: 6px;
-  background: rgba(0, 0, 0, 0.75);
-  backdrop-filter: blur(6px);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  color: #a1a1aa;
+  border-radius: 999px;
+  background: transparent;
+  border: none;
+  color: #e4e4e7;
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.85));
   display: flex;
   align-items: center;
   justify-content: center;
   opacity: 0;
-  transition: all 0.18s ease;
+  transition: transform 0.18s ease, opacity 0.18s ease, color 0.18s ease;
   cursor: pointer;
   z-index: 5;
   padding: 0;
 }
 
 .btn-msg-fav-gif svg {
-  width: 13px;
-  height: 13px;
+  width: 18px;
+  height: 18px;
 }
 
 .chat-bubble-gif:hover .btn-msg-fav-gif {
@@ -8849,7 +8856,6 @@ body.is-resizing-sidebars .right-panel {
 .btn-msg-fav-gif.is-favorite {
   opacity: 1;
   color: #fbbf24;
-  border-color: rgba(251, 191, 36, 0.5);
 }
 
 .btn-msg-fav-gif.is-favorite svg {
@@ -8857,7 +8863,7 @@ body.is-resizing-sidebars .right-panel {
 }
 
 .btn-msg-fav-gif:hover {
-  transform: scale(1.12);
+  transform: scale(1.15);
   color: #fbbf24;
 }
 
@@ -9159,6 +9165,188 @@ body.is-resizing-sidebars .right-panel {
 .chat-mention-pill.is-everyone:hover {
   background: rgba(245, 158, 11, 0.28);
   color: #fef3c7;
+}
+
+.chat-msg-media-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 100%;
+}
+
+.chat-bubble-media {
+  width: 260px;
+  max-width: 100%;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: #0d0d12;
+}
+
+.chat-bubble-media.is-vertical {
+  width: 210px;
+}
+
+.chat-media-frame {
+  display: block;
+  width: 100%;
+  border: none;
+  background: #000;
+}
+
+.chat-media-frame.is-landscape {
+  aspect-ratio: 16 / 9;
+}
+
+.chat-media-frame.is-vertical {
+  aspect-ratio: 9 / 16;
+  max-height: 310px;
+}
+
+.chat-media-frame.is-compact {
+  height: 152px;
+}
+
+.chat-media-frame.is-social {
+  height: 320px;
+  background: #0d0d12;
+}
+
+.chat-media-video {
+  display: block;
+  width: 100%;
+  max-height: 220px;
+  background: #000;
+}
+
+.chat-media-audio {
+  display: block;
+  width: 100%;
+  height: 40px;
+  padding: 4px 6px 0;
+  box-sizing: border-box;
+}
+
+.chat-media-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 8px;
+  font-size: 10px;
+  color: #a1a1aa;
+  background: rgba(24, 24, 32, 0.9);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.chat-media-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chat-media-menu-btn {
+  border: none;
+  background: transparent;
+  color: #a1a1aa;
+  cursor: pointer;
+  padding: 0 3px;
+  font-size: 13px;
+  line-height: 1;
+  border-radius: 4px;
+}
+
+.chat-media-menu-btn:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.chat-social-embed {
+  width: 260px;
+  max-width: 100%;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-left: 3px solid #8b5cf6;
+  background: #12121a;
+}
+
+.chat-social-body {
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.chat-social-loading {
+  font-size: 11px;
+  color: #71717a;
+}
+
+.chat-social-author {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #a1a1aa;
+  min-width: 0;
+}
+
+.chat-social-author strong {
+  color: #f4f4f5;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-social-author img {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.chat-social-title {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #f4f4f5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.chat-social-text {
+  font-size: 11px;
+  line-height: 1.4;
+  color: #d4d4d8;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.chat-social-media {
+  display: block;
+  width: 100%;
+  max-height: 170px;
+  object-fit: cover;
+  border-radius: 6px;
+  margin-top: 2px;
+  background: #09090d;
+}
+
+.chat-media-footer a {
+  color: #c4b5fd;
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.chat-media-footer a:hover {
+  text-decoration: underline;
+  color: #ddd6fe;
 }
 
 .chat-message-row.is-me .chat-mention-pill {
